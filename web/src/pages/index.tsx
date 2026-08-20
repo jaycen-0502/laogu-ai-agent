@@ -1004,6 +1004,7 @@ function StatisticsPage() {
 }
 
 function UsersPage({ current }: { current: User }) {
+  const workspaceKey = (workspace: Workspace) => workspace.workspace_id || workspace.id || "";
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [includeDeleted, setIncludeDeleted] = useState(false);
@@ -1011,7 +1012,7 @@ function UsersPage({ current }: { current: User }) {
     username: "",
     password: "",
     role: "MEMBER",
-    workspace_id: "",
+    workspace_id: current.workspace_id || "",
   });
   const [message, setMessage] = useState("");
   const [inviteForm, setInviteForm] = useState({ role: "MEMBER", workspace_id: current.workspace_id || "", expires_hours: 72 });
@@ -1058,7 +1059,7 @@ function UsersPage({ current }: { current: User }) {
     try {
       await apiClient("/users", jsonBody(form));
       setMessage("用户已创建");
-      setForm({ username: "", password: "", role: "MEMBER", workspace_id: "" });
+      setForm({ username: "", password: "", role: "MEMBER", workspace_id: current.workspace_id || "" });
       result.reload();
     } catch (exc) {
       setMessage(errorText(exc));
@@ -1202,9 +1203,9 @@ function UsersPage({ current }: { current: User }) {
             {current.role === "ADMIN" ? (
               <select value={form.workspace_id} onChange={(event) => setForm({ ...form, workspace_id: event.target.value })} required>
                 <option value="">请选择工作区</option>
-                {workspaces.map((workspace) => <option key={workspace.workspace_id} value={workspace.workspace_id}>{workspace.name}</option>)}
+                {workspaces.map((workspace) => <option key={workspaceKey(workspace)} value={workspaceKey(workspace)}>{workspace.name}</option>)}
               </select>
-            ) : <input value={workspaces.find((workspace) => workspace.workspace_id === current.workspace_id)?.name || current.workspace_id || ""} disabled />}
+            ) : <input value={workspaces.find((workspace) => workspaceKey(workspace) === current.workspace_id)?.name || current.workspace_id || ""} disabled />}
           </label>
         </div>
         <button className="primary">创建用户</button>

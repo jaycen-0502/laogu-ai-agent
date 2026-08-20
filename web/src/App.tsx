@@ -64,6 +64,14 @@ function Layout({ user }: { user: User }) {
     authStore.clear();
     navigate("/login");
   };
+  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
+  const canSee = (path: string, roles: readonly string[]) => {
+    if (!roles.some((role) => role === user.role)) return false;
+    if (user.role !== "MEMBER") return true;
+    if (!memberPaths.has(path)) return false;
+    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
+    return !feature || user.permissions?.[feature] !== false;
+  };
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -71,12 +79,15 @@ function Layout({ user }: { user: User }) {
           <span className="brand-mark">L</span>
           <span>{isPlatformAdmin ? "老谷平台管理" : "老谷用户工作台"}</span>
         </div>
-        <div className="workspace-pill">
+        <div className="workspace-card">
+          <span className="workspace-label">当前工作区</span>
+          <strong>{user.workspace_name || (isPlatformAdmin ? "平台全局" : "未分配工作区")}</strong>
+          <small>ID：{user.workspace_id || "全局管理"}</small>
           工作区：{user.workspace_id || "全局"}
         </div>
         <nav>
           {menu
-            .filter(([, , roles]) => roles.some((role) => role === user.role))
+            .filter(([path, , roles]) => canSee(path, roles))
             .map(([path, label]) => (
               <Link
                 key={path}
@@ -115,6 +126,14 @@ function Layout({ user }: { user: User }) {
 
 function Protected({ user }: { user: User | null }) {
   if (!user) return <Navigate to="/login" replace />;
+  const location = useLocation();
+  if (user.role === "MEMBER") {
+    const allowed = ["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/writing", "/ai/analysis", "/ai/tasks"];
+    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
+    if (!allowed.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`)) || (feature && user.permissions?.[feature] === false)) {
+      return <Navigate to="/dashboard" replace />;
+    }
+  }
   return <Layout user={user} />;
 }
 

@@ -12,6 +12,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from .ai_provider import CredentialCipher, CredentialError
+from .ai_policy import resolve_provider
 from .chat_api import sanitize_chat_content
 from .image_service import AIImageRequestError, AIImageRequestTimeout, AIImageResponseTooLarge, AIImageService
 from .models import AIImage, AIProvider, User, now
@@ -82,18 +83,7 @@ def register_image_routes(
         return candidate
 
     def checked_provider(db: Session, user: User, provider_id: str | None) -> AIProvider:
-        query = select(AIProvider).where(
-            AIProvider.workspace_id == user.workspace_id,
-            AIProvider.status == "ENABLED",
-        )
-        if provider_id:
-            query = query.where(AIProvider.id == provider_id)
-        else:
-            query = query.where(AIProvider.is_default.is_(True))
-        provider = db.scalar(query)
-        if not provider:
-            raise HTTPException(status_code=422, detail="Enabled AI provider not found for this workspace")
-        return provider
+        return resolve_provider(db, user, "IMAGES", provider_id, None)[0]
 
     @app.get("/api/ai/images")
     def list_images(

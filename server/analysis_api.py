@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .ai_provider import CredentialCipher, CredentialError
 from .ai_service import AIRequestError, AIRequestTimeout
+from .ai_policy import resolve_provider
 from .analysis_service import AIAnalysisRunResult, account_messages, keyword_messages, sanitize_analysis_text
 from .models import Account, Activity, AIAnalysis, AIProvider, User, now
 from .schemas import AIAccountAnalysisCreate, AIKeywordAnalysisCreate
@@ -146,26 +147,7 @@ def register_analysis_routes(
         provider_id: str | None,
         model: str | None,
     ) -> tuple[AIProvider, str]:
-        query = select(AIProvider).where(
-            AIProvider.workspace_id == workspace_id,
-            AIProvider.status == "ENABLED",
-        )
-        if provider_id:
-            query = query.where(AIProvider.id == provider_id)
-        else:
-            query = query.where(AIProvider.is_default.is_(True))
-        provider = db.scalar(query)
-        if not provider:
-            raise HTTPException(status_code=422, detail="Enabled AI provider not found for this workspace")
-        selected_model = str(model or provider.default_model or "").strip()
-        if not selected_model:
-            raise HTTPException(status_code=422, detail="AI model is required")
-        allowed_models = set(provider.available_models or [])
-        if provider.default_model:
-            allowed_models.add(provider.default_model)
-        if allowed_models and selected_model not in allowed_models:
-            raise HTTPException(status_code=422, detail="AI model is not allowed for this provider")
-        return provider, selected_model
+        return resolve_provider(db, user, "ANALYSIS", provider_id, model, workspace_id=workspace_id)
 
     def account_activities(db: Session, account: Account, lookback_days: int) -> list[Activity]:
         since = now() - timedelta(days=lookback_days)

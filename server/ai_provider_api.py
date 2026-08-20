@@ -126,6 +126,8 @@ def register_ai_provider_routes(
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ):
+        if user.role == "MEMBER":
+            raise HTTPException(status_code=403, detail="AI provider details are restricted to administrators")
         query = select(AIProvider)
         if user.role != "ADMIN":
             query = query.where(AIProvider.workspace_id == user.workspace_id)
@@ -143,6 +145,8 @@ def register_ai_provider_routes(
 
     @app.get("/api/ai/providers/{provider_id}")
     def get_provider(provider_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role == "MEMBER":
+            raise HTTPException(status_code=403, detail="AI provider details are restricted to administrators")
         return _provider_dict(visible_provider(provider_id, user, db))
 
     @app.post("/api/ai/providers")

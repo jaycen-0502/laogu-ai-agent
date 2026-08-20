@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .ai_provider import CredentialCipher, CredentialError
+from .ai_policy import resolve_provider
 from .ai_service import (
     AIRequestCancelled,
     AIRequestError,
@@ -161,26 +162,7 @@ def register_chat_routes(
         provider_id: str | None,
         model: str | None,
     ) -> tuple[AIProvider, str]:
-        query = select(AIProvider).where(
-            AIProvider.workspace_id == user.workspace_id,
-            AIProvider.status == "ENABLED",
-        )
-        if provider_id:
-            query = query.where(AIProvider.id == provider_id)
-        else:
-            query = query.where(AIProvider.is_default.is_(True))
-        provider = db.scalar(query)
-        if not provider:
-            raise HTTPException(status_code=422, detail="Enabled AI provider not found for this workspace")
-        selected_model = str(model or provider.default_model or "").strip()
-        if not selected_model:
-            raise HTTPException(status_code=422, detail="AI model is required")
-        allowed_models = set(provider.available_models or [])
-        if provider.default_model:
-            allowed_models.add(provider.default_model)
-        if selected_model not in allowed_models:
-            raise HTTPException(status_code=422, detail="AI model is not allowed for this provider")
-        return provider, selected_model
+        return resolve_provider(db, user, "CHAT", provider_id, model)
 
     def detail_payload(item: ChatSession, db: Session) -> dict:
         provider = db.get(AIProvider, item.provider_id)

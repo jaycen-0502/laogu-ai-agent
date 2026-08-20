@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, apiClient, authStore, jsonBody } from "../api/client";
-import type { AIProvider, ChatMessage, ChatSession, ChatSessionDetail, Page } from "../types";
+import type { ChatMessage, ChatSession, ChatSessionDetail, Page } from "../types";
 
 
 type StreamEvent = { event: string; data: Record<string, unknown> };
@@ -69,25 +69,12 @@ async function streamChat(
 export function AIChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [detail, setDetail] = useState<ChatSessionDetail | null>(null);
-  const [providers, setProviders] = useState<AIProvider[]>([]);
-  const [providerId, setProviderId] = useState("");
-  const [model, setModel] = useState("");
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const controllerRef = useRef<AbortController | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
-
-  const selectedProvider = useMemo(
-    () => providers.find((item) => item.provider_id === providerId) || null,
-    [providerId, providers],
-  );
-  const modelOptions = useMemo(() => {
-    const values = new Set(selectedProvider?.models || []);
-    if (selectedProvider?.default_model) values.add(selectedProvider.default_model);
-    return Array.from(values);
-  }, [selectedProvider]);
 
   const loadSessions = useCallback(async (preferredId = "") => {
     const data = await apiClient<Page<ChatSession>>("/ai/chat/sessions?page=1&page_size=100");
@@ -109,16 +96,7 @@ export function AIChatPage() {
   }, [detail?.session_id]);
 
   useEffect(() => {
-    Promise.all([
-      apiClient<AIProvider[]>("/ai/providers?status=ENABLED"),
-      apiClient<Page<ChatSession>>("/ai/chat/sessions?page=1&page_size=100"),
-    ]).then(async ([providerItems, sessionPage]) => {
-      setProviders(providerItems);
-      const defaultProvider = providerItems.find((item) => item.is_default) || providerItems[0];
-      if (defaultProvider) {
-        setProviderId(defaultProvider.provider_id);
-        setModel(defaultProvider.default_model || defaultProvider.models[0] || "");
-      }
+    apiClient<Page<ChatSession>>("/ai/chat/sessions?page=1&page_size=100").then(async (sessionPage) => {
       setSessions(sessionPage.items);
       if (sessionPage.items[0]) {
         setDetail(await apiClient<ChatSessionDetail>(`/ai/chat/sessions/${sessionPage.items[0].session_id}`));
@@ -130,11 +108,6 @@ export function AIChatPage() {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [detail?.messages]);
 
-  useEffect(() => {
-    if (!selectedProvider) return;
-    if (!modelOptions.includes(model)) setModel(selectedProvider.default_model || modelOptions[0] || "");
-  }, [model, modelOptions, selectedProvider]);
-
   const openSession = async (sessionId: string) => {
     setError("");
     try {
@@ -145,14 +118,10 @@ export function AIChatPage() {
   };
 
   const createSession = async () => {
-    if (!providerId || !model) {
-      setError("请先在AI服务商中启用Provider并配置可用模型");
-      return;
-    }
     setBusy(true);
     setError("");
     try {
-      const created = await apiClient<ChatSessionDetail>("/ai/chat/sessions", jsonBody({ provider_id: providerId, model }));
+      const created = await apiClient<ChatSessionDetail>("/ai/chat/sessions", jsonBody({}));
       await loadSessions(created.session_id);
     } catch (exc) {
       setError(errorMessage(exc));
@@ -249,20 +218,9 @@ export function AIChatPage() {
           <h1>AI聊天中心</h1>
           <p className="muted">通过工作区已启用的AI Provider进行安全的多轮聊天</p>
         </div>
-        <div className="chat-create-controls">
-          <select value={providerId} onChange={(event) => setProviderId(event.target.value)} disabled={busy}>
-            {!providers.length && <option value="">暂无可用Provider</option>}
-            {providers.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name}</option>)}
-          </select>
-          <select value={model} onChange={(event) => setModel(event.target.value)} disabled={busy || !modelOptions.length}>
-            {!modelOptions.length && <option value="">暂无可用模型</option>}
-            {modelOptions.map((item) => <option key={item} value={item}>{item}</option>)}
-          </select>
-          <button className="primary" disabled={busy || !providerId || !model} onClick={() => void createSession()}>新建会话</button>
-        </div>
+        <button className="primary" disabled={busy} onClick={() => void createSession()}>新建会话</button>
       </div>
       {error && <div className="alert error">{error}</div>}
-      {!providers.length && <div className="alert">请先到“AI 服务商”页面启用Provider、配置默认模型并完成连接测试。</div>}
 
       <div className="chat-layout">
         <aside className="chat-session-list panel">
@@ -272,7 +230,7 @@ export function AIChatPage() {
             <div key={item.session_id} className={`chat-session-item ${detail?.session_id === item.session_id ? "active" : ""}`}>
               <button className="chat-session-open" onClick={() => void openSession(item.session_id)}>
                 <strong>{item.title}</strong>
-                <span>{item.model}</span>
+                <span className="internal-only">{item.model}</span>
                 <span>{formatTime(item.updated_at)}</span>
               </button>
               <button className="chat-delete" title="删除会话" disabled={item.is_running} onClick={() => void removeSession(item)}>×</button>
@@ -284,16 +242,16 @@ export function AIChatPage() {
           {!detail ? (
             <div className="chat-welcome">
               <h2>开始新的AI对话</h2>
-              <p className="muted">选择Provider和模型，然后点击“新建会话”。</p>
+              <p className="muted">系统将使用管理员分配的 AI 配置。</p>
             </div>
           ) : (
             <>
               <header className="chat-header">
                 <div>
                   <h2>{detail.title}</h2>
-                  <span className="muted">{detail.provider_name} · {detail.model}</span>
+                  <span className="muted">管理员已配置</span>
                 </div>
-                <div className="chat-usage">
+                <div className="chat-usage internal-only">
                   输入 {detail.usage.prompt_tokens} · 输出 {detail.usage.completion_tokens} · 总计 {detail.usage.total_tokens} Token
                 </div>
               </header>
@@ -307,7 +265,7 @@ export function AIChatPage() {
                     <div className="chat-message-content">{message.content || (message.status === "STREAMING" ? "正在生成…" : "")}</div>
                     {message.error && <div className="chat-message-error">{message.error}</div>}
                     {message.role === "assistant" && message.usage.total_tokens > 0 && (
-                      <div className="muted">{message.usage.total_tokens} Token · {message.usage.latency_ms} ms</div>
+                      <div className="muted internal-only">{message.usage.total_tokens} Token · {message.usage.latency_ms} ms</div>
                     )}
                   </article>
                 ))}

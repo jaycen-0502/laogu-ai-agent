@@ -102,7 +102,7 @@ def test_alembic_upgrade_downgrade_upgrade_and_legacy_token_migration(tmp_path, 
         migrated = db.execute("SELECT agent_id, token_hash, status FROM agent_tokens").fetchone()
         assert migrated == ("a1", legacy_hash, "ACTIVE")
         assert db.execute("SELECT token_hash FROM agents WHERE id='a1'").fetchone()[0] == ""
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0013_remote_licenses"
+            assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0014_user_ai_policies"
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scripts'").fetchone() == ("scripts",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_providers'").fetchone() == ("ai_providers",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'").fetchone() == ("chat_sessions",)

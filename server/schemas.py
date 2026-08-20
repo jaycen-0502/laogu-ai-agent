@@ -80,6 +80,13 @@ class UserUpdate(BaseModel):
     status: str | None = None
 
 
+class UserAIPolicyUpdate(BaseModel):
+    feature: Literal["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"]
+    enabled: bool = True
+    provider_id: str | None = None
+    model: str | None = Field(default=None, max_length=160)
+
+
 class AgentRegister(BaseModel):
     agent_name: str
     machine_name: str

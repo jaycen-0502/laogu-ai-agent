@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from common.script_validation import ScriptValidationError, validate_script_params
 
 from .ai_provider import CredentialCipher, CredentialError
+from .ai_policy import resolve_provider
 from .ai_service import AIRequestError, AIRequestTimeout
 from .analysis_service import AIAnalysisRunResult, sanitize_analysis_text
 from .models import Agent, Profile, Script, ScriptVersion, Task, AIProvider, AITaskProposal, User, now
@@ -69,21 +70,8 @@ def register_task_proposal_routes(
             raise HTTPException(status_code=404, detail="AI task proposal not found")
         return item
 
-    def checked_provider(db: Session, workspace_id: str, provider_id: str | None, model: str | None) -> tuple[AIProvider, str]:
-        query = select(AIProvider).where(AIProvider.workspace_id == workspace_id, AIProvider.status == "ENABLED")
-        query = query.where(AIProvider.id == provider_id) if provider_id else query.where(AIProvider.is_default.is_(True))
-        provider = db.scalar(query)
-        if not provider:
-            raise HTTPException(status_code=422, detail="Enabled AI provider not found for this workspace")
-        selected_model = str(model or provider.default_model or "").strip()
-        if not selected_model:
-            raise HTTPException(status_code=422, detail="AI model is required")
-        allowed = set(provider.available_models or [])
-        if provider.default_model:
-            allowed.add(provider.default_model)
-        if allowed and selected_model not in allowed:
-            raise HTTPException(status_code=422, detail="AI model is not allowed for this provider")
-        return provider, selected_model
+    def checked_provider(db: Session, user: User, workspace_id: str, provider_id: str | None, model: str | None) -> tuple[AIProvider, str]:
+        return resolve_provider(db, user, "TASKS", provider_id, model, workspace_id=workspace_id)
 
     def catalog(db: Session, workspace_id: str) -> tuple[list[dict], list[dict]]:
         scripts: list[dict] = []
@@ -187,7 +175,7 @@ def register_task_proposal_routes(
     def create_proposal(body: AITaskProposalCreate, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
         if not user.workspace_id:
             raise HTTPException(status_code=422, detail="User workspace is required")
-        provider, model = checked_provider(db, user.workspace_id, body.provider_id, body.model)
+        provider, model = checked_provider(db, user, user.workspace_id, body.provider_id, body.model)
         scripts, profiles = catalog(db, user.workspace_id)
         if not scripts:
             raise HTTPException(status_code=422, detail="No enabled scripts are available")

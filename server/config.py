@@ -40,6 +40,9 @@ class ServerSettings:
     rate_limit_ai_writing: int = 10
     rate_limit_ai_task_proposal: int = 10
     license_issuer_public_key: str = ""
+    license_issuer_private_key_file: str = ""
+    license_issuer_key_password_file: str = ""
+    rate_limit_license_issue: int = 5
 
 
 def load_server_settings() -> ServerSettings:
@@ -78,4 +81,7 @@ def load_server_settings() -> ServerSettings:
         rate_limit_ai_writing=int(os.getenv("LAOGU_RATE_LIMIT_AI_WRITING", "10")),
         rate_limit_ai_task_proposal=int(os.getenv("LAOGU_RATE_LIMIT_AI_TASK_PROPOSAL", "10")),
         license_issuer_public_key=os.getenv("LAOGU_LICENSE_ISSUER_PUBLIC_KEY", "").strip(),
+        license_issuer_private_key_file=os.getenv("LAOGU_LICENSE_ISSUER_PRIVATE_KEY_FILE", "").strip(),
+        license_issuer_key_password_file=os.getenv("LAOGU_LICENSE_ISSUER_KEY_PASSWORD_FILE", "").strip(),
+        rate_limit_license_issue=int(os.getenv("LAOGU_RATE_LIMIT_LICENSE_ISSUE", "5")),
     )

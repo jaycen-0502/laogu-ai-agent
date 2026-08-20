@@ -7,6 +7,7 @@ export type User = {
   workspace_name?: string | null;
   status: string;
   created_at?: string;
+  permissions?: Record<string, boolean>;
 };
 export type Invitation = {
   invitation_id: string;

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .ai_provider import CredentialCipher, CredentialError
+from .ai_policy import resolve_provider
 from .ai_service import AIRequestError, AIRequestTimeout
 from .analysis_service import AIAnalysisRunResult, sanitize_analysis_text
 from .models import Account, AIProvider, AIWritingRecord, User, now
@@ -90,27 +91,12 @@ def register_writing_routes(
 
     def checked_provider(
         db: Session,
+        user: User,
         workspace_id: str,
         provider_id: str | None,
         model: str | None,
     ) -> tuple[AIProvider, str]:
-        query = select(AIProvider).where(
-            AIProvider.workspace_id == workspace_id,
-            AIProvider.status == "ENABLED",
-        )
-        query = query.where(AIProvider.id == provider_id) if provider_id else query.where(AIProvider.is_default.is_(True))
-        provider = db.scalar(query)
-        if not provider:
-            raise HTTPException(status_code=422, detail="Enabled AI provider not found for this workspace")
-        selected_model = str(model or provider.default_model or "").strip()
-        if not selected_model:
-            raise HTTPException(status_code=422, detail="AI model is required")
-        allowed_models = set(provider.available_models or [])
-        if provider.default_model:
-            allowed_models.add(provider.default_model)
-        if allowed_models and selected_model not in allowed_models:
-            raise HTTPException(status_code=422, detail="AI model is not allowed for this provider")
-        return provider, selected_model
+        return resolve_provider(db, user, "WRITING", provider_id, model, workspace_id=workspace_id)
 
     def execute(
         item: AIWritingRecord,
@@ -210,7 +196,7 @@ def register_writing_routes(
     ):
         account = visible_account(body.account_id, user, db) if body.account_id else None
         workspace_id = target_workspace(user, db, account, body.provider_id)
-        provider, model = checked_provider(db, workspace_id, body.provider_id, body.model)
+        provider, model = checked_provider(db, user, workspace_id, body.provider_id, body.model)
         source_text = sanitize_analysis_text(body.source_text)
         context_text = sanitize_analysis_text(body.context_text)
         item = AIWritingRecord(
@@ -256,7 +242,7 @@ def register_writing_routes(
     ):
         account = visible_account(body.account_id, user, db) if body.account_id else None
         workspace_id = target_workspace(user, db, account, body.provider_id)
-        provider, model = checked_provider(db, workspace_id, body.provider_id, body.model)
+        provider, model = checked_provider(db, user, workspace_id, body.provider_id, body.model)
         source_text = sanitize_analysis_text(body.source_text)
         context_text = sanitize_analysis_text(body.context_text)
         parameters = {

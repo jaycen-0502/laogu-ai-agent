@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 import logging
 import asyncio
+import json
 from pathlib import Path
 import time
 from typing import Annotated
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 from agent.task_manager import ALLOWED_TASK_TYPES
 
 from .ai_provider import AIProviderTester, CredentialCipher
+from .ai_policy import FEATURES, public_permissions
 from .ai_provider_api import register_ai_provider_routes
 from .ai_service import AIService, ChatRunRegistry
 from .analysis_api import register_analysis_routes
@@ -34,9 +36,9 @@ from .task_proposal_api import register_task_proposal_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
-from .models import Account, Activity, Agent, AgentToken, AuditLog, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, User, Workspace, now
+from .models import AIProvider, Account, Activity, Agent, AgentToken, AuditLog, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
-from .schemas import AccountSync, AgentRegister, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
+from .schemas import AccountSync, AgentRegister, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
 from .security_diagnostics import configuration_diagnostics, database_diagnostic
 from .script_api import register_script_routes
@@ -146,7 +148,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     engine, SessionLocal = create_database(database_url)
     if settings.environment != "production":
         Base.metadata.create_all(engine)
-    app = FastAPI(title="Laogu Coordination Server", version="0.18.0", debug=False)
+    app = FastAPI(title="Laogu Coordination Server", version="0.20.0", debug=False)
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
     app.state.settings = settings
@@ -276,11 +278,67 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if limit is not None:
             if not limiter.allow(f"{rate_bucket}:{client_ip(request)}", limit, time.monotonic()):
                 return secure_response(429, "Too many requests")
+        # Enforce the customer-facing surface at the API boundary as well as
+        # in the web menu. A MEMBER cannot reach admin, provider or runtime
+        # endpoints by typing a URL directly.
+        if request.url.path.startswith("/api/") and not request.url.path.startswith(("/api/auth/", "/api/health")):
+            raw = request.headers.get("authorization", "")
+            if raw.startswith("Bearer "):
+                session = SessionLocal()
+                try:
+                    try:
+                        payload = decode_jwt(raw[7:].strip(), settings)
+                        member = session.get(User, str(payload.get("sub") or ""))
+                    except Exception:
+                        member = None
+                    if member and member.status == "ACTIVE" and member.role == "MEMBER":
+                        path = request.url.path
+                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/ai/chat", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
+                        if not path.startswith(allowed):
+                            return secure_response(403, "该账号无权访问此功能")
+                        feature_by_prefix = {
+                            "/api/ai/chat": "CHAT",
+                            "/api/ai/writing": "WRITING",
+                            "/api/ai/analysis": "ANALYSIS",
+                            "/api/ai/task-proposals": "TASKS",
+                        }
+                        feature = next((value for prefix, value in feature_by_prefix.items() if path.startswith(prefix)), None)
+                        if feature and not public_permissions(session, member).get(feature, False):
+                            return secure_response(403, "该功能尚未分配")
+                finally:
+                    session.close()
         try:
             response = await call_next(request)
         except Exception as exc:
             LOGGER.error("Unhandled server error type=%s message=%s", type(exc).__name__, redact(exc))
             return secure_response(500, "Internal server error")
+        # Remove implementation details from JSON returned to MEMBER users.
+        # The server still records complete usage internally for administrators.
+        raw = request.headers.get("authorization", "")
+        if raw.startswith("Bearer ") and response.headers.get("content-type", "").startswith("application/json"):
+            session = SessionLocal()
+            try:
+                try:
+                    payload = decode_jwt(raw[7:].strip(), settings)
+                    member = session.get(User, str(payload.get("sub") or ""))
+                except Exception:
+                    member = None
+                if member and member.status == "ACTIVE" and member.role == "MEMBER":
+                    chunks = [chunk async for chunk in response.body_iterator]
+                    try:
+                        data = json.loads(b"".join(chunks).decode("utf-8"))
+                        hidden = {"provider_id", "provider_name", "provider_type", "base_url", "api_key_masked", "has_api_key", "default_model", "models", "model", "prompt_tokens", "completion_tokens", "total_tokens", "latency_ms", "ai_total_tokens"}
+                        def scrub(value):
+                            if isinstance(value, dict):
+                                return {key: scrub(item) for key, item in value.items() if key not in hidden}
+                            if isinstance(value, list):
+                                return [scrub(item) for item in value]
+                            return value
+                        response = JSONResponse(status_code=response.status_code, content=scrub(data), headers={"Cache-Control": "no-store"})
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        pass
+            finally:
+                session.close()
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         return response
@@ -466,8 +524,9 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         return {"access_token": create_jwt(user, settings), "token_type": "bearer", "role": user.role, "workspace_id": user.workspace_id}
 
     @app.get("/api/auth/me")
-    def auth_me(user: User = Depends(current_user)):
-        return _user_dict(user)
+    def auth_me(user: User = Depends(current_user), db: Session = Depends(get_db)):
+        workspace = db.get(Workspace, user.workspace_id) if user.workspace_id else None
+        return _user_dict(user, workspace.name if workspace else None) | {"permissions": public_permissions(db, user)}
 
     def active_invitation(db: Session, raw_token: str) -> Invitation:
         item = db.scalar(select(Invitation).where(Invitation.token_hash == token_hash(raw_token)).with_for_update())
@@ -635,6 +694,46 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         serialize = lambda item: _user_dict(item, workspace_names.get(item.workspace_id))
         if paged_response: return paged(db, query, serialize, page=page, page_size=page_size)
         return [serialize(item) for item in db.scalars(query)]
+
+    @app.get("/api/users/{user_id}/ai-policy")
+    def get_user_ai_policy(user_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        target = db.get(User, user_id)
+        if not target or user.role == "MEMBER" or (user.role != "ADMIN" and target.workspace_id != user.workspace_id):
+            deny(request, db, action="USER_AI_POLICY_READ", user=user)
+        rows = {item.feature: item for item in db.scalars(select(UserAIPolicy).where(UserAIPolicy.user_id == target.id))}
+        defaults = {"CHAT", "WRITING", "ANALYSIS", "TASKS"}
+        return {
+            "user_id": target.id,
+            "features": {feature: (rows[feature].enabled if feature in rows else feature in defaults) for feature in FEATURES},
+            "models": {feature: {"provider_id": rows[feature].provider_id, "model": rows[feature].model} for feature in FEATURES if feature in rows and rows[feature].provider_id},
+        }
+
+    @app.put("/api/users/{user_id}/ai-policy")
+    def update_user_ai_policy(user_id: str, body: UserAIPolicyUpdate, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        target = db.get(User, user_id)
+        if not target or user.role == "MEMBER" or (user.role != "ADMIN" and target.workspace_id != user.workspace_id):
+            deny(request, db, action="USER_AI_POLICY_UPDATE", user=user)
+        if body.provider_id:
+            provider = db.get(AIProvider, body.provider_id)
+            if not provider or provider.workspace_id != target.workspace_id or provider.status != "ENABLED":
+                raise HTTPException(status_code=422, detail="Provider 不属于该工作区或未启用")
+            allowed = set(provider.available_models or [])
+            if provider.default_model:
+                allowed.add(provider.default_model)
+            if body.model and allowed and body.model not in allowed:
+                raise HTTPException(status_code=422, detail="模型不属于所选服务商")
+        item = db.scalar(select(UserAIPolicy).where(UserAIPolicy.user_id == target.id, UserAIPolicy.feature == body.feature))
+        if not item:
+            item = UserAIPolicy(user_id=target.id, workspace_id=target.workspace_id, feature=body.feature, updated_by=user.id)
+            db.add(item)
+        item.enabled = body.enabled
+        item.provider_id = body.provider_id if body.enabled else None
+        item.model = ((body.model or "").strip() or None) if body.enabled else None
+        item.updated_by = user.id
+        item.updated_at = now()
+        db.commit()
+        audit(db, request, action="USER_AI_POLICY_UPDATE", result="SUCCESS", user_id=user.id, workspace_id=target.workspace_id, resource_type="user_ai_policy", resource_id=item.id)
+        return {"ok": True, "feature": item.feature, "enabled": item.enabled, "provider_id": item.provider_id, "model": item.model}
 
     @app.post("/api/users")
     def create_user(request: Request, body: UserCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):

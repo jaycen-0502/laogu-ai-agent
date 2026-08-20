@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiClient, authStore, ApiError, jsonBody } from "../api/client";
 import type {
   Account,
+  AIProvider,
   Activity,
   Agent,
   Audit,
@@ -1017,6 +1018,9 @@ function UsersPage({ current }: { current: User }) {
   const [inviteLink, setInviteLink] = useState("");
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [policyUser, setPolicyUser] = useState<User | null>(null);
+  const [policy, setPolicy] = useState<{ features: Record<string, boolean>; models: Record<string, { provider_id?: string; model?: string }> } | null>(null);
+  const [policyProviders, setPolicyProviders] = useState<AIProvider[]>([]);
   const result = usePage<User>(
     `/users?paged=true&page=${page}&page_size=20&q=${encodeURIComponent(q)}${includeDeleted ? "&include_deleted=true" : ""}`,
     [page, q, includeDeleted],
@@ -1068,6 +1072,31 @@ function UsersPage({ current }: { current: User }) {
         body: JSON.stringify(body),
       });
       result.reload();
+    } catch (exc) {
+      setMessage(errorText(exc));
+    }
+  };
+  const openPolicy = async (item: User) => {
+    setMessage("");
+    try {
+      const [nextPolicy, providers] = await Promise.all([
+        apiClient<typeof policy>(`/users/${item.user_id}/ai-policy`),
+        apiClient<AIProvider[]>(`/ai/providers?status=ENABLED&workspace_id=${encodeURIComponent(item.workspace_id || "")}`),
+      ]);
+      setPolicyUser(item);
+      setPolicy(nextPolicy);
+      setPolicyProviders(providers);
+    } catch (exc) {
+      setMessage(errorText(exc));
+    }
+  };
+  const savePolicy = async (feature: string, enabled: boolean, provider_id = "", model = "") => {
+    if (!policyUser) return;
+    try {
+      await apiClient(`/users/${policyUser.user_id}/ai-policy`, { ...jsonBody({ feature, enabled, provider_id: provider_id || null, model: model || null }), method: "PUT" });
+      const next = await apiClient<typeof policy>(`/users/${policyUser.user_id}/ai-policy`);
+      setPolicy(next);
+      setMessage("AI 权限已更新");
     } catch (exc) {
       setMessage(errorText(exc));
     }
@@ -1234,6 +1263,7 @@ function UsersPage({ current }: { current: User }) {
               </td>
               <td>{fmt(item.created_at)}</td>
               <td>
+                <button onClick={() => void openPolicy(item)}>AI权限</button>
                 <button
                   disabled={item.user_id === current.user_id || (item.status === "DELETED" && current.role !== "ADMIN")}
                   onClick={() =>
@@ -1251,6 +1281,23 @@ function UsersPage({ current }: { current: User }) {
       </Table>
       {!result.data.items.length && <Empty />}
       <PageNav page={page} pages={result.data.pages} onPage={setPage} />
+      {policyUser && policy && (
+        <div className="modal-backdrop" onClick={() => setPolicyUser(null)}>
+          <section className="modal-panel narrow" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><h2>AI 权限与模型</h2><span className="muted">{policyUser.username} · {policyUser.workspace_name || policyUser.workspace_id}</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
+            {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"] as const).map((feature) => {
+              const assignment = policy.models[feature] || {};
+              const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id);
+              const models = provider ? Array.from(new Set([...(provider.models || []), provider.default_model].filter(Boolean))) : [];
+              return <div className="policy-row" key={feature}>
+                <label className="check-row"><input type="checkbox" checked={Boolean(policy.features[feature])} onChange={(event) => void savePolicy(feature, event.target.checked, assignment.provider_id || "", assignment.model || "")} />{feature}</label>
+                <select value={assignment.provider_id || ""} disabled={!policy.features[feature]} onChange={(event) => void savePolicy(feature, true, event.target.value, "")}><option value="">自动使用工作区默认</option>{policyProviders.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name}</option>)}</select>
+                <select value={assignment.model || ""} disabled={!policy.features[feature] || !provider} onChange={(event) => void savePolicy(feature, true, assignment.provider_id || "", event.target.value)}><option value="">默认模型</option>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+              </div>;
+            })}
+          </section>
+        </div>
+      )}
     </>
   );
 }

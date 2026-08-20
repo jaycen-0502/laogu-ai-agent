@@ -60,7 +60,7 @@ def test_security_diagnostics_is_admin_only_and_redacted():
     ).json()
     response = client.get("/api/admin/security/diagnostics", headers=auth(bootstrap["access_token"]))
     assert response.status_code == 200
-    assert response.json()["service"]["version"] == "0.18.0"
+    assert response.json()["service"]["version"] == "0.20.0"
     assert response.json()["websocket"]["http_pull_fallback"] is True
     assert "stage10e-test-secret" not in response.text
 

@@ -36,6 +36,21 @@ class User(Base):
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
 
 
+class UserAIPolicy(Base):
+    __tablename__ = "user_ai_policies"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    feature: Mapped[str] = mapped_column(String(20), index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider_id: Mapped[str | None] = mapped_column(ForeignKey("ai_providers.id", ondelete="SET NULL"), nullable=True, index=True)
+    model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    updated_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("user_id", "feature", name="uq_user_ai_policy_feature"),)
+
+
 class Invitation(Base):
     __tablename__ = "invitations"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)

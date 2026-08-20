@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -37,6 +38,19 @@ def _client():
     private_key = Ed25519PrivateKey.generate()
     public_key = _b64(private_key.public_key().public_bytes_raw())
     settings = ServerSettings(database_url="sqlite://", jwt_secret="remote-license-test-secret-more-than-32", jwt_expire_minutes=60, agent_offline_seconds=90, license_issuer_public_key=public_key)
+    return TestClient(create_app(settings.database_url, settings)), private_key
+
+
+def _server_signing_client(tmp_path: Path):
+    private_key = Ed25519PrivateKey.generate()
+    public_key = _b64(private_key.public_key().public_bytes_raw())
+    key_path = tmp_path / "issuer.pem"
+    password_path = tmp_path / "issuer.password"
+    password = b"test-online-signing-password"
+    from cryptography.hazmat.primitives import serialization
+    key_path.write_bytes(private_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.BestAvailableEncryption(password)))
+    password_path.write_bytes(password)
+    settings = ServerSettings(database_url="sqlite://", jwt_secret="remote-license-test-secret-more-than-32", jwt_expire_minutes=60, agent_offline_seconds=90, license_issuer_public_key=public_key, license_issuer_private_key_file=str(key_path), license_issuer_key_password_file=str(password_path))
     return TestClient(create_app(settings.database_url, settings)), private_key
 
 
@@ -85,6 +99,27 @@ def test_remote_license_expired_and_non_admin_forbidden():
     assert result.status_code == 200 and result.json()["state"] == "EXPIRED"
     assert client.get("/api/license/lic_expired/devices", headers=_auth(owner_token)).status_code == 403
     assert client.get("/api/license/lic_expired/checks", headers=_auth(owner_token)).status_code == 403
+
+
+def test_remote_license_server_issue_returns_compatible_code_without_persisting_code(tmp_path):
+    client, private_key = _server_signing_client(tmp_path)
+    boot = client.post("/api/auth/bootstrap", json={"workspace_name": "Studio", "username": "admin", "password": "password123"}).json()
+    request_payload = {"version": 1, "deviceId": "device-online", "installPublicKey": "install-key-online", "nonce": "nonce-online", "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+    request_code = "LGREQ1." + _b64(json.dumps(request_payload, separators=(",", ":")).encode())
+    issued = client.post("/api/license/issue", headers=_auth(boot["access_token"]), json={"request_code": request_code, "days": 30, "customer": "Online"})
+    assert issued.status_code == 200
+    payload = issued.json()
+    assert payload["activation_code"].startswith("LGACT1.")
+    assert "activation_code" not in client.get("/api/license/status", headers=_auth(boot["access_token"])).text
+    checked = client.post("/api/license/check", json={"activation_code": payload["activation_code"], "device_id": "device-online", "install_public_key": "install-key-online", "app_version": "1.0"})
+    assert checked.status_code == 200 and checked.json()["ok"] is True
+
+
+def test_remote_license_server_issue_disabled_without_key():
+    client, _ = _client()
+    boot = client.post("/api/auth/bootstrap", json={"workspace_name": "Studio", "username": "admin", "password": "password123"}).json()
+    request_code = "LGREQ1." + _b64(json.dumps({"version": 1, "deviceId": "device", "installPublicKey": "key", "nonce": "nonce", "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}, separators=(",", ":")).encode())
+    assert client.post("/api/license/issue", headers=_auth(boot["access_token"]), json={"request_code": request_code}).status_code == 503
 
 
 def test_remote_license_admin_views_mask_sensitive_device_metadata():

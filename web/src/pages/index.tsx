@@ -456,6 +456,35 @@ function AgentsPage({ current }: { current: User }) {
       setRegisterMessage(errorText(exc));
     }
   };
+  const downloadSetupScript = () => {
+    if (!registerResult) return;
+    const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+    const script = `# 老谷 Windows Agent 一键配置脚本
+# 请把本文件放到 laogu-ai-agent 项目根目录后运行。
+$ErrorActionPreference = "Stop"
+Set-Location -LiteralPath (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$env:LAOGU_SERVER_URL = ${quote(window.location.origin)}
+$env:LAOGU_AGENT_ID = ${quote(registerResult.agent_id)}
+$env:LAOGU_AGENT_TOKEN = ${quote(registerResult.agent_token)}
+try {
+  python -m agent.service_main --once
+  if ($LASTEXITCODE -ne 0) { throw "Agent 首次配置失败，退出码：$LASTEXITCODE" }
+  Write-Host "Agent 配置成功。现在可以运行：python -m agent.service_main" -ForegroundColor Green
+} finally {
+  Remove-Item Env:LAOGU_SERVER_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:LAOGU_AGENT_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:LAOGU_AGENT_TOKEN -ErrorAction SilentlyContinue
+}
+Read-Host "按回车退出"
+`;
+    const blob = new Blob([script], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `laogu-agent-setup-${registerResult.agent_id.slice(0, 8)}.ps1`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   const open = async (item: Agent) =>
     setSelected(await apiClient(`/agents/${item.agent_id}`));
   return (
@@ -479,7 +508,7 @@ function AgentsPage({ current }: { current: User }) {
         <label>API 地址<input value={window.location.origin} readOnly /></label>
         <label>运行端 ID<input value={registerResult.agent_id} readOnly /></label>
         <label>Agent Token<input value={registerResult.agent_token} readOnly onFocus={(event) => event.currentTarget.select()} /></label>
-        <div className="modal-actions"><button type="button" onClick={() => navigator.clipboard.writeText(`API 地址：${window.location.origin}\nAgent ID：${registerResult.agent_id}\nAgent Token：${registerResult.agent_token}`)}>复制配置</button><button type="button" onClick={() => setRegisterResult(null)}>我已保存，关闭</button></div>
+        <div className="modal-actions"><button type="button" onClick={() => navigator.clipboard.writeText(`API 地址：${window.location.origin}\nAgent ID：${registerResult.agent_id}\nAgent Token：${registerResult.agent_token}`)}>复制配置</button><button type="button" onClick={downloadSetupScript}>下载 Windows 一键配置脚本</button><button type="button" onClick={() => setRegisterResult(null)}>我已保存，关闭</button></div>
       </section>}
       <div className="toolbar">
         <input

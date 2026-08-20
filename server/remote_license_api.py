@@ -88,8 +88,10 @@ def _load_issuer_private_key(settings) -> Ed25519PrivateKey:
     if not key_path or not password_path:
         raise HTTPException(status_code=503, detail="Online license signing is not configured")
     try:
-        key_bytes = open(key_path, "rb").read()
-        password = open(password_path, "rb").read().strip()
+        with open(key_path, "rb") as key_file:
+            key_bytes = key_file.read()
+        with open(password_path, "rb") as password_file:
+            password = password_file.read().strip()
         if not password:
             raise ValueError("empty key password")
         key = serialization.load_pem_private_key(key_bytes, password=password)
@@ -210,7 +212,23 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
             raise HTTPException(status_code=403, detail="Forbidden")
         settings = request.app.state.settings
         configured = bool(str(getattr(settings, "license_issuer_private_key_file", "") or "").strip() and str(getattr(settings, "license_issuer_key_password_file", "") or "").strip())
-        return {"configured": configured, "mode": "server" if configured else "offline_terminal"}
+        if not configured:
+            return {
+                "configured": False,
+                "available": False,
+                "mode": "offline_terminal",
+                "reason": "Online license signing is not configured",
+            }
+        try:
+            _load_issuer_private_key(settings)
+        except HTTPException as exc:
+            return {
+                "configured": True,
+                "available": False,
+                "mode": "offline_terminal",
+                "reason": str(exc.detail),
+            }
+        return {"configured": True, "available": True, "mode": "server", "reason": None}
 
     @app.post("/api/license/issue")
     def issue_license(body: LicenseIssue, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):

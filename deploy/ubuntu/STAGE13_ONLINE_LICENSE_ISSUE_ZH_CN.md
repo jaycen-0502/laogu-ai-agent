@@ -57,10 +57,16 @@ sudo -u laogu bash -c 'cd /opt/laogu-ai-agent/web && npm ci && npm run build'
 ## 安装私钥文件（单独执行）
 
 ```bash
-sudo install -d -o laogu -g laogu -m 700 /etc/laogu/license
-sudo install -o laogu -g laogu -m 600 /tmp/Laogu-License-Issuer.pem /etc/laogu/license/Laogu-License-Issuer.pem
-sudo install -o laogu -g laogu -m 600 /tmp/Laogu-License-Password.txt /etc/laogu/license/Laogu-License-Password.txt
+sudo install -d -o root -g laogu -m 710 /etc/laogu
+sudo install -d -o root -g laogu -m 750 /etc/laogu/license
+sudo install -o root -g laogu -m 640 /tmp/Laogu-License-Issuer.pem /etc/laogu/license/Laogu-License-Issuer.pem
+sudo install -o root -g laogu -m 640 /tmp/Laogu-License-Password.txt /etc/laogu/license/Laogu-License-Password.txt
+sudo -u laogu test -r /etc/laogu/license/Laogu-License-Issuer.pem
+sudo -u laogu test -r /etc/laogu/license/Laogu-License-Password.txt
+echo "KEY_FILES_READABLE"
 ```
+
+私钥和密码文件保持由 `root` 持有，`laogu` 服务账号只有读取权限。必须同时保证 `/etc/laogu` 和 `/etc/laogu/license` 允许 `laogu` 组穿过目录，否则文件本身即使是 `640` 也无法读取。
 
 把下面三行加入 `/etc/laogu/server.env`（不要把密码写入这份配置）：
 
@@ -79,7 +85,7 @@ curl -fsS http://127.0.0.1:8000/api/health; echo
 curl -fsS http://127.0.0.1:8000/openapi.json | python3 -c 'import json,sys; p=json.load(sys.stdin)["paths"]; print("ISSUE_ROUTE", "/api/license/issue" in p)'
 ```
 
-登录管理后台，打开“远程授权”。配置成功时“在线生成激活码”按钮可用；未配置时会显示离线模式提示。
+登录管理后台，打开“远程授权”。只有私钥文件可读、密码正确且私钥与配置公钥匹配时，“在线生成激活码”按钮才会启用；检查失败时页面显示安全提示并继续保留离线授权终端。
 
 ## 回滚
 

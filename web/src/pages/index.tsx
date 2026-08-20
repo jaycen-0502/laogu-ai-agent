@@ -446,6 +446,16 @@ function AgentsPage({ current }: { current: User }) {
       setRegisterMessage(errorText(exc));
     }
   };
+  const rotateToken = async (item: Agent) => {
+    if (!window.confirm(`确定要重新生成“${item.agent_name}”的 Agent Token 吗？旧 Token 会立即失效。`)) return;
+    try {
+      const rotated = await apiClient<{ agent_id: string; agent_token: string; expires_at?: string }>(`/agents/${item.agent_id}/token/rotate`, { method: "POST" });
+      setRegisterResult({ agent_id: rotated.agent_id, agent_token: rotated.agent_token, workspace_id: item.workspace_id });
+      setRegisterMessage("Token 已重新生成。请在 Windows Agent 中替换旧 Token 后重启 Agent。");
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
   const open = async (item: Agent) =>
     setSelected(await apiClient(`/agents/${item.agent_id}`));
   return (
@@ -534,6 +544,8 @@ function AgentsPage({ current }: { current: User }) {
             {selected.accounts?.length || 0}　最近任务：
             {selected.recent_tasks?.length || 0}
           </p>
+          <p className="form-help">如果 Windows Agent 的 Token 遗失或泄露，可以重新生成；旧 Token 会立即失效。</p>
+          <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>
           <button onClick={() => setSelected(null)}>关闭</button>
         </div>
       )}

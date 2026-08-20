@@ -12,7 +12,7 @@ foreach ($Path in @($Dist, $Work)) {
     $AbsolutePath = [System.IO.Path]::GetFullPath($Path)
     $ProjectPrefix = $Project.TrimEnd('\') + '\'
     if (-not $AbsolutePath.StartsWith($ProjectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "拒绝操作工作区之外的路径：$AbsolutePath"
+        throw "Refusing to operate outside the project directory: $AbsolutePath"
     }
 }
 

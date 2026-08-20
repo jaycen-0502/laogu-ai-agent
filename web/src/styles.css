@@ -210,6 +210,20 @@ nav a.active {
   border-radius: 20px;
   font-weight: 600;
 }
+.account-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.account-link:hover {
+  background: #c8f5ed;
+}
+.account-link-label {
+  font-size: 12px;
+  font-weight: 500;
+}
 .content {
   padding: 25px 28px 40px;
   max-width: 1680px;

@@ -37,7 +37,13 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 echo "2/8 备份 PostgreSQL 与当前程序"
 set -a; . /etc/laogu/server.env; set +a
 if command -v pg_dump >/dev/null && [ -n "${LAOGU_SERVER_DATABASE_URL:-}" ]; then
-  pg_dump "$LAOGU_SERVER_DATABASE_URL" -Fc -f "$BACKUP/database-before-$STAMP.dump"
+  # SQLAlchemy 使用 postgresql+psycopg(2)://，pg_dump 只接受
+  # postgresql://。只转换驱动前缀，不打印包含密码的连接地址。
+  DB_URL="${LAOGU_SERVER_DATABASE_URL/postgresql+psycopg2/postgresql}"
+  DB_URL="${DB_URL/postgresql+psycopg/postgresql}"
+  pg_dump --format=custom --no-owner --no-acl \
+    --file="$BACKUP/database-before-$STAMP.dump" "$DB_URL"
+  pg_restore --list "$BACKUP/database-before-$STAMP.dump" >/dev/null
 fi
 tar -czf "$BACKUP/application-before-$STAMP.tar.gz" --exclude='server/*.db' --exclude='*.log' -C "$APP" agent alembic common server web alembic.ini
 

@@ -6,7 +6,7 @@ umask 077
 # 构建前端并执行健康检查。不会覆盖 /etc/laogu/server.env。
 APP="${APP:-/opt/laogu-ai-agent}"
 REPO="${GITHUB_REPOSITORY:-jaycen-0502/laogu-ai-agent}"
-REF="${GITHUB_REF:-v0.20.5}"
+REF="${GITHUB_REF:-}"
 TMP="$(mktemp -d /tmp/laogu-github-upgrade.XXXXXX)"
 BACKUP="/var/backups/laogu"
 mkdir -p "$BACKUP"
@@ -22,11 +22,15 @@ if [ -z "${GITHUB_TOKEN:-}" ]; then
   read -r -s -p "私有仓库 GitHub Token（输入时不显示）：" GITHUB_TOKEN; echo
 fi
 test -n "$GITHUB_TOKEN" || { echo "没有 GitHub Token，停止升级" >&2; exit 1; }
-if [ "${GITHUB_REF:-}" = "" ]; then
-  latest_ref="$(curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/tags?per_page=30" 2>/dev/null | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9.]*\)".*/\1/p' | head -n 1 || true)"
-  if [[ "$latest_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then REF="$latest_ref"; fi
+if [ -z "$REF" ]; then
+  latest_ref="$(curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/tags?per_page=100" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9.]*\)".*/\1/p' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+  [ -n "$latest_ref" ] || { echo "无法读取 GitHub 最新版本标签，停止升级" >&2; exit 1; }
+  REF="$latest_ref"
+  echo "当前 GitHub 最新版本：$REF"
+else
+  [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "GITHUB_REF 必须是 v主版本.次版本.修订版本" >&2; exit 1; }
+  echo "指定升级版本：$REF"
 fi
-read -r -p "升级版本/标签 [${REF}]（直接回车使用当前最新版本）：" input_ref; REF="${input_ref:-$REF}"
 
 echo "1/8 下载 GitHub 版本：$REPO@$REF"
 curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
@@ -56,7 +60,9 @@ fi
 tar -czf "$BACKUP/application-before-$STAMP.tar.gz" --exclude='server/*.db' --exclude='*.log' -C "$APP" agent alembic common server web alembic.ini
 
 echo "3/8 检查版本与迁移"
-grep -q 'version="0.20.0"' "$SRC/server/main.py" || { echo "版本不是 0.20.0，停止升级" >&2; exit 1; }
+APP_VERSION="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SRC/web/package.json" | head -n 1)"
+test -n "$APP_VERSION" || { echo "无法读取应用版本，停止升级" >&2; exit 1; }
+grep -q "version=\"$APP_VERSION\"" "$SRC/server/main.py" || { echo "前后端版本不一致（$APP_VERSION），停止升级" >&2; exit 1; }
 test -f "$SRC/alembic/versions/0014_user_ai_policies.py" || { echo "缺少 0014 迁移，停止升级" >&2; exit 1; }
 
 echo "4/8 停止服务并同步代码"
@@ -101,6 +107,7 @@ echo
 curl -fsS http://127.0.0.1:8000/api/health/ready
 echo
 echo "=== 升级成功 ==="
-echo "版本：0.20.0"
+echo "程序版本：$APP_VERSION"
+echo "GitHub 标签：$REF"
 echo "备份目录：$BACKUP"
 echo "注意：GitHub Token 只在本次命令内存中使用，不会写入配置文件。"

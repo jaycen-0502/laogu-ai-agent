@@ -17,7 +17,7 @@ done
 
 RECIPIENT="${LAOGU_BACKUP_AGE_RECIPIENT:-}"
 BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
-CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+ADMIN_USER_ID="${TELEGRAM_ADMIN_USER_ID:-${TELEGRAM_CHAT_ID:-}}"
 
 if [ -z "$RECIPIENT" ]; then
   read -r -p "请输入 age 公钥（age1 开头）：" RECIPIENT
@@ -37,11 +37,11 @@ if ! [[ "$BOT_TOKEN" =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]]; then
   exit 1
 fi
 
-if [ -z "$CHAT_ID" ]; then
-  read -r -p "请输入 Telegram Chat ID：" CHAT_ID
+if [ -z "$ADMIN_USER_ID" ]; then
+  read -r -p "请输入 Telegram 管理员用户 ID（正数，必须是私人聊天）：" ADMIN_USER_ID
 fi
-if ! [[ "$CHAT_ID" =~ ^-?[0-9]+$ ]]; then
-  echo "Telegram Chat ID 格式错误" >&2
+if ! [[ "$ADMIN_USER_ID" =~ ^[0-9]+$ ]] || [ "$ADMIN_USER_ID" -le 0 ]; then
+  echo "Telegram 管理员用户 ID 格式错误，必须是正数" >&2
   exit 1
 fi
 
@@ -56,10 +56,15 @@ chmod 600 /etc/laogu/backup-age-recipient.txt
 
 {
   printf 'TELEGRAM_BOT_TOKEN=%s\n' "$BOT_TOKEN"
-  printf 'TELEGRAM_CHAT_ID=%s\n' "$CHAT_ID"
+  printf 'TELEGRAM_ADMIN_USER_ID=%s\n' "$ADMIN_USER_ID"
+  # Kept for compatibility; sender enforces equality with the administrator ID.
+  printf 'TELEGRAM_CHAT_ID=%s\n' "$ADMIN_USER_ID"
 } > /etc/laogu/backup.env
 chmod 600 /etc/laogu/backup.env
 unset BOT_TOKEN TELEGRAM_BOT_TOKEN
+
+echo "验证 Telegram 私人管理员绑定"
+/usr/local/sbin/laogu-telegram verify
 
 install -o root -g root -m 644 "$SYSTEMD_DIR/laogu-backup.service" /etc/systemd/system/laogu-backup.service
 install -o root -g root -m 644 "$SYSTEMD_DIR/laogu-backup.timer" /etc/systemd/system/laogu-backup.timer

@@ -187,7 +187,7 @@ git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent \
 - API 版本和数据库迁移版本；
 - Nginx 配置和 HTTPS。
 
-确认登录和数据正常后，重新绑定 Telegram 备份：
+确认登录和数据正常后，重新绑定 Telegram 备份（必须绑定私人管理员用户 ID）：
 
 ```bash
 sudo bash /opt/laogu-ai-agent/deploy/ubuntu/install-backup.sh
@@ -201,7 +201,9 @@ sudo journalctl -u laogu-backup.service -n 80 --no-pager
 
 - 每日使用 age 公钥加密 PostgreSQL、精简源码、应用数据和生产配置；
 - 加密恢复包上传 Telegram；
-- 本机自动备份保留 7 天；
+- Telegram 目标必须是配置管理员用户 ID 对应的私人聊天，拒绝群组/频道；
+- 本机自动备份只保留最近两份，第三份及更旧自动删除；
+- Telegram 聊天记录不会由服务器自动删除；
 - 每周检查磁盘、服务、数据库和备份状态；
 - 私钥不提交 GitHub，也不包含在恢复包中。
 

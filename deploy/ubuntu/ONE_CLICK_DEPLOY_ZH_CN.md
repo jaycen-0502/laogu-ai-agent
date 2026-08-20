@@ -52,7 +52,8 @@ Nginx、HTTPS、初始管理员和最终验收。
 
 ### 4. 安装加密自动备份
 
-准备 age 公钥、Telegram Bot Token 和 Chat ID：
+准备 age 公钥、Telegram Bot Token 和 Telegram 管理员用户 ID。管理员必须先私聊 Bot 发送 `/start`，
+并使用自己的正数用户 ID；系统会调用 Telegram `getChat` 验证目标是私人聊天，拒绝群组和频道。
 
 ```bash
 cd /opt/laogu-ai-agent
@@ -61,7 +62,8 @@ sudo systemctl start laogu-backup.service
 sudo journalctl -u laogu-backup.service -n 80 --no-pager
 ```
 
-看到 `BACKUP_OK` 且 Telegram 收到文件，才算备份通过。
+看到 `BACKUP_OK` 且 Telegram 收到文件，才算备份通过。自动备份成功上传后，服务器本地
+`/var/backups/laogu-auto/` 只保留最近两份 `.tar.gz.age` 及其 `.sha256` 文件；Telegram 聊天记录不会自动删除。
 
 ## 三、日常验收
 

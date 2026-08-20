@@ -138,10 +138,15 @@ HASH="$(awk '{print $1}' "$FINAL.sha256")"
 大小：$SIZE_HUMAN
 SHA256：$HASH"
 
-echo "7/7 清理7天前的自动备份"
-find "$DEST" -maxdepth 1 -type f \
-  \( -name 'laogu-recovery-*.tar.gz.age' \
-     -o -name 'laogu-recovery-*.tar.gz.age.sha256' \) \
-  -mtime +7 -delete
+echo "7/7 只保留最近两份自动备份"
+OLD_BACKUPS="$(find "$DEST" -maxdepth 1 -type f -name 'laogu-recovery-*.tar.gz.age' \
+  -printf '%T@ %p\n' | sort -nr | awk 'NR > 2 {sub(/^[^ ]+ /, ""); print}')"
+if [ -n "$OLD_BACKUPS" ]; then
+  while IFS= read -r old; do
+    [ -n "$old" ] || continue
+    rm -f -- "$old" "$old.sha256"
+    echo "已删除旧备份：$(basename "$old")"
+  done <<< "$OLD_BACKUPS"
+fi
 
 echo "BACKUP_OK $FINAL"

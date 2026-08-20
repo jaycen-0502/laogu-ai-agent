@@ -66,7 +66,8 @@ def _agent_dict(item: Agent, settings: ServerSettings) -> dict:
     if last is not None and last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     online = bool(last and datetime.now(timezone.utc) - last.astimezone(timezone.utc) <= timedelta(seconds=settings.agent_offline_seconds))
-    return {"agent_id": item.id, "workspace_id": item.workspace_id, "agent_name": item.agent_name, "machine_name": item.machine_name, "client_version": item.client_version, "status": "ONLINE" if online else "OFFLINE", "last_heartbeat": _dt(item.last_heartbeat), "profile_count": item.profile_count, "running_task_count": item.running_task_count, "binding_status": "BOUND" if item.bound_device_id else "UNBOUND", "bound_ip": item.bound_ip, "last_ip": item.last_ip, "ip_country": item.ip_country or "UNKNOWN"}
+    visible_status = "DELETED" if item.status == "DELETED" else ("ONLINE" if online else "OFFLINE")
+    return {"agent_id": item.id, "workspace_id": item.workspace_id, "agent_name": item.agent_name, "machine_name": item.machine_name, "client_version": item.client_version, "status": visible_status, "last_heartbeat": _dt(item.last_heartbeat), "profile_count": item.profile_count, "running_task_count": item.running_task_count, "binding_status": "BOUND" if item.bound_device_id else "UNBOUND", "bound_ip": item.bound_ip, "last_ip": item.last_ip, "ip_country": item.ip_country or "UNKNOWN"}
 
 
 def _request_ip_country(request: Request) -> str:
@@ -178,7 +179,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             digest = token_hash(raw)
             token = db.scalar(select(AgentToken).where(AgentToken.token_hash == digest, AgentToken.status == TOKEN_ACTIVE))
             agent = db.get(Agent, token.agent_id) if token else None
-            if not agent:
+            if not agent or agent.status == "DELETED":
                 await websocket.close(code=4401)
                 return
             device_id = websocket.headers.get("x-laogu-device-id", "").strip()
@@ -427,7 +428,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             audit(db, request, action="AUTH_AGENT", result="DENIED", agent_id=token.agent_id, message="Expired or revoked agent token")
             raise HTTPException(status_code=401, detail="Unauthorized")
         agent = db.get(Agent, token.agent_id)
-        if not agent:
+        if not agent or agent.status == "DELETED":
             audit(db, request, action="AUTH_AGENT", result="DENIED", agent_id=token.agent_id, message="Missing agent")
             raise HTTPException(status_code=401, detail="Unauthorized")
         device_id = request.headers.get("x-laogu-device-id", "").strip()
@@ -827,6 +828,20 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         db.commit()
         audit(db, request, action="AGENT_TOKEN_REVOKE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id)
         return {"agent_id": agent.id, "revoked": changed}
+
+    @app.delete("/api/agents/{agent_id}")
+    def delete_agent(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        require_agent_manager(request, db, user, agent)
+        when = now(); revoked = 0
+        for token in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
+            token.status = TOKEN_REVOKED; token.revoked_at = when; revoked += 1
+        agent.status = "DELETED"
+        db.commit()
+        audit(db, request, action="AGENT_DELETE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message=f"revoked_tokens={revoked}")
+        return {"agent_id": agent.id, "status": "DELETED", "revoked": revoked}
 
     @app.post("/api/agents/heartbeat")
     def heartbeat(request: Request, body: Heartbeat, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):

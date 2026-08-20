@@ -456,6 +456,17 @@ function AgentsPage({ current }: { current: User }) {
       setRegisterMessage(errorText(exc));
     }
   };
+  const deleteAgent = async (item: Agent) => {
+    if (!window.confirm(`确定删除“${item.agent_name}”吗？删除后该运行端的所有 Token 会立即失效，远程连接会被取消；浏览器资料和任务历史会保留。`)) return;
+    try {
+      await apiClient(`/agents/${item.agent_id}`, { method: "DELETE" });
+      setSelected(null);
+      setRegisterMessage("运行端已删除，所有 Token 已失效。浏览器资料和历史记录仍保留。 ");
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
   const downloadSetupScript = () => {
     if (!registerResult) return;
     const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
@@ -582,6 +593,7 @@ if ($setupSucceeded) {
           </p>
           <p className="form-help">如果 Windows Agent 的 Token 遗失或泄露，可以重新生成；旧 Token 会立即失效。</p>
           <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>
+          <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>
           <button onClick={() => setSelected(null)}>关闭</button>
         </div>
       )}

@@ -69,6 +69,19 @@ nginx -t
 systemctl reload nginx
 
 echo "8/8 健康检查"
+READY=0
+for attempt in $(seq 1 30); do
+  if curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+    READY=1
+    break
+  fi
+  sleep 1
+done
+if [ "$READY" -ne 1 ]; then
+  echo "后端启动超时，最近日志如下：" >&2
+  journalctl -u laogu-server -n 40 --no-pager >&2 || true
+  exit 1
+fi
 curl -fsS http://127.0.0.1:8000/api/health
 echo
 curl -fsS http://127.0.0.1:8000/api/health/ready

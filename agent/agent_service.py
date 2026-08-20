@@ -101,7 +101,7 @@ class AgentService:
             return False
         running = sum(1 for task in self.task_service.task_manager.list_tasks() if task.status is TaskStatus.RUNNING)
         timestamp = datetime.now().astimezone().isoformat()
-        self.server_client.heartbeat({"agent_id": self.server_client.agent_id, "client_version": self.client_version, "status": "ONLINE", "profile_count": len(self.account_registry.list()), "running_task_count": running, "timestamp": timestamp})
+        self.server_client.heartbeat({"agent_id": self.server_client.agent_id, "device_id": self.server_client.device_id, "client_version": self.client_version, "status": "ONLINE", "profile_count": len(self.account_registry.list()), "running_task_count": running, "timestamp": timestamp})
         self.server_status = "ONLINE"; self.agent_status = "ONLINE"; self.last_heartbeat = timestamp; self.last_error = ""
         return True
 

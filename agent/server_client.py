@@ -9,6 +9,8 @@ import urllib.request
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
+from .device_identity import current_device_id
+
 
 class ServerClientError(RuntimeError):
     def __init__(self, message: str, status_code: int | None = None):
@@ -103,6 +105,7 @@ class ServerClient:
         self.transport = transport
         self.websocket_factory = websocket_factory
         self.credentials = credential_store.load()
+        self.device_id = str(self.credentials.get("device_id") or current_device_id())
         self._opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     @property
@@ -110,13 +113,13 @@ class ServerClient:
         return self.credentials.get("agent_id", "")
 
     def register(self, *, agent_name: str, machine_name: str, client_version: str, user_token: str) -> dict[str, Any]:
-        result = self._request("POST", "/api/agents/register", {"agent_name": agent_name, "machine_name": machine_name, "client_version": client_version}, token=user_token)
-        self.credentials = {"agent_id": str(result["agent_id"]), "agent_token": str(result["agent_token"]), "server_url": self.server_url}
+        result = self._request("POST", "/api/agents/register", {"agent_name": agent_name, "machine_name": machine_name, "client_version": client_version, "device_id": self.device_id}, token=user_token)
+        self.credentials = {"agent_id": str(result["agent_id"]), "agent_token": str(result["agent_token"]), "server_url": self.server_url, "device_id": self.device_id}
         self.credential_store.save(self.credentials)
         return {key: value for key, value in result.items() if key != "agent_token"}
 
     def replace_agent_token(self, agent_id: str, agent_token: str) -> None:
-        self.credentials = {"agent_id": str(agent_id), "agent_token": str(agent_token), "server_url": self.server_url}
+        self.credentials = {"agent_id": str(agent_id), "agent_token": str(agent_token), "server_url": self.server_url, "device_id": self.device_id}
         self.credential_store.save(self.credentials)
 
     def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -172,7 +175,7 @@ class ServerClient:
             scheme = "wss" if parts.scheme == "https" else "ws"
             path = parts.path.rstrip("/") + "/api/agent/commands/ws"
             url = urlunsplit((scheme, parts.netloc, path, "", ""))
-            socket = factory(url, timeout=timeout_seconds, header=[f"Authorization: Bearer {token}"])
+            socket = factory(url, timeout=timeout_seconds, header=[f"Authorization: Bearer {token}", f"X-Laogu-Device-ID: {self.device_id}"])
             if on_connected:
                 on_connected()
         except Exception as exc:
@@ -229,6 +232,8 @@ class ServerClient:
             return self.transport(method, path, payload, token)
         body = None if payload is None else json.dumps(payload).encode("utf-8")
         headers = {"Accept": "application/json", "Content-Type": "application/json; charset=utf-8"}
+        if token:
+            headers["X-Laogu-Device-ID"] = self.device_id
         if token:
             headers["Authorization"] = f"Bearer {token}"
         request = urllib.request.Request(self.server_url + path, data=body, headers=headers, method=method)

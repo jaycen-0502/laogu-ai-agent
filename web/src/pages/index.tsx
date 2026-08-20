@@ -504,6 +504,7 @@ function AgentsPage({ current }: { current: User }) {
             <th>浏览器环境</th>
             <th>运行中任务</th>
             <th>版本</th>
+            <th>设备绑定/IP</th>
           </tr>
         </thead>
         <tbody>
@@ -523,6 +524,7 @@ function AgentsPage({ current }: { current: User }) {
               <td>{item.profile_count}</td>
               <td>{item.running_task_count}</td>
               <td>{item.client_version}</td>
+              <td><State value={item.binding_status === "BOUND" ? "已绑定" : "未绑定"} /><small className="mono agent-ip-info">{item.ip_country || "未知"}{item.last_ip ? ` · ${item.last_ip}` : ""}</small></td>
             </tr>
           ))}
         </tbody>

@@ -63,6 +63,12 @@ echo "6/8 执行数据库迁移"
 runuser -u laogu -- bash -c "set -a; . /etc/laogu/server.env; set +a; cd '$APP'; .venv/bin/alembic upgrade head"
 echo "7/8 构建前端并启动"
 runuser -u laogu -- bash -c "cd '$APP/web' && npm ci --no-audit --no-fund && npm run build"
+# 构建脚本使用严格 umask；仅将公开静态产物设置为 Nginx 可遍历、可读。
+# server.env、源码及密钥权限不会因此放宽。
+chown -R laogu:laogu "$APP/web/dist"
+chmod 755 "$APP" "$APP/web" "$APP/web/dist"
+find "$APP/web/dist" -type d -exec chmod 755 {} +
+find "$APP/web/dist" -type f -exec chmod 644 {} +
 systemctl start laogu-server
 systemctl is-active --quiet laogu-server
 nginx -t

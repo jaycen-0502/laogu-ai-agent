@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+# Stable one-command entry point. It refreshes the real upgrade script from
+# the selected private GitHub ref, so an older installed helper cannot reject
+# branch refs or miss newer upgrade logic.
+APP="${APP:-/opt/laogu-ai-agent}"
+REPO="${GITHUB_REPOSITORY:-jaycen-0502/laogu-ai-agent}"
+REF="${GITHUB_REF:-main}"
+TMP="$(mktemp /tmp/laogu-upgrade-script.XXXXXX)"
+
+cleanup() {
+  rm -f -- "$TMP"
+  unset GITHUB_TOKEN
+}
+trap cleanup EXIT
+
+if [ "$(id -u)" -ne 0 ]; then
+  echo "请使用 sudo 运行：sudo /usr/local/sbin/laogu-upgrade-from-github" >&2
+  exit 1
+fi
+command -v curl >/dev/null || { echo "缺少 curl" >&2; exit 1; }
+
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+  read -r -s -p "私有仓库 GitHub Token（输入时不显示）：" GITHUB_TOKEN
+  echo
+fi
+test -n "$GITHUB_TOKEN" || { echo "没有 GitHub Token，停止升级" >&2; exit 1; }
+
+curl -fsSL --retry 3 \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H 'Accept: application/vnd.github+json' \
+  "https://raw.githubusercontent.com/$REPO/$REF/deploy/ubuntu/upgrade-from-github.sh" \
+  -o "$TMP"
+chmod 700 "$TMP"
+
+# The real script keeps its safety checks and creates the database/source
+# backup. Blank lines accept the repository/ref defaults supplied above.
+printf '\n\n' | env \
+  APP="$APP" \
+  GITHUB_REPOSITORY="$REPO" \
+  GITHUB_REF="$REF" \
+  GITHUB_TOKEN="$GITHUB_TOKEN" \
+  bash "$TMP"

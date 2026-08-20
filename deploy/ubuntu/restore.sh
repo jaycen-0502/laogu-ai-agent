@@ -289,6 +289,7 @@ runuser -u laogu -- bash -c "cd '$APP/web'; npm ci; npm run build"
 test -s "$APP/web/dist/index.html"
 
 install -o root -g root -m 644 "$APP/deploy/ubuntu/laogu-server.service" /etc/systemd/system/laogu-server.service
+install -o root -g root -m 700 "$APP/deploy/ubuntu/laogu-upgrade-from-github" /usr/local/sbin/laogu-upgrade-from-github
 systemctl daemon-reload
 systemctl enable --now laogu-server
 for attempt in $(seq 1 30); do

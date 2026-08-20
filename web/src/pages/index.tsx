@@ -466,9 +466,11 @@ Set-Location -LiteralPath (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $env:LAOGU_SERVER_URL = ${quote(window.location.origin)}
 $env:LAOGU_AGENT_ID = ${quote(registerResult.agent_id)}
 $env:LAOGU_AGENT_TOKEN = ${quote(registerResult.agent_token)}
+$setupSucceeded = $false
 try {
   python -m agent.service_main --once
   if ($LASTEXITCODE -ne 0) { throw "Agent 首次配置失败，退出码：$LASTEXITCODE" }
+  $setupSucceeded = $true
   Write-Host "Agent 配置成功。现在可以运行：python -m agent.service_main" -ForegroundColor Green
 } finally {
   Remove-Item Env:LAOGU_SERVER_URL -ErrorAction SilentlyContinue
@@ -476,6 +478,9 @@ try {
   Remove-Item Env:LAOGU_AGENT_TOKEN -ErrorAction SilentlyContinue
 }
 Read-Host "按回车退出"
+if ($setupSucceeded) {
+  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}
 `;
     const blob = new Blob([script], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);

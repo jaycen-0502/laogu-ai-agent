@@ -45,7 +45,8 @@ if ! [[ "$CHAT_ID" =~ ^-?[0-9]+$ ]]; then
   exit 1
 fi
 
-install -d -o root -g root -m 700 /etc/laogu /var/backups/laogu-auto /var/backups/laogu
+install -d -o root -g laogu -m 750 /etc/laogu
+install -d -o root -g root -m 700 /var/backups/laogu-auto /var/backups/laogu
 install -o root -g root -m 700 "$OPS_DIR/laogu-telegram" /usr/local/sbin/laogu-telegram
 install -o root -g root -m 700 "$OPS_DIR/laogu-backup" /usr/local/sbin/laogu-backup
 install -o root -g root -m 700 "$OPS_DIR/laogu-weekly-check" /usr/local/sbin/laogu-weekly-check

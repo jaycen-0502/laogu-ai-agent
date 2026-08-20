@@ -56,6 +56,12 @@ def check_server_config(settings: ServerSettings) -> list[str]:
         common_errors.append("AI writing rate limit must be positive")
     if settings.rate_limit_ai_task_proposal < 1:
         common_errors.append("AI task proposal rate limit must be positive")
+    if settings.rate_limit_license_issue < 1:
+        common_errors.append("License issue rate limit must be positive")
+    if settings.rate_limit_license_check < 1:
+        common_errors.append("License check rate limit must be positive")
+    if settings.license_check_retention_days < 1 or settings.license_check_retention_days > 3650:
+        common_errors.append("License check retention must be between 1 and 3650 days")
     if common_errors:
         raise ProductionConfigError("; ".join(common_errors))
     if settings.environment == "production":

@@ -43,6 +43,8 @@ class ServerSettings:
     license_issuer_private_key_file: str = ""
     license_issuer_key_password_file: str = ""
     rate_limit_license_issue: int = 5
+    rate_limit_license_check: int = 300
+    license_check_retention_days: int = 30
 
 
 def load_server_settings() -> ServerSettings:
@@ -84,4 +86,6 @@ def load_server_settings() -> ServerSettings:
         license_issuer_private_key_file=os.getenv("LAOGU_LICENSE_ISSUER_PRIVATE_KEY_FILE", "").strip(),
         license_issuer_key_password_file=os.getenv("LAOGU_LICENSE_ISSUER_KEY_PASSWORD_FILE", "").strip(),
         rate_limit_license_issue=int(os.getenv("LAOGU_RATE_LIMIT_LICENSE_ISSUE", "5")),
+        rate_limit_license_check=int(os.getenv("LAOGU_RATE_LIMIT_LICENSE_CHECK", "300")),
+        license_check_retention_days=int(os.getenv("LAOGU_LICENSE_CHECK_RETENTION_DAYS", "30")),
     )

@@ -7,9 +7,11 @@ from datetime import datetime, timedelta, timezone
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
 from server.config import ServerSettings
 from server.main import create_app
+from server.models import LicenseCheck, now
 
 
 def _b64(value: bytes) -> str:
@@ -34,14 +36,14 @@ def _code(private_key: Ed25519PrivateKey, *, license_id: str = "lic_test_1", dev
     return "LGACT1." + _b64(raw) + "." + _b64(private_key.sign(raw))
 
 
-def _client():
+def _client(**settings_overrides):
     private_key = Ed25519PrivateKey.generate()
     public_key = _b64(private_key.public_key().public_bytes_raw())
-    settings = ServerSettings(database_url="sqlite://", jwt_secret="remote-license-test-secret-more-than-32", jwt_expire_minutes=60, agent_offline_seconds=90, license_issuer_public_key=public_key)
+    settings = ServerSettings(database_url="sqlite://", jwt_secret="remote-license-test-secret-more-than-32", jwt_expire_minutes=60, agent_offline_seconds=90, license_issuer_public_key=public_key, **settings_overrides)
     return TestClient(create_app(settings.database_url, settings)), private_key
 
 
-def _server_signing_client(tmp_path: Path):
+def _server_signing_client(tmp_path: Path, **settings_overrides):
     private_key = Ed25519PrivateKey.generate()
     public_key = _b64(private_key.public_key().public_bytes_raw())
     key_path = tmp_path / "issuer.pem"
@@ -50,7 +52,7 @@ def _server_signing_client(tmp_path: Path):
     from cryptography.hazmat.primitives import serialization
     key_path.write_bytes(private_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.BestAvailableEncryption(password)))
     password_path.write_bytes(password)
-    settings = ServerSettings(database_url="sqlite://", jwt_secret="remote-license-test-secret-more-than-32", jwt_expire_minutes=60, agent_offline_seconds=90, license_issuer_public_key=public_key, license_issuer_private_key_file=str(key_path), license_issuer_key_password_file=str(password_path))
+    settings = ServerSettings(database_url="sqlite://", jwt_secret="remote-license-test-secret-more-than-32", jwt_expire_minutes=60, agent_offline_seconds=90, license_issuer_public_key=public_key, license_issuer_private_key_file=str(key_path), license_issuer_key_password_file=str(password_path), **settings_overrides)
     return TestClient(create_app(settings.database_url, settings)), private_key
 
 
@@ -186,6 +188,40 @@ def test_remote_license_server_reports_mismatched_key_as_unavailable(tmp_path):
         "mode": "offline_terminal",
         "reason": "License issuer key does not match configured public key",
     }
+
+
+def test_remote_license_issue_and_check_rate_limits_are_enforced(tmp_path):
+    signing_client, _ = _server_signing_client(tmp_path, rate_limit_license_issue=1)
+    signing_boot = signing_client.post("/api/auth/bootstrap", json={"workspace_name": "Studio", "username": "admin", "password": "password123"}).json()
+    request_payload = {"version": 1, "deviceId": "device-online", "installPublicKey": "install-key-online", "nonce": "nonce-online", "requestedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")}
+    request_code = "LGREQ1." + _b64(json.dumps(request_payload, separators=(",", ":")).encode())
+    issue_body = {"request_code": request_code, "days": 30, "customer": "Online"}
+    assert signing_client.post("/api/license/issue", headers=_auth(signing_boot["access_token"]), json=issue_body).status_code == 200
+    assert signing_client.post("/api/license/issue", headers=_auth(signing_boot["access_token"]), json=issue_body).status_code == 429
+
+    check_client, private_key = _client(rate_limit_license_check=1)
+    check_boot = check_client.post("/api/auth/bootstrap", json={"workspace_name": "Studio", "username": "admin", "password": "password123"}).json()
+    code = _code(private_key, license_id="lic_rate_limit")
+    assert check_client.post("/api/license/register", headers=_auth(check_boot["access_token"]), json={"activation_code": code}).status_code == 200
+    check_body = {"activation_code": code, "device_id": "device-1", "install_public_key": "install-key-1", "app_version": "1.0"}
+    assert check_client.post("/api/license/check", json=check_body).status_code == 200
+    assert check_client.post("/api/license/check", json=check_body).status_code == 429
+
+
+def test_remote_license_check_prunes_expired_history():
+    client, private_key = _client(license_check_retention_days=30)
+    boot = client.post("/api/auth/bootstrap", json={"workspace_name": "Studio", "username": "admin", "password": "password123"}).json()
+    code = _code(private_key, license_id="lic_retention")
+    assert client.post("/api/license/register", headers=_auth(boot["access_token"]), json={"activation_code": code}).status_code == 200
+
+    with client.app.state.SessionLocal() as db:
+        db.add(LicenseCheck(external_license_id="old-license", device_id="old-device", app_version="1.0", result="VALID", reason="ok", checked_at=now() - timedelta(days=31), ip="127.0.0.1"))
+        db.commit()
+
+    check_body = {"activation_code": code, "device_id": "device-1", "install_public_key": "install-key-1", "app_version": "1.0"}
+    assert client.post("/api/license/check", json=check_body).status_code == 200
+    with client.app.state.SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(LicenseCheck).where(LicenseCheck.external_license_id == "old-license")) == 0
 
 
 def test_remote_license_admin_views_mask_sensitive_device_metadata():

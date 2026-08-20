@@ -275,6 +275,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if request.url.path == "/api/ai/task-proposals":
             limit = settings.rate_limit_ai_task_proposal
             rate_bucket = "/api/ai/task-proposals"
+        if request.url.path == "/api/license/issue" and request.method == "POST":
+            limit = settings.rate_limit_license_issue
+            rate_bucket = "/api/license/issue"
+        if request.url.path == "/api/license/check" and request.method == "POST":
+            limit = settings.rate_limit_license_check
+            rate_bucket = "/api/license/check"
         if limit is not None:
             if not limiter.allow(f"{rate_bucket}:{client_ip(request)}", limit, time.monotonic()):
                 return secure_response(429, "Too many requests")

@@ -10,7 +10,7 @@ from typing import Callable
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .models import License, LicenseCheck, LicenseDevice, LicenseRevocation, User, now
@@ -20,6 +20,7 @@ from .security import audit, client_ip, redact
 
 ACTIVATION_PREFIX = "LGACT1."
 REQUEST_PREFIX = "LGREQ1."
+LICENSE_CHECK_CLEANUP_INTERVAL = timedelta(hours=1)
 
 
 def _decode_b64(value: str) -> bytes:
@@ -175,6 +176,16 @@ def _masked_ip(value: str) -> str:
     if len(parts) == 4:
         return ".".join(parts[:2]) + ".*.*"
     return "***"
+
+
+def _prune_license_checks(request: Request, db: Session, checked_at: datetime) -> None:
+    cleanup_after = getattr(request.app.state, "license_check_cleanup_after", None)
+    if cleanup_after is not None and checked_at < cleanup_after:
+        return
+    retention_days = request.app.state.settings.license_check_retention_days
+    cutoff = checked_at - timedelta(days=retention_days)
+    db.execute(delete(LicenseCheck).where(LicenseCheck.checked_at < cutoff))
+    request.app.state.license_check_cleanup_after = checked_at + LICENSE_CHECK_CLEANUP_INTERVAL
 
 
 def register_remote_license_routes(app, *, get_db: Callable, current_user: Callable, deny: Callable) -> None:
@@ -371,6 +382,7 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
             raise HTTPException(status_code=403, detail="License device mismatch")
         item = db.scalar(select(License).where(License.license_id == external_id, License.activation_code_hash == code_hash))
         checked = now()
+        _prune_license_checks(request, db, checked)
         if not item:
             db.add(LicenseCheck(external_license_id=external_id, device_id=body.device_id, app_version=body.app_version, result="NOT_REGISTERED", reason="not_registered", checked_at=checked, ip=client_ip(request)))
             db.commit()

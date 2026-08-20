@@ -74,7 +74,13 @@ echo "KEY_FILES_READABLE"
 LAOGU_LICENSE_ISSUER_PRIVATE_KEY_FILE=/etc/laogu/license/Laogu-License-Issuer.pem
 LAOGU_LICENSE_ISSUER_KEY_PASSWORD_FILE=/etc/laogu/license/Laogu-License-Password.txt
 LAOGU_RATE_LIMIT_LICENSE_ISSUE=5
+LAOGU_RATE_LIMIT_LICENSE_CHECK=300
+LAOGU_LICENSE_CHECK_RETENTION_DAYS=30
 ```
+
+`LAOGU_RATE_LIMIT_LICENSE_CHECK` 是单个公网 IP 每分钟允许的浏览器授权检查次数；默认值考虑了多个浏览器共享同一出口 IP。检查明细默认保留 30 天，服务端每小时最多执行一次过期清理。
+
+自动加密备份默认不收集 `/etc/laogu/license` 中的签发私钥和密码文件。请继续把授权终端及这两个文件保存在独立的离线加密介质中；服务器恢复后按本节重新安装，并再次执行两个 `test -r` 检查。
 
 启动并验证：
 

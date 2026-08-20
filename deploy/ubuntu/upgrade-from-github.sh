@@ -28,7 +28,8 @@ if [ -z "$REF" ]; then
   REF="$latest_ref"
   echo "当前 GitHub 最新版本：$REF"
 else
-  [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "GITHUB_REF 必须是 v主版本.次版本.修订版本" >&2; exit 1; }
+  [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || { echo "GITHUB_REF 格式不安全" >&2; exit 1; }
+  [[ "$REF" != *..* && "$REF" != */ ]] || { echo "GITHUB_REF 格式不安全" >&2; exit 1; }
   echo "指定升级版本：$REF"
 fi
 
@@ -64,6 +65,14 @@ APP_VERSION="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*
 test -n "$APP_VERSION" || { echo "无法读取应用版本，停止升级" >&2; exit 1; }
 grep -q "version=\"$APP_VERSION\"" "$SRC/server/main.py" || { echo "前后端版本不一致（$APP_VERSION），停止升级" >&2; exit 1; }
 test -f "$SRC/alembic/versions/0014_user_ai_policies.py" || { echo "缺少 0014 迁移，停止升级" >&2; exit 1; }
+
+# Never replace a production checkout with a branch that cannot understand
+# the database revision already recorded in alembic_version.
+CURRENT_REVISION="$(set -a; . /etc/laogu/server.env; set +a; cd "$APP"; .venv/bin/alembic current 2>/dev/null | sed -n 's/.* \([0-9][A-Za-z0-9_-]*\).*/\1/p' | tail -n 1 || true)"
+if [ -n "$CURRENT_REVISION" ] && ! find "$SRC/alembic/versions" -maxdepth 1 -type f -name "*${CURRENT_REVISION}*.py" -print -quit | grep -q .; then
+  echo "目标版本缺少当前数据库迁移：$CURRENT_REVISION，停止升级" >&2
+  exit 1
+fi
 
 echo "4/8 停止服务并同步代码"
 systemctl stop laogu-server

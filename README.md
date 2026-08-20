@@ -19,6 +19,8 @@
 | `browser/` | Laogu Browser（Wails + Go + React）源码 | Windows |
 | `desktop/` | 桌面外部控制台源码 | Windows |
 | `packaging/windows/` | 桌面控制台 PyInstaller 打包配置 | Windows 构建机 |
+| `deploy/ubuntu/SERVER_MIGRATION_ZH_CN.md` | 更换服务器、域名和授权资料迁移说明 | Ubuntu / Windows 运维 |
+| `deploy/ubuntu/create-server-migration-bundle.sh` | 在旧服务器生成受限迁移包 | Ubuntu 服务器 |
 
 仓库只保存可审查、可复现构建的源码。以下内容不进入 Git：浏览器实例目录、Cookie、登录状态、
 本地 `config.yaml`、数据库、日志、代理/Chrome 运行时、授权私钥、密码文件以及编译后的 EXE。
@@ -54,6 +56,20 @@ Windows Agent
 ```
 
 Laogu Browser 及 Windows Agent 只在 Windows 运行，不安装到 Ubuntu 服务器。
+
+## 更换服务器和域名
+
+如果只更换 IP、域名不变，只需修改 DNS 并在新服务器配置 HTTPS，Windows 程序无需重新编译。
+如果域名也变更：
+
+- Browser 修改安装目录 `config.yaml` 的 `license.server_url`；
+- 桌面控制台修改 `dist\Laogu-Desktop\config\laogu.env` 的 `LAOGU_SERVER_URL`；
+- Windows Agent 使用桌面控制台同一个 `LAOGU_SERVER_URL`，DPAPI 加密凭据不要手工改成明文。
+
+旧服务器必须保留数据库、`/etc/laogu/server.env`、授权签发私钥/密码、systemd 和 Nginx 配置。
+在旧服务器执行 `sudo bash /opt/laogu-ai-agent/deploy/ubuntu/create-server-migration-bundle.sh`，
+会生成 `/var/backups/laogu/server-migration-时间/` 下的受限迁移包。该包包含生产密钥，禁止提交 GitHub。
+完整路径和恢复顺序见 [更换服务器迁移说明](deploy/ubuntu/SERVER_MIGRATION_ZH_CN.md)。
 
 ## Windows 程序构建
 

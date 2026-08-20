@@ -2,7 +2,12 @@
 
 老谷系统由 Ubuntu 协调服务器、React 管理后台和 Windows Agent 组成。
 
-当前正式版本：`0.18.0`
+- 应用版本：`0.18.0`
+- 部署/恢复工具版本：`v0.18.1`
+- 生产地址示例：`https://api.jaycwl.org`
+
+本项目使用 GitHub 私有仓库。服务器不能匿名下载代码，必须先配置一次 GitHub
+只读 Deploy Key；密钥、数据库、Telegram Token 和生产配置永远不上传 GitHub。
 
 ## 生产结构
 
@@ -20,28 +25,105 @@ Windows Agent
 
 Laogu Browser 及 Windows Agent 只在 Windows 运行，不安装到 Ubuntu 服务器。
 
-## 全新服务器部署
+## 小白全新服务器一键部署
+
+适用场景：全新的 Ubuntu 24.04 服务器，创建一个空白系统。
+
+准备：
+
+1. 云安全组开放 `22`、`80`、`443`，不要开放 `5432`、`8000`；
+2. 域名 A 记录已经指向新服务器公网 IP；
+3. 服务器有公网 IPv4；
+4. 准备 Let's Encrypt 邮箱、工作区名称、管理员用户名和至少 12 位密码。
+
+### 第一次配置私有仓库读取权限
+
+在新服务器执行：
+
+```bash
+apt update && apt install -y git openssh-client
+install -d -m 700 /root/.ssh
+ssh-keygen -t ed25519 -f /root/.ssh/laogu-github-deploy -N '' \
+  -C 'laogu-production-server'
+cat /root/.ssh/laogu-github-deploy.pub
+```
+
+复制公钥到 GitHub：
+
+```text
+仓库 Settings → Deploy keys → Add deploy key
+```
+
+只读即可，不要勾选 `Allow write access`。然后执行：
+
+```bash
+cat > /root/.ssh/config <<'EOF'
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile /root/.ssh/laogu-github-deploy
+    IdentitiesOnly yes
+EOF
+chmod 600 /root/.ssh/config
+ssh -T git@github.com
+```
+
+### 一键搭建命令
+
+```bash
+git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent \
+&& cd /opt/laogu-ai-agent \
+&& git checkout v0.18.1 \
+&& sudo bash deploy/ubuntu/install.sh --domain api.jaycwl.org
+```
+
+脚本会自动安装 PostgreSQL、Nginx、Python、Node.js、Alembic、systemd、HTTPS，
+创建初始管理员，并执行健康检查。它只适用于空白服务器，检测到已有生产配置或数据库会停止。
 
 完整教程见：
 
 - [Ubuntu 24.04 一键部署与灾备恢复](deploy/ubuntu/ONE_CLICK_DEPLOY_ZH_CN.md)
 
-全新安装的入口命令：
+## 恢复现有生产数据的一键命令
 
-```bash
-sudo bash deploy/ubuntu/install.sh --domain api.example.com
+适用场景：原服务器故障，要把 Telegram 里的最新加密备份恢复到全新备用服务器。
+
+先从 Windows 上传以下文件到备用服务器的 `/root/restore/`：
+
+```text
+laogu-recovery-时间.tar.gz.age
+laogu-recovery-时间.tar.gz.age.sha256（如果有）
+laogu-backup-recovery.key
 ```
 
-该脚本只允许在全新 Ubuntu 24.04 服务器执行，并拒绝覆盖已有生产配置或数据库。
-
-故障恢复入口命令：
+然后在备用服务器执行：
 
 ```bash
-sudo bash deploy/ubuntu/restore.sh
+git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent \
+&& cd /opt/laogu-ai-agent \
+&& git checkout v0.18.1 \
+&& sudo bash deploy/ubuntu/restore.sh
 ```
 
-私有仓库需要先给备用服务器配置 GitHub 只读 Deploy Key；恢复向导会自动寻找
-`/root/restore` 下的加密备份，逐步检查并恢复现有生产数据。
+恢复向导会自动寻找 `/root/restore` 下的文件，并逐步询问域名、证书邮箱和私钥路径。
+它会显示文件大小、校验信息和目标域名，必须输入 `RESTORE` 才开始恢复。
+
+恢复完成后会自动检查：
+
+- PostgreSQL、Nginx、后端服务状态；
+- 本机和公网健康接口；
+- API 版本和数据库迁移版本；
+- Nginx 配置和 HTTPS。
+
+确认登录和数据正常后，重新绑定 Telegram 备份：
+
+```bash
+sudo bash /opt/laogu-ai-agent/deploy/ubuntu/install-backup.sh
+sudo systemctl start laogu-backup.service
+sudo journalctl -u laogu-backup.service -n 80 --no-pager
+```
+
+最后删除备用服务器上的临时私钥和恢复包，Windows 中的私钥原件继续离线保存。
 
 ## 灾备
 
@@ -51,7 +133,21 @@ sudo bash deploy/ubuntu/restore.sh
 - 每周检查磁盘、服务、数据库和备份状态；
 - 私钥不提交 GitHub，也不包含在恢复包中。
 
+恢复包中的 `database.dump` 恢复用户、工作区、Agent、任务、许可证和审计数据；
+`server.env` 恢复数据库连接、JWT 和 AI 凭证加密密钥；Telegram Bot Token 不在包内，
+恢复后必须重新输入。HTTPS 证书不搬迁，由 Certbot 在新服务器重新申请。
+
 ## 安全
 
 本仓库不保存 `.env`、生产配置、数据库、日志、Agent 凭证、Telegram Token、
 age 私钥或 TLS 私钥。生产仓库应保持 Private，并使用只读 Deploy Key 部署。
+
+## 部署文件索引
+
+| 文件 | 用途 |
+|---|---|
+| `deploy/ubuntu/install.sh` | 全新服务器安装 |
+| `deploy/ubuntu/restore.sh` | 交互式恢复生产数据 |
+| `deploy/ubuntu/verify.sh` | 部署完成验收 |
+| `deploy/ubuntu/install-backup.sh` | Telegram 加密备份和每周检查 |
+| `deploy/ubuntu/ONE_CLICK_DEPLOY_ZH_CN.md` | 完整中文小白教程 |

@@ -596,6 +596,27 @@ label {
 .password-form button {
   justify-self: start;
 }
+.agent-register-form small,
+.agent-token-panel small {
+  display: block;
+  margin-top: 4px;
+  color: #718096;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.agent-token-panel {
+  display: grid;
+  gap: 12px;
+  border-color: #8de2d6;
+  background: #f3fffd;
+}
+.agent-token-panel h2,
+.agent-token-panel p {
+  grid-column: 1 / -1;
+}
+.agent-token-panel input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 .detail {
   margin-top: 15px;
 }

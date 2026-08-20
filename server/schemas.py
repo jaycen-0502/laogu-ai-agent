@@ -100,6 +100,7 @@ class AgentRegister(BaseModel):
     agent_name: str
     machine_name: str
     client_version: str
+    workspace_id: str | None = None
 
 
 class Heartbeat(BaseModel):

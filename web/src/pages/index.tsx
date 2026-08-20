@@ -401,9 +401,13 @@ function WorkspacesPage({ user }: { user: User }) {
   );
 }
 
-function AgentsPage() {
+function AgentsPage({ current }: { current: User }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
+  const [registerForm, setRegisterForm] = useState({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
+  const [registerResult, setRegisterResult] = useState<{ agent_id: string; agent_token: string; workspace_id: string } | null>(null);
+  const [registerMessage, setRegisterMessage] = useState("");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const result = usePage<Agent>(
     `/agents?paged=true&page=${page}&page_size=20&q=${encodeURIComponent(q)}`,
     [page, q],
@@ -421,11 +425,52 @@ function AgentsPage() {
     const timer = window.setInterval(result.reload, 8000);
     return () => window.clearInterval(timer);
   }, [page, q]);
+  useEffect(() => {
+    if (current.role === "ADMIN") apiClient<Workspace[]>("/workspaces").then(setWorkspaces).catch(() => undefined);
+  }, [current.role]);
+  const register = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setRegisterMessage("");
+    try {
+      const created = await apiClient<{ agent_id: string; agent_token: string; workspace_id: string }>("/agents/register", jsonBody({
+        agent_name: registerForm.agent_name.trim(),
+        machine_name: registerForm.machine_name.trim(),
+        client_version: registerForm.client_version.trim() || "unknown",
+        ...(current.role === "ADMIN" ? { workspace_id: registerForm.workspace_id } : {}),
+      }));
+      setRegisterResult(created);
+      setRegisterForm({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
+      setRegisterMessage("运行端注册成功。请立即复制令牌；关闭此提示后不会再次显示。");
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
   const open = async (item: Agent) =>
     setSelected(await apiClient(`/agents/${item.agent_id}`));
   return (
     <>
-      <PageTitle title="运行端" description="查看Windows运行端心跳和运行状态" />
+      <PageTitle title="运行端" description="注册 Windows 运行端，查看心跳、浏览器环境和运行状态" />
+      {(current.role === "ADMIN" || current.role === "OWNER") && <form className="panel task-form agent-register-form" onSubmit={register}>
+        <h2>注册 Windows 运行端</h2>
+        <p className="form-help">在安装 Windows Agent 的电脑上注册一个连接身份。注册成功后会生成一次性 Agent Token，用于连接本服务器。</p>
+        <div className="form-grid">
+          <label>运行端名称<small>后台列表中显示的名称，例如：办公室电脑</small><input value={registerForm.agent_name} onChange={(event) => setRegisterForm({ ...registerForm, agent_name: event.target.value })} placeholder="例如：办公室电脑" required /></label>
+          <label>机器名称<small>Windows 电脑名称，用于识别安装位置</small><input value={registerForm.machine_name} onChange={(event) => setRegisterForm({ ...registerForm, machine_name: event.target.value })} placeholder="例如：DESKTOP-ABC" required /></label>
+          <label>Agent 版本<small>填写 Windows Agent 当前版本，便于后台检查升级</small><input value={registerForm.client_version} onChange={(event) => setRegisterForm({ ...registerForm, client_version: event.target.value })} placeholder="例如：1.0.0" /></label>
+          {current.role === "ADMIN" ? <label>所属工作区<small>该运行端产生的浏览器环境和任务归属此工作区</small><select value={registerForm.workspace_id} onChange={(event) => setRegisterForm({ ...registerForm, workspace_id: event.target.value })} required><option value="">请选择工作区</option>{workspaces.map((workspace) => <option key={workspace.workspace_id || workspace.id} value={workspace.workspace_id || workspace.id}>{workspace.name}</option>)}</select></label> : <label>所属工作区<small>负责人只能注册到自己的工作区</small><input value={current.workspace_name || current.workspace_id || "未分配工作区"} disabled /></label>}
+        </div>
+        <button className="primary">生成 Agent Token</button>
+        {registerMessage && <span className="form-message block-message">{registerMessage}</span>}
+      </form>}
+      {registerResult && <section className="panel agent-token-panel">
+        <h2>Agent Token（仅显示这一次）</h2>
+        <p className="form-help">把下面的 API 地址和 Token 填入 Windows Agent 配置。Token 只保存哈希，关闭或刷新页面后无法再次查看；遗失时请重新注册或轮换令牌。</p>
+        <label>API 地址<input value={window.location.origin} readOnly /></label>
+        <label>运行端 ID<input value={registerResult.agent_id} readOnly /></label>
+        <label>Agent Token<input value={registerResult.agent_token} readOnly onFocus={(event) => event.currentTarget.select()} /></label>
+        <div className="modal-actions"><button type="button" onClick={() => navigator.clipboard.writeText(`API 地址：${window.location.origin}\nAgent ID：${registerResult.agent_id}\nAgent Token：${registerResult.agent_token}`)}>复制配置</button><button type="button" onClick={() => setRegisterResult(null)}>我已保存，关闭</button></div>
+      </section>}
       <div className="toolbar">
         <input
           placeholder="搜索运行端名称"
@@ -1450,7 +1495,7 @@ export function ResourcesPage({
     case "workspaces":
       return <WorkspacesPage user={user} />;
     case "agents":
-      return <AgentsPage />;
+      return <AgentsPage current={user} />;
     case "accounts":
       return <AccountsPage />;
     case "profiles":

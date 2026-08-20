@@ -773,8 +773,11 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
 
     @app.post("/api/agents/register")
     def register_agent(request: Request, body: AgentRegister, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        if user.role not in {"ADMIN", "OWNER"} or not user.workspace_id: deny(request, db, action="AGENT_REGISTER", user=user)
-        item = Agent(workspace_id=user.workspace_id, agent_name=body.agent_name, machine_name=body.machine_name, client_version=body.client_version, token_hash="")
+        if user.role not in {"ADMIN", "OWNER"}: deny(request, db, action="AGENT_REGISTER", user=user)
+        workspace_id = body.workspace_id if user.role == "ADMIN" and body.workspace_id else user.workspace_id
+        if not workspace_id or not db.get(Workspace, workspace_id):
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        item = Agent(workspace_id=workspace_id, agent_name=body.agent_name, machine_name=body.machine_name, client_version=body.client_version, token_hash="")
         db.add(item); db.flush(); raw_token, _ = create_token(db, item.id); db.commit()
         audit(db, request, action="AGENT_REGISTER", result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, agent_id=item.id, resource_type="agent", resource_id=item.id)
         return {"agent_id": item.id, "agent_token": raw_token, "workspace_id": item.workspace_id}

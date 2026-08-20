@@ -68,6 +68,8 @@ class Settings:
     x_readonly_task_script: Path
     server_url: str
     server_enrollment_token: str
+    server_agent_id: str
+    server_agent_token: str
     agent_credentials_file: Path
     agent_state_file: Path
     agent_heartbeat_seconds: int
@@ -121,6 +123,8 @@ def load_settings() -> Settings:
         x_readonly_task_script=RESOURCE_ROOT / "scripts" / "x_readonly_tasks.js",
         server_url=os.getenv("LAOGU_SERVER_URL", "").strip(),
         server_enrollment_token=os.getenv("LAOGU_SERVER_ENROLLMENT_TOKEN", "").strip(),
+        server_agent_id=os.getenv("LAOGU_AGENT_ID", "").strip(),
+        server_agent_token=os.getenv("LAOGU_AGENT_TOKEN", "").strip(),
         agent_credentials_file=PROJECT_ROOT / "agent_data" / "credentials.json",
         agent_state_file=PROJECT_ROOT / "agent_data" / "agent_state.db",
         agent_heartbeat_seconds=max(5, _env_int("LAOGU_AGENT_HEARTBEAT_SECONDS", 30)),

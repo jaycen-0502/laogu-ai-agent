@@ -321,6 +321,8 @@ def build_agent_service(task_service, account_registry):
     if not settings.server_url:
         return None
     client = ServerClient(settings.server_url, CredentialStore(settings.agent_credentials_file))
+    if not client.agent_id and settings.server_agent_id and settings.server_agent_token:
+        client.replace_agent_token(settings.server_agent_id, settings.server_agent_token)
     return AgentService(
         client,
         task_service,

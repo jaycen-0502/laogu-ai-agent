@@ -401,9 +401,13 @@ function WorkspacesPage({ user }: { user: User }) {
   );
 }
 
-function AgentsPage() {
+function AgentsPage({ current }: { current: User }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
+  const [registerForm, setRegisterForm] = useState({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
+  const [registerResult, setRegisterResult] = useState<{ agent_id: string; agent_token: string; workspace_id: string } | null>(null);
+  const [registerMessage, setRegisterMessage] = useState("");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const result = usePage<Agent>(
     `/agents?paged=true&page=${page}&page_size=20&q=${encodeURIComponent(q)}`,
     [page, q],
@@ -421,11 +425,107 @@ function AgentsPage() {
     const timer = window.setInterval(result.reload, 8000);
     return () => window.clearInterval(timer);
   }, [page, q]);
+  useEffect(() => {
+    if (current.role === "ADMIN") apiClient<Workspace[]>("/workspaces").then(setWorkspaces).catch(() => undefined);
+  }, [current.role]);
+  const register = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setRegisterMessage("");
+    try {
+      const created = await apiClient<{ agent_id: string; agent_token: string; workspace_id: string }>("/agents/register", jsonBody({
+        agent_name: registerForm.agent_name.trim(),
+        machine_name: registerForm.machine_name.trim(),
+        client_version: registerForm.client_version.trim() || "unknown",
+        ...(current.role === "ADMIN" ? { workspace_id: registerForm.workspace_id } : {}),
+      }));
+      setRegisterResult(created);
+      setRegisterForm({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
+      setRegisterMessage("运行端注册成功。请立即复制令牌；关闭此提示后不会再次显示。");
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
+  const rotateToken = async (item: Agent) => {
+    if (!window.confirm(`确定要重新生成“${item.agent_name}”的 Agent Token 吗？旧 Token 会立即失效。`)) return;
+    try {
+      const rotated = await apiClient<{ agent_id: string; agent_token: string; expires_at?: string }>(`/agents/${item.agent_id}/token/rotate`, { method: "POST" });
+      setRegisterResult({ agent_id: rotated.agent_id, agent_token: rotated.agent_token, workspace_id: item.workspace_id });
+      setRegisterMessage("Token 已重新生成。请在 Windows Agent 中替换旧 Token 后重启 Agent。");
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
+  const deleteAgent = async (item: Agent) => {
+    if (!window.confirm(`确定删除“${item.agent_name}”吗？删除后该运行端的所有 Token 会立即失效，远程连接会被取消；浏览器资料和任务历史会保留。`)) return;
+    try {
+      await apiClient(`/agents/${item.agent_id}`, { method: "DELETE" });
+      setSelected(null);
+      setRegisterMessage("运行端已删除，所有 Token 已失效。浏览器资料和历史记录仍保留。 ");
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
+  const downloadSetupScript = () => {
+    if (!registerResult) return;
+    const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+    const script = `# 老谷 Windows Agent 一键配置脚本
+# 请把本文件放到 laogu-ai-agent 项目根目录后运行。
+$ErrorActionPreference = "Stop"
+Set-Location -LiteralPath (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$env:LAOGU_SERVER_URL = ${quote(window.location.origin)}
+$env:LAOGU_AGENT_ID = ${quote(registerResult.agent_id)}
+$env:LAOGU_AGENT_TOKEN = ${quote(registerResult.agent_token)}
+$setupSucceeded = $false
+try {
+  python -m agent.service_main --once
+  if ($LASTEXITCODE -ne 0) { throw "Agent 首次配置失败，退出码：$LASTEXITCODE" }
+  $setupSucceeded = $true
+  Write-Host "Agent 配置成功。现在可以运行：python -m agent.service_main" -ForegroundColor Green
+} finally {
+  Remove-Item Env:LAOGU_SERVER_URL -ErrorAction SilentlyContinue
+  Remove-Item Env:LAOGU_AGENT_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:LAOGU_AGENT_TOKEN -ErrorAction SilentlyContinue
+}
+Read-Host "按回车退出"
+if ($setupSucceeded) {
+  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}
+`;
+    const blob = new Blob([script], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `laogu-agent-setup-${registerResult.agent_id.slice(0, 8)}.ps1`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   const open = async (item: Agent) =>
     setSelected(await apiClient(`/agents/${item.agent_id}`));
   return (
     <>
-      <PageTitle title="运行端" description="查看Windows运行端心跳和运行状态" />
+      <PageTitle title="运行端" description="注册 Windows 运行端，查看心跳、浏览器环境和运行状态" />
+      {(current.role === "ADMIN" || current.role === "OWNER") && <form className="panel task-form agent-register-form" onSubmit={register}>
+        <h2>注册 Windows 运行端</h2>
+        <p className="form-help">在安装 Windows Agent 的电脑上注册一个连接身份。注册成功后会生成一次性 Agent Token，用于连接本服务器。</p>
+        <div className="form-grid">
+          <label>运行端名称<small>后台列表中显示的名称，例如：办公室电脑</small><input value={registerForm.agent_name} onChange={(event) => setRegisterForm({ ...registerForm, agent_name: event.target.value })} placeholder="例如：办公室电脑" required /></label>
+          <label>机器名称<small>Windows 电脑名称，用于识别安装位置</small><input value={registerForm.machine_name} onChange={(event) => setRegisterForm({ ...registerForm, machine_name: event.target.value })} placeholder="例如：DESKTOP-ABC" required /></label>
+          <label>Agent 版本<small>填写 Windows Agent 当前版本，便于后台检查升级</small><input value={registerForm.client_version} onChange={(event) => setRegisterForm({ ...registerForm, client_version: event.target.value })} placeholder="例如：1.0.0" /></label>
+          {current.role === "ADMIN" ? <label>所属工作区<small>该运行端产生的浏览器环境和任务归属此工作区</small><select value={registerForm.workspace_id} onChange={(event) => setRegisterForm({ ...registerForm, workspace_id: event.target.value })} required><option value="">请选择工作区</option>{workspaces.map((workspace) => <option key={workspace.workspace_id || workspace.id} value={workspace.workspace_id || workspace.id}>{workspace.name}</option>)}</select></label> : <label>所属工作区<small>负责人只能注册到自己的工作区</small><input value={current.workspace_name || current.workspace_id || "未分配工作区"} disabled /></label>}
+        </div>
+        <button className="primary">生成 Agent Token</button>
+        {registerMessage && <span className="form-message block-message">{registerMessage}</span>}
+      </form>}
+      {registerResult && <section className="panel agent-token-panel">
+        <h2>Agent Token（仅显示这一次）</h2>
+        <p className="form-help">把下面的 API 地址和 Token 填入 Windows Agent 配置。Token 只保存哈希，关闭或刷新页面后无法再次查看；遗失时请重新注册或轮换令牌。</p>
+        <label>API 地址<input value={window.location.origin} readOnly /></label>
+        <label>运行端 ID<input value={registerResult.agent_id} readOnly /></label>
+        <label>Agent Token<input value={registerResult.agent_token} readOnly onFocus={(event) => event.currentTarget.select()} /></label>
+        <div className="modal-actions"><button type="button" onClick={() => navigator.clipboard.writeText(`API 地址：${window.location.origin}\nAgent ID：${registerResult.agent_id}\nAgent Token：${registerResult.agent_token}`)}>复制配置</button><button type="button" onClick={downloadSetupScript}>下载 Windows 一键配置脚本</button><button type="button" onClick={() => setRegisterResult(null)}>我已保存，关闭</button></div>
+      </section>}
       <div className="toolbar">
         <input
           placeholder="搜索运行端名称"
@@ -449,6 +549,7 @@ function AgentsPage() {
             <th>浏览器环境</th>
             <th>运行中任务</th>
             <th>版本</th>
+            <th>设备绑定/IP</th>
           </tr>
         </thead>
         <tbody>
@@ -468,6 +569,7 @@ function AgentsPage() {
               <td>{item.profile_count}</td>
               <td>{item.running_task_count}</td>
               <td>{item.client_version}</td>
+              <td><State value={item.binding_status === "BOUND" ? "已绑定" : "未绑定"} /><small className="mono agent-ip-info">{item.ip_country || "未知"}{item.last_ip ? ` · ${item.last_ip}` : ""}</small></td>
             </tr>
           ))}
         </tbody>
@@ -489,6 +591,9 @@ function AgentsPage() {
             {selected.accounts?.length || 0}　最近任务：
             {selected.recent_tasks?.length || 0}
           </p>
+          <p className="form-help">如果 Windows Agent 的 Token 遗失或泄露，可以重新生成；旧 Token 会立即失效。</p>
+          <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>
+          <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>
           <button onClick={() => setSelected(null)}>关闭</button>
         </div>
       )}
@@ -1022,6 +1127,8 @@ function UsersPage({ current }: { current: User }) {
   const [policyUser, setPolicyUser] = useState<User | null>(null);
   const [policy, setPolicy] = useState<{ features: Record<string, boolean>; models: Record<string, { provider_id?: string; model?: string }> } | null>(null);
   const [policyProviders, setPolicyProviders] = useState<AIProvider[]>([]);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({ username: "", password: "", role: "MEMBER", workspace_id: "" });
   const result = usePage<User>(
     `/users?paged=true&page=${page}&page_size=20&q=${encodeURIComponent(q)}${includeDeleted ? "&include_deleted=true" : ""}`,
     [page, q, includeDeleted],
@@ -1072,6 +1179,29 @@ function UsersPage({ current }: { current: User }) {
         method: "PATCH",
         body: JSON.stringify(body),
       });
+      result.reload();
+    } catch (exc) {
+      setMessage(errorText(exc));
+    }
+  };
+  const openEdit = (item: User) => {
+    setMessage("");
+    setEditUser(item);
+    setEditForm({ username: item.username, password: "", role: item.role, workspace_id: item.workspace_id || "" });
+  };
+  const saveEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editUser) return;
+    const body: Record<string, unknown> = { username: editForm.username.trim() };
+    if (editUser.user_id !== current.user_id) {
+      body.role = editForm.role;
+      body.workspace_id = current.role === "ADMIN" ? editForm.workspace_id : current.workspace_id;
+    }
+    if (editForm.password) body.password = editForm.password;
+    try {
+      await apiClient(`/users/${editUser.user_id}`, { method: "PATCH", body: JSON.stringify(body) });
+      setEditUser(null);
+      setMessage(`用户“${editForm.username.trim()}”已更新`);
       result.reload();
     } catch (exc) {
       setMessage(errorText(exc));
@@ -1263,8 +1393,9 @@ function UsersPage({ current }: { current: User }) {
                 <State value={item.status} />
               </td>
               <td>{fmt(item.created_at)}</td>
-              <td>
-                <button onClick={() => void openPolicy(item)}>AI权限</button>
+              <td className="user-actions">
+                <button onClick={() => openEdit(item)}>编辑用户</button>
+                <button onClick={() => void openPolicy(item)}>AI 权限</button>
                 <button
                   disabled={item.user_id === current.user_id || (item.status === "DELETED" && current.role !== "ADMIN")}
                   onClick={() =>
@@ -1282,16 +1413,67 @@ function UsersPage({ current }: { current: User }) {
       </Table>
       {!result.data.items.length && <Empty />}
       <PageNav page={page} pages={result.data.pages} onPage={setPage} />
+      {editUser && (
+        <div className="modal-backdrop" onClick={() => setEditUser(null)}>
+          <form className="modal-panel user-edit-modal" onSubmit={saveEdit} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><h2>编辑用户</h2><span className="muted">修改账号资料、所属工作区或重置登录密码</span></div>
+              <button type="button" onClick={() => setEditUser(null)}>关闭</button>
+            </div>
+            <div className="edit-user-grid">
+              <label>
+                用户名
+                <small>用户登录系统时使用的账号名称</small>
+                <input value={editForm.username} onChange={(event) => setEditForm({ ...editForm, username: event.target.value })} minLength={3} required />
+              </label>
+              <label>
+                重置密码（可不填）
+                <small>留空表示保持原密码；填写后至少需要 8 位</small>
+                <input type="password" value={editForm.password} onChange={(event) => setEditForm({ ...editForm, password: event.target.value })} minLength={8} autoComplete="new-password" />
+              </label>
+              <label>
+                用户角色
+                <small>成员使用功能；负责人管理工作区；管理员管理整个平台</small>
+                <select value={editForm.role} disabled={editUser.user_id === current.user_id} onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}>
+                  <option value="MEMBER">成员</option>
+                  <option value="OWNER">工作区负责人</option>
+                  {current.role === "ADMIN" && <option value="ADMIN">系统管理员</option>}
+                </select>
+              </label>
+              <label>
+                所属工作区
+                <small>决定该用户能看到哪一个工作区的浏览器和业务数据</small>
+                {current.role === "ADMIN" ? (
+                  <select value={editForm.workspace_id} disabled={editUser.user_id === current.user_id} onChange={(event) => setEditForm({ ...editForm, workspace_id: event.target.value })} required>
+                    <option value="">请选择工作区</option>
+                    {workspaces.map((workspace) => <option key={workspace.workspace_id || workspace.id} value={workspace.workspace_id || workspace.id}>{workspace.name}</option>)}
+                  </select>
+                ) : <input value={workspaces.find((workspace) => workspace.workspace_id === current.workspace_id)?.name || current.workspace_id || ""} disabled />}
+              </label>
+            </div>
+            {editUser.user_id === current.user_id && <p className="form-help">当前登录账号只能在这里修改用户名和密码，不能修改自己的角色或工作区，避免失去管理权限。</p>}
+            <div className="modal-actions"><button type="button" onClick={() => setEditUser(null)}>取消</button><button className="primary">保存修改</button></div>
+          </form>
+        </div>
+      )}
       {policyUser && policy && (
         <div className="modal-backdrop" onClick={() => setPolicyUser(null)}>
-          <section className="modal-panel narrow" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><h2>AI 权限与模型</h2><span className="muted">{policyUser.username} · {policyUser.workspace_name || policyUser.workspace_id}</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
+          <section className="modal-panel ai-policy-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><h2>AI 功能权限与模型</h2><span className="muted">为 {policyUser.username} 分配允许使用的 AI 功能、服务商和模型</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
+            <div className="policy-header"><span>功能权限</span><span>使用的 AI 服务商</span><span>使用的模型</span></div>
             {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"] as const).map((feature) => {
+              const featureMeta = {
+                CHAT: ["AI 聊天", "与 AI 进行日常问答和连续对话"],
+                WRITING: ["AI 话术", "生成文案、回复内容和沟通话术"],
+                ANALYSIS: ["AI 分析", "分析账号、内容和业务数据"],
+                TASKS: ["AI 任务", "让 AI 生成并规划自动化任务"],
+                IMAGES: ["AI 生图", "使用文字描述生成图片"],
+              }[feature];
               const assignment = policy.models[feature] || {};
               const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id);
               const models = provider ? Array.from(new Set([...(provider.models || []), provider.default_model].filter(Boolean))) : [];
               return <div className="policy-row" key={feature}>
-                <label className="check-row"><input type="checkbox" checked={Boolean(policy.features[feature])} onChange={(event) => void savePolicy(feature, event.target.checked, assignment.provider_id || "", assignment.model || "")} />{feature}</label>
+                <label className="check-row policy-feature"><input type="checkbox" checked={Boolean(policy.features[feature])} onChange={(event) => void savePolicy(feature, event.target.checked, assignment.provider_id || "", assignment.model || "")} /><span><strong>{featureMeta[0]}</strong><small>{featureMeta[1]}</small></span></label>
                 <select value={assignment.provider_id || ""} disabled={!policy.features[feature]} onChange={(event) => void savePolicy(feature, true, event.target.value, "")}><option value="">自动使用工作区默认</option>{policyProviders.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name}</option>)}</select>
                 <select value={assignment.model || ""} disabled={!policy.features[feature] || !provider} onChange={(event) => void savePolicy(feature, true, assignment.provider_id || "", event.target.value)}><option value="">默认模型</option>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
               </div>;
@@ -1374,7 +1556,7 @@ export function ResourcesPage({
     case "workspaces":
       return <WorkspacesPage user={user} />;
     case "agents":
-      return <AgentsPage />;
+      return <AgentsPage current={user} />;
     case "accounts":
       return <AccountsPage />;
     case "profiles":

@@ -114,7 +114,15 @@ function Layout({ user }: { user: User }) {
             </strong>
             <span className="muted">{isPlatformAdmin ? "平台运营中心" : "工作区服务中心"}</span>
           </div>
-          <div className="user-chip">{user.username}</div>
+          <Link
+            className="user-chip account-link"
+            to="/settings"
+            title="打开账户与安全，修改登录密码"
+            aria-label="账户与安全"
+          >
+            <span>{user.username}</span>
+            <span className="account-link-label">账户与安全</span>
+          </Link>
         </header>
         <section className="content">
           <Outlet />

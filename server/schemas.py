@@ -100,10 +100,13 @@ class AgentRegister(BaseModel):
     agent_name: str
     machine_name: str
     client_version: str
+    workspace_id: str | None = None
+    device_id: str = Field(default="", max_length=128)
 
 
 class Heartbeat(BaseModel):
     agent_id: str
+    device_id: str = Field(default="", max_length=128)
     client_version: str | None = Field(default=None, max_length=50)
     status: str = "ONLINE"
     profile_count: int = 0

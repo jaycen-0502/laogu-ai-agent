@@ -66,7 +66,20 @@ def _agent_dict(item: Agent, settings: ServerSettings) -> dict:
     if last is not None and last.tzinfo is None:
         last = last.replace(tzinfo=timezone.utc)
     online = bool(last and datetime.now(timezone.utc) - last.astimezone(timezone.utc) <= timedelta(seconds=settings.agent_offline_seconds))
-    return {"agent_id": item.id, "workspace_id": item.workspace_id, "agent_name": item.agent_name, "machine_name": item.machine_name, "client_version": item.client_version, "status": "ONLINE" if online else "OFFLINE", "last_heartbeat": _dt(item.last_heartbeat), "profile_count": item.profile_count, "running_task_count": item.running_task_count}
+    visible_status = "DELETED" if item.status == "DELETED" else ("ONLINE" if online else "OFFLINE")
+    return {"agent_id": item.id, "workspace_id": item.workspace_id, "agent_name": item.agent_name, "machine_name": item.machine_name, "client_version": item.client_version, "status": visible_status, "last_heartbeat": _dt(item.last_heartbeat), "profile_count": item.profile_count, "running_task_count": item.running_task_count, "binding_status": "BOUND" if item.bound_device_id else "UNBOUND", "bound_ip": item.bound_ip, "last_ip": item.last_ip, "ip_country": item.ip_country or "UNKNOWN"}
+
+
+def _request_ip_country(request: Request) -> str:
+    value = request.headers.get("cf-ipcountry", "").strip().upper()
+    return value if value and len(value) <= 8 else "UNKNOWN"
+
+
+def _agent_ip_allowed(country: str) -> bool:
+    # Agent access is protected by the per-device binding below, not by a
+    # country allow-list. Cloudflare's country header is still recorded for
+    # audit and display, but users may operate the Agent from any country.
+    return True
 
 
 def _account_dict(item: Account) -> dict:
@@ -166,8 +179,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             digest = token_hash(raw)
             token = db.scalar(select(AgentToken).where(AgentToken.token_hash == digest, AgentToken.status == TOKEN_ACTIVE))
             agent = db.get(Agent, token.agent_id) if token else None
-            if not agent:
+            if not agent or agent.status == "DELETED":
                 await websocket.close(code=4401)
+                return
+            device_id = websocket.headers.get("x-laogu-device-id", "").strip()
+            if agent.bound_device_id and (not device_id or device_id != agent.bound_device_id):
+                await websocket.close(code=4403)
                 return
             await websocket.accept()
             while True:
@@ -417,9 +434,13 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             audit(db, request, action="AUTH_AGENT", result="DENIED", agent_id=token.agent_id, message="Expired or revoked agent token")
             raise HTTPException(status_code=401, detail="Unauthorized")
         agent = db.get(Agent, token.agent_id)
-        if not agent:
+        if not agent or agent.status == "DELETED":
             audit(db, request, action="AUTH_AGENT", result="DENIED", agent_id=token.agent_id, message="Missing agent")
             raise HTTPException(status_code=401, detail="Unauthorized")
+        device_id = request.headers.get("x-laogu-device-id", "").strip()
+        if agent.bound_device_id and (not device_id or device_id != agent.bound_device_id):
+            audit(db, request, action="AUTH_AGENT", result="DENIED", agent_id=agent.id, message="Agent token is bound to another device")
+            raise HTTPException(status_code=403, detail="此 Agent Token 已绑定其他电脑，不能共用")
         token.last_used_at = now(); db.commit()
         return agent
 
@@ -779,8 +800,13 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
 
     @app.post("/api/agents/register")
     def register_agent(request: Request, body: AgentRegister, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        if user.role not in {"ADMIN", "OWNER"} or not user.workspace_id: deny(request, db, action="AGENT_REGISTER", user=user)
-        item = Agent(workspace_id=user.workspace_id, agent_name=body.agent_name, machine_name=body.machine_name, client_version=body.client_version, token_hash="")
+        if user.role not in {"ADMIN", "OWNER"}: deny(request, db, action="AGENT_REGISTER", user=user)
+        workspace_id = body.workspace_id if user.role == "ADMIN" and body.workspace_id else user.workspace_id
+        if not workspace_id or not db.get(Workspace, workspace_id):
+            raise HTTPException(status_code=404, detail="Workspace not found")
+        country = _request_ip_country(request)
+        device_id = body.device_id.strip()
+        item = Agent(workspace_id=workspace_id, agent_name=body.agent_name, machine_name=body.machine_name, client_version=body.client_version, token_hash="", bound_device_id=device_id or None, bound_ip=client_ip(request) if device_id else None, last_ip=client_ip(request), ip_country=country, bound_at=now() if device_id else None, registered_by_user_id=user.id)
         db.add(item); db.flush(); raw_token, _ = create_token(db, item.id); db.commit()
         audit(db, request, action="AGENT_REGISTER", result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, agent_id=item.id, resource_type="agent", resource_id=item.id)
         return {"agent_id": item.id, "agent_token": raw_token, "workspace_id": item.workspace_id}
@@ -809,9 +835,39 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         audit(db, request, action="AGENT_TOKEN_REVOKE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id)
         return {"agent_id": agent.id, "revoked": changed}
 
+    @app.delete("/api/agents/{agent_id}")
+    def delete_agent(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        require_agent_manager(request, db, user, agent)
+        when = now(); revoked = 0
+        for token in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
+            token.status = TOKEN_REVOKED; token.revoked_at = when; revoked += 1
+        agent.status = "DELETED"
+        db.commit()
+        audit(db, request, action="AGENT_DELETE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message=f"revoked_tokens={revoked}")
+        return {"agent_id": agent.id, "status": "DELETED", "revoked": revoked}
+
     @app.post("/api/agents/heartbeat")
     def heartbeat(request: Request, body: Heartbeat, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         if body.agent_id != agent.id: deny(request, db, action="AGENT_HEARTBEAT", agent=agent)
+        country = _request_ip_country(request)
+        device_id = (body.device_id or request.headers.get("x-laogu-device-id", "")).strip()
+        if not device_id:
+            # 旧版 Agent 可能还没有设备指纹；允许它暂时心跳，但不会获得
+            # 绑定状态。升级到新版后首次心跳才会锁定 Token。
+            agent.last_ip = client_ip(request)
+            agent.ip_country = country
+        if agent.bound_device_id and device_id != agent.bound_device_id:
+            deny(request, db, action="AGENT_HEARTBEAT", agent=agent, message="Agent Token 已绑定其他电脑")
+        if device_id and not agent.bound_device_id:
+            agent.bound_device_id = device_id
+            agent.bound_ip = client_ip(request)
+            agent.bound_at = now()
+        if device_id:
+            agent.last_ip = client_ip(request)
+            agent.ip_country = country
         agent.status = "ONLINE"; agent.last_heartbeat = body.timestamp; agent.profile_count = body.profile_count; agent.running_task_count = body.running_task_count
         if body.client_version:
             agent.client_version = body.client_version

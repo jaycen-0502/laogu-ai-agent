@@ -52,6 +52,10 @@ export type Agent = {
   last_heartbeat: string | null;
   profile_count: number;
   running_task_count: number;
+  binding_status?: "BOUND" | "UNBOUND" | string;
+  bound_ip?: string | null;
+  last_ip?: string | null;
+  ip_country?: string;
 };
 export type Account = {
   id: string;

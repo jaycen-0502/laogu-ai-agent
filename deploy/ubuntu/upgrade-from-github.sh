@@ -6,7 +6,7 @@ umask 077
 # 构建前端并执行健康检查。不会覆盖 /etc/laogu/server.env。
 APP="${APP:-/opt/laogu-ai-agent}"
 REPO="${GITHUB_REPOSITORY:-jaycen-0502/laogu-ai-agent}"
-REF="${GITHUB_REF:-main}"
+REF="${GITHUB_REF:-v0.20.5}"
 TMP="$(mktemp -d /tmp/laogu-github-upgrade.XXXXXX)"
 BACKUP="/var/backups/laogu"
 mkdir -p "$BACKUP"
@@ -18,11 +18,15 @@ command -v tar >/dev/null || { echo "缺少 tar" >&2; exit 1; }
 test -f /etc/laogu/server.env || { echo "找不到 /etc/laogu/server.env，停止升级" >&2; exit 1; }
 
 read -r -p "GitHub 仓库 [${REPO}]：" input_repo; REPO="${input_repo:-$REPO}"
-read -r -p "升级版本/标签 [${REF}]（建议填写 v0.20.0）：" input_ref; REF="${input_ref:-$REF}"
 if [ -z "${GITHUB_TOKEN:-}" ]; then
   read -r -s -p "私有仓库 GitHub Token（输入时不显示）：" GITHUB_TOKEN; echo
 fi
 test -n "$GITHUB_TOKEN" || { echo "没有 GitHub Token，停止升级" >&2; exit 1; }
+if [ "${GITHUB_REF:-}" = "" ]; then
+  latest_ref="$(curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/tags?per_page=30" 2>/dev/null | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9.]*\)".*/\1/p' | head -n 1 || true)"
+  if [[ "$latest_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then REF="$latest_ref"; fi
+fi
+read -r -p "升级版本/标签 [${REF}]（直接回车使用当前最新版本）：" input_ref; REF="${input_ref:-$REF}"
 
 echo "1/8 下载 GitHub 版本：$REPO@$REF"
 curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \

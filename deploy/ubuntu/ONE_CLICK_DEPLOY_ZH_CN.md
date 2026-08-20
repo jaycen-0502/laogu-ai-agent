@@ -77,7 +77,42 @@ sudo bash deploy/ubuntu/verify.sh api.jaycwl.org
 
 灾备恢复只能在全新的 Ubuntu 24.04 服务器运行，脚本发现已有系统会拒绝覆盖。
 
-### 1. 上传恢复材料
+### 1. 配置私有仓库只读权限
+
+私有仓库不能匿名 `git clone`。在备用服务器执行：
+
+```bash
+apt update && apt install -y git openssh-client
+install -d -m 700 /root/.ssh
+ssh-keygen -t ed25519 -f /root/.ssh/laogu-github-deploy -N '' \
+  -C 'laogu-recovery-server'
+cat /root/.ssh/laogu-github-deploy.pub
+```
+
+把公钥添加到 GitHub 仓库：
+
+```text
+Settings → Deploy keys → Add deploy key
+```
+
+只读即可，不要勾选写入权限。然后在服务器创建 `/root/.ssh/config`：
+
+```sshconfig
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile /root/.ssh/laogu-github-deploy
+    IdentitiesOnly yes
+```
+
+执行：
+
+```bash
+chmod 600 /root/.ssh/config
+ssh -T git@github.com
+```
+
+### 2. 上传恢复材料
 
 Windows PowerShell：
 
@@ -90,7 +125,19 @@ scp C:\下载目录\laogu-recovery-时间.tar.gz.age.sha256 root@新服务器IP:
 
 把 `restore.sh` 放到新服务器后，先把 DNS A 记录指向新服务器公网 IP。
 
-### 2. 执行恢复
+### 3. 克隆项目并执行恢复向导
+
+```bash
+git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent
+cd /opt/laogu-ai-agent
+git checkout v0.18.0
+sudo bash deploy/ubuntu/restore.sh
+```
+
+脚本会自动寻找 `/root/restore` 中最新的加密备份和 SHA256 文件，然后逐步询问域名、
+证书邮箱和私钥路径。确认摘要无误后，输入 `RESTORE` 才会开始修改系统。
+
+也可以使用完整参数执行：
 
 ```bash
 sudo bash /opt/laogu-ai-agent/deploy/ubuntu/restore.sh \
@@ -105,7 +152,7 @@ sudo bash /opt/laogu-ai-agent/deploy/ubuntu/restore.sh \
 前后端依赖、systemd、Nginx、HTTPS 和验收。旧格式备份如果没有
 `application-data.tar.gz`，脚本会兼容恢复。
 
-### 3. 恢复后清理
+### 4. 恢复后清理
 
 确认网站正常后删除临时私钥、加密包和校验文件，然后重新执行 `install-backup.sh`，
 因为 Telegram Bot Token 不在恢复包里：

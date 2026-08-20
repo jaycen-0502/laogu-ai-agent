@@ -34,6 +34,15 @@ sudo bash deploy/ubuntu/install.sh --domain api.example.com
 
 该脚本只允许在全新 Ubuntu 24.04 服务器执行，并拒绝覆盖已有生产配置或数据库。
 
+故障恢复入口命令：
+
+```bash
+sudo bash deploy/ubuntu/restore.sh
+```
+
+私有仓库需要先给备用服务器配置 GitHub 只读 Deploy Key；恢复向导会自动寻找
+`/root/restore` 下的加密备份，逐步检查并恢复现有生产数据。
+
 ## 灾备
 
 - 每日使用 age 公钥加密 PostgreSQL、精简源码、应用数据和生产配置；

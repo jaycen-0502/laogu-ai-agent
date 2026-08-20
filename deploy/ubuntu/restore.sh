@@ -2,27 +2,30 @@
 set -Eeuo pipefail
 umask 077
 
+# 交互式灾备恢复向导。只在全新的 Ubuntu 24.04 服务器运行。
+APP=/opt/laogu-ai-agent
+RESTORE_DIR=/root/restore
 DOMAIN=""
 EMAIL=""
 PACKAGE=""
 KEY=""
 CHECKSUM=""
-APP=/opt/laogu-ai-agent
 WORK=""
 
 usage() {
   cat <<'EOF'
-老谷系统灾备恢复程序（用于全新 Ubuntu 24.04 服务器）
+老谷系统灾备恢复向导
 
-用法：
-  sudo bash restore.sh \
-    --domain api.example.com \
-    --email you@example.com \
+推荐用法（交互式）：
+  sudo bash deploy/ubuntu/restore.sh
+
+也支持完整参数：
+  sudo bash restore.sh --domain api.example.com --email you@example.com \
     --package /root/restore/laogu-recovery-时间.tar.gz.age \
     --key /root/restore/laogu-backup-recovery.key \
     [--checksum /root/restore/laogu-recovery-时间.tar.gz.age.sha256]
 
-恢复完成后，请删除服务器上的临时私钥和下载的恢复包。
+说明：本脚本只恢复到全新服务器，检测到已有老谷服务或配置时会停止。
 EOF
 }
 
@@ -39,7 +42,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-  echo "请使用 root 运行本脚本" >&2
+  echo "请使用 root 运行：sudo bash deploy/ubuntu/restore.sh" >&2
   exit 1
 fi
 if [ ! -f /etc/os-release ]; then
@@ -52,24 +55,105 @@ if [ "${ID:-}" != "ubuntu" ] || [ "${VERSION_ID:-}" != "24.04" ]; then
   exit 1
 fi
 
-DOMAIN="${DOMAIN#http://}"
-DOMAIN="${DOMAIN#https://}"
-DOMAIN="${DOMAIN%%/*}"
-if ! [[ "$DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; then
-  echo "域名格式错误" >&2; usage; exit 1
+normalize_domain() {
+  local value="$1"
+  value="${value#http://}"
+  value="${value#https://}"
+  value="${value%%/*}"
+  printf '%s' "$value"
+}
+
+valid_domain() { [[ "$1" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,}$ ]]; }
+valid_email() { [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; }
+
+choose_latest() {
+  local pattern="$1"
+  find "$RESTORE_DIR" -maxdepth 1 -type f -name "$pattern" -printf '%T@ %p\n' 2>/dev/null |
+    sort -nr | head -n 1 | cut -d' ' -f2-
+}
+
+if [ -z "$DOMAIN" ]; then
+  read -r -p "1/8 输入生产域名（例如 api.jaycwl.org）：" DOMAIN
 fi
-if ! [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
-  echo "邮箱格式错误" >&2; usage; exit 1
+DOMAIN="$(normalize_domain "$DOMAIN")"
+valid_domain "$DOMAIN" || { echo "域名格式错误：$DOMAIN" >&2; exit 1; }
+
+if [ -z "$EMAIL" ]; then
+  read -r -p "2/8 输入 Let's Encrypt 证书邮箱：" EMAIL
+fi
+valid_email "$EMAIL" || { echo "邮箱格式错误：$EMAIL" >&2; exit 1; }
+
+install -d -m 700 "$RESTORE_DIR"
+if [ -z "$PACKAGE" ]; then
+  PACKAGE="$(choose_latest 'laogu-recovery-*.tar.gz.age')"
+  if [ -n "$PACKAGE" ]; then
+    echo "自动找到最新恢复包：$PACKAGE"
+  else
+    read -r -p "3/8 输入加密恢复包完整路径：" PACKAGE
+  fi
 fi
 PACKAGE="$(readlink -f "$PACKAGE")"
+test -f "$PACKAGE" || { echo "找不到恢复包：$PACKAGE" >&2; exit 1; }
+
+if [ -z "$CHECKSUM" ]; then
+  candidate="${PACKAGE}.sha256"
+  if [ -f "$candidate" ]; then
+    CHECKSUM="$candidate"
+    echo "自动找到 SHA256 文件：$CHECKSUM"
+  else
+    CHECKSUM="$(choose_latest "$(basename "$PACKAGE").sha256")"
+  fi
+fi
+if [ -n "$CHECKSUM" ]; then
+  CHECKSUM="$(readlink -f "$CHECKSUM")"
+  test -f "$CHECKSUM" || { echo "找不到 SHA256 文件：$CHECKSUM" >&2; exit 1; }
+else
+  echo "提示：未提供外部 SHA256 文件，后续仍会执行恢复包内部校验。"
+fi
+
+if [ -z "$KEY" ]; then
+  if [ -f "$RESTORE_DIR/laogu-backup-recovery.key" ]; then
+    KEY="$RESTORE_DIR/laogu-backup-recovery.key"
+    echo "自动找到 age 私钥：$KEY"
+  else
+    read -r -p "4/8 输入 age 私钥完整路径：" KEY
+  fi
+fi
 KEY="$(readlink -f "$KEY")"
-test -f "$PACKAGE" || { echo "找不到加密恢复包" >&2; exit 1; }
-test -f "$KEY" || { echo "找不到 age 私钥" >&2; exit 1; }
+test -f "$KEY" || { echo "找不到 age 私钥：$KEY" >&2; exit 1; }
 
 if systemctl is-active --quiet laogu-server 2>/dev/null || [ -f /etc/laogu/server.env ]; then
-  echo "检测到现有老谷系统，本脚本拒绝覆盖。请只在全新服务器运行。" >&2
+  echo "检测到现有老谷服务或 /etc/laogu/server.env。" >&2
+  echo "为防止覆盖正在运行的系统，恢复已停止。请使用全新服务器。" >&2
   exit 1
 fi
+if [ -e "$APP" ] && [ "$(find "$APP" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+  # 允许 APP 仅包含刚从 GitHub 克隆的部署脚本；生产服务、配置或数据库
+  # 一旦存在仍然拒绝，避免把恢复包覆盖到正在运行的系统。
+  if [ -f /etc/laogu/server.env ] || systemctl list-unit-files laogu-server.service >/dev/null 2>&1 && systemctl is-enabled laogu-server.service >/dev/null 2>&1; then
+    echo "检测到已有老谷服务或配置，拒绝覆盖。" >&2
+    exit 1
+  fi
+  if [ ! -f "$APP/deploy/ubuntu/restore.sh" ]; then
+    echo "检测到非空 $APP，且不是本项目 GitHub 工作目录。" >&2
+    echo "请使用全新服务器，或清空该目录后重新克隆项目。" >&2
+    exit 1
+  fi
+  echo "检测到 GitHub 部署目录，将用恢复包中的正式源码覆盖。"
+fi
+
+echo
+echo "=== 5/8 恢复前确认 ==="
+echo "目标域名：$DOMAIN"
+echo "恢复包：$PACKAGE"
+echo "恢复包大小：$(du -h "$PACKAGE" | awk '{print $1}')"
+echo "SHA256：${CHECKSUM:-未提供（将执行内部校验）}"
+echo "私钥：$KEY"
+echo
+echo "这会在本机安装 PostgreSQL/Nginx/Python/Node.js，恢复数据库并配置 HTTPS。"
+echo "不会覆盖已存在的老谷服务、生产配置或数据库。"
+read -r -p '确认继续请输入 RESTORE，否则退出：' CONFIRM
+[ "$CONFIRM" = "RESTORE" ] || { echo "已取消，没有修改系统。"; exit 0; }
 
 cleanup() {
   rc=$?
@@ -81,7 +165,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== 1/12 安装恢复环境 ==="
+echo "=== 6/8 安装恢复环境 ==="
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y \
@@ -91,13 +175,13 @@ apt-get install -y \
 timedatectl set-timezone Asia/Shanghai
 systemctl enable --now postgresql nginx
 
-echo "=== 2/12 校验并解密恢复包 ==="
+echo "=== 7/8 校验、解密和恢复 ==="
 if [ -n "$CHECKSUM" ]; then
-  CHECKSUM="$(readlink -f "$CHECKSUM")"
-  test -f "$CHECKSUM" || { echo "找不到 SHA256 文件" >&2; exit 1; }
-  EXPECTED="$(awk 'NR==1 {print $1}' "$CHECKSUM")"
+  EXPECTED="$(awk 'NF {print $1; exit}' "$CHECKSUM")"
   ACTUAL="$(sha256sum "$PACKAGE" | awk '{print $1}')"
+  [[ "$EXPECTED" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "SHA256 文件格式错误" >&2; exit 1; }
   [ "$EXPECTED" = "$ACTUAL" ] || { echo "外部 SHA256 校验失败" >&2; exit 1; }
+  echo "外部 SHA256：通过"
 fi
 
 WORK="$(mktemp -d /root/laogu-restore.XXXXXX)"
@@ -124,7 +208,6 @@ done
 (cd "$WORK/extracted" && sha256sum --check SHA256SUMS)
 pg_restore --list "$WORK/extracted/database.dump" >/dev/null
 
-echo "=== 3/12 恢复程序和数据文件 ==="
 ARCHIVES=(application-source.tar.gz)
 if [ -s "$WORK/extracted/application-data.tar.gz" ]; then
   ARCHIVES+=(application-data.tar.gz)
@@ -156,14 +239,12 @@ install -d -o laogu -g laogu -m 750 "$APP/logs" "$APP/data/ai-images"
 chown -R laogu:laogu "$APP"
 chmod -R o-w "$APP"
 
-echo "=== 4/12 恢复生产配置 ==="
 install -d -o root -g laogu -m 750 /etc/laogu
 install -o root -g laogu -m 640 "$WORK/extracted/server.env" /etc/laogu/server.env
 if [ -f "$WORK/extracted/backup-age-recipient.txt" ]; then
   install -o root -g root -m 600 "$WORK/extracted/backup-age-recipient.txt" /etc/laogu/backup-age-recipient.txt
 fi
 
-echo "=== 5/12 创建数据库并恢复 PostgreSQL ==="
 DB_PASSWORD="$(python3 - /etc/laogu/server.env <<'PY'
 import sys
 from urllib.parse import unquote, urlsplit
@@ -200,17 +281,13 @@ runuser -u postgres -- createdb --owner=laogu laogu
 runuser -u postgres -- pg_restore --exit-on-error --no-owner --no-acl \
   --role=laogu --dbname=laogu "$WORK/extracted/database.dump"
 
-echo "=== 6/12 安装程序依赖 ==="
 runuser -u laogu -- python3 -m venv "$APP/.venv"
 runuser -u laogu -- "$APP/.venv/bin/python" -m pip install --upgrade pip
 runuser -u laogu -- "$APP/.venv/bin/pip" install -r "$APP/server/requirements.txt"
 runuser -u laogu -- bash -c "set -a; . /etc/laogu/server.env; set +a; cd '$APP'; .venv/bin/alembic upgrade head"
-
-echo "=== 7/12 构建前端 ==="
 runuser -u laogu -- bash -c "cd '$APP/web'; npm ci; npm run build"
 test -s "$APP/web/dist/index.html"
 
-echo "=== 8/12 安装后端服务 ==="
 install -o root -g root -m 644 "$APP/deploy/ubuntu/laogu-server.service" /etc/systemd/system/laogu-server.service
 systemctl daemon-reload
 systemctl enable --now laogu-server
@@ -223,7 +300,6 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 
-echo "=== 9/12 配置 Nginx ==="
 cat > /etc/nginx/sites-available/laogu-server <<EOF
 server {
     listen 80;
@@ -231,7 +307,6 @@ server {
     root /opt/laogu-ai-agent/web/dist;
     index index.html;
     client_max_body_size 1m;
-
     location = /api/auth/bootstrap { deny all; return 403; }
     location /api/ {
         proxy_pass http://127.0.0.1:8000;
@@ -254,21 +329,19 @@ ln -sfn /etc/nginx/sites-available/laogu-server /etc/nginx/sites-enabled/laogu-s
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl reload nginx
-
-echo "=== 10/12 配置防火墙 ==="
 ufw allow OpenSSH
 ufw allow 'Nginx Full'
 ufw --force enable
-
-echo "=== 11/12 申请 HTTPS ==="
-certbot --nginx --non-interactive --agree-tos --redirect \
-  --email "$EMAIL" -d "$DOMAIN"
-
-echo "=== 12/12 最终验收 ==="
-bash "$APP/deploy/ubuntu/verify.sh" "$DOMAIN"
+certbot --nginx --non-interactive --agree-tos --redirect --email "$EMAIL" -d "$DOMAIN"
 
 echo
-echo "=== 灾备恢复成功 ==="
-echo "请确认网站后执行以下清理命令："
+echo "=== 8/8 恢复验收 ==="
+bash "$APP/deploy/ubuntu/verify.sh" "$DOMAIN"
+echo
+echo "数据库、用户、工作区、配置和程序已恢复。"
+echo "请打开 https://$DOMAIN 登录确认数据，再执行："
+echo "  sudo bash $APP/deploy/ubuntu/install-backup.sh"
+echo "重新绑定 Telegram 备份。"
+echo
+echo "确认无误后删除临时私钥和恢复包："
 echo "  rm -f -- '$KEY' '$PACKAGE'${CHECKSUM:+ '$CHECKSUM'}"
-echo "然后重新运行 install-backup.sh，输入 Telegram Bot Token 和 Chat ID。"

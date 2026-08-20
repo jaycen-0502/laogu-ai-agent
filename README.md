@@ -24,6 +24,21 @@
 本地 `config.yaml`、数据库、日志、代理/Chrome 运行时、授权私钥、密码文件以及编译后的 EXE。
 Windows 安装包和便携版应通过 GitHub Release 附件发布。
 
+## Windows 程序位置速查
+
+克隆仓库后，假设项目目录为 `C:\laogu-ai-agent`：
+
+| 要找的内容 | 仓库源码路径 | 构建后运行文件 |
+|---|---|---|
+| Laogu Browser | `C:\laogu-ai-agent\browser\` | `C:\laogu-ai-agent\browser\build\bin\Laogu-Browser.exe` |
+| 桌面外部控制台 | `C:\laogu-ai-agent\desktop\` | `C:\laogu-ai-agent\dist\Laogu-Desktop\Laogu-Desktop.exe` |
+| 控制台配置模板 | `C:\laogu-ai-agent\packaging\windows\laogu.env.example` | `dist\Laogu-Desktop\config\laogu.env.example` |
+| 构建脚本 | `C:\laogu-ai-agent\packaging\windows\build_portable.ps1` | — |
+
+注意：`browser\build\bin\` 和 `dist\` 是本机生成目录，默认被 Git 忽略；如果刚克隆完仓库找不到
+`.exe`，先按照下面的构建命令生成。发布给其他电脑时，从 GitHub Release 下载便携包，而不是在源码目录
+里寻找未提交的 EXE。
+
 ## 生产结构
 
 ```text

@@ -75,9 +75,10 @@ def _request_ip_country(request: Request) -> str:
 
 
 def _agent_ip_allowed(country: str) -> bool:
-    # Cloudflare supplies the country code when the hostname is proxied. Direct
-    # deployments may not have it, so UNKNOWN remains allowed for compatibility.
-    return country in {"CN", "UNKNOWN", "XX"}
+    # Agent access is protected by the per-device binding below, not by a
+    # country allow-list. Cloudflare's country header is still recorded for
+    # audit and display, but users may operate the Agent from any country.
+    return True
 
 
 def _account_dict(item: Account) -> dict:
@@ -182,9 +183,6 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
                 return
             device_id = websocket.headers.get("x-laogu-device-id", "").strip()
             if agent.bound_device_id and (not device_id or device_id != agent.bound_device_id):
-                await websocket.close(code=4403)
-                return
-            if not _agent_ip_allowed(websocket.headers.get("cf-ipcountry", "").strip().upper() or "UNKNOWN"):
                 await websocket.close(code=4403)
                 return
             await websocket.accept()
@@ -800,8 +798,6 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if not workspace_id or not db.get(Workspace, workspace_id):
             raise HTTPException(status_code=404, detail="Workspace not found")
         country = _request_ip_country(request)
-        if not _agent_ip_allowed(country):
-            deny(request, db, action="AGENT_REGISTER", user=user, message="仅允许中国大陆公网 IP 注册运行端")
         device_id = body.device_id.strip()
         item = Agent(workspace_id=workspace_id, agent_name=body.agent_name, machine_name=body.machine_name, client_version=body.client_version, token_hash="", bound_device_id=device_id or None, bound_ip=client_ip(request) if device_id else None, last_ip=client_ip(request), ip_country=country, bound_at=now() if device_id else None, registered_by_user_id=user.id)
         db.add(item); db.flush(); raw_token, _ = create_token(db, item.id); db.commit()
@@ -836,8 +832,6 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     def heartbeat(request: Request, body: Heartbeat, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         if body.agent_id != agent.id: deny(request, db, action="AGENT_HEARTBEAT", agent=agent)
         country = _request_ip_country(request)
-        if not _agent_ip_allowed(country):
-            deny(request, db, action="AGENT_HEARTBEAT", agent=agent, message="仅允许中国大陆公网 IP 连接运行端")
         device_id = (body.device_id or request.headers.get("x-laogu-device-id", "")).strip()
         if not device_id:
             # 旧版 Agent 可能还没有设备指纹；允许它暂时心跳，但不会获得

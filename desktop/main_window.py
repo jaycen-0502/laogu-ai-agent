@@ -46,6 +46,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller or DesktopController()
         self.thread_pool = QThreadPool.globalInstance()
+        self._workers: set[FunctionWorker] = set()
+        self._closing = False
         self._active_jobs = 0
         self._profiles: list[dict[str, Any]] = []
         self._statistics: dict[str, Any] = {}
@@ -227,6 +229,19 @@ class MainWindow(QMainWindow):
         self.heartbeat_label.setText(f"Last Heartbeat: {heartbeat}")
 
     def closeEvent(self, event) -> None:
+        self._closing = True
+        self._agent_status_timer.stop()
+        for worker in tuple(self._workers):
+            for signal in (
+                worker.signals.finished,
+                worker.signals.error,
+                worker.signals.done,
+            ):
+                try:
+                    signal.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+        self._workers.clear()
         self.controller.stop_agent_service()
         super().closeEvent(event)
 
@@ -414,16 +429,22 @@ class MainWindow(QMainWindow):
         function: Callable[[], Any],
         on_finished: Callable[[Any], None],
     ) -> None:
+        if self._closing:
+            return
         self._active_jobs += 1
         self._update_busy_state()
         self._log(f"RUNNING  {label}")
         worker = FunctionWorker(function)
+        self._workers.add(worker)
         worker.signals.finished.connect(on_finished)
         worker.signals.error.connect(lambda message: self._job_failed(label, message))
-        worker.signals.done.connect(self._job_done)
+        worker.signals.done.connect(lambda: self._job_done(worker))
         self.thread_pool.start(worker)
 
-    def _job_done(self) -> None:
+    def _job_done(self, worker: FunctionWorker) -> None:
+        self._workers.discard(worker)
+        if self._closing:
+            return
         self._active_jobs = max(0, self._active_jobs - 1)
         self._update_busy_state()
 

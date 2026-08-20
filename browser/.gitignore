@@ -1,0 +1,118 @@
+﻿# OS
+.DS_Store
+Thumbs.db
+
+# IDE / Editor
+.vscode/
+.idea/
+.history/
+.kiro/
+*.swp
+*.swo
+
+# Local agent/editor rules
+.windsurfrules
+
+# Logs
+*.log
+*.err
+tmp-frontend-limited-watcher.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.ant-license.json
+
+# Build outputs and bundled runtimes
+/bin/
+/build/bin/
+/build/build/
+/build/dist/
+/build/license-admin/
+/build/license-python/
+/build/license-server/
+/build/windows/installer/tmp/
+/chrome/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Publish artifacts
+publish/staging/
+publish/output/
+
+# Local scratch files
+plan.md
+pic/
+
+# Runtime data
+/data/
+/logs/
+snapshots/
+app.db
+/config.yaml
+config.yaml.broken-*
+*.db
+*.sqlite
+*.sqlite3
+proxies.yaml
+profiles.yaml
+
+# Frontend deps/cache
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local runtime cache
+.tmp/runtime-cache/
+
+# Test outputs / coverage
+coverage/
+*.out
+tmp-debug-port*/
+
+# Env files
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+license-state.bin
+Laogu-License-Password.txt
+
+# Local sensitive configs / accounts
+*.ovpn
+clash.yaml
+mihomo.yaml
+singbox.json
+xray.json
+proxy-subscription.yaml
+proxy-subscriptions.yaml
+subscription.yaml
+subscriptions.yaml
+vpn-sockets-connectivity-report.md
+account.json
+accounts.json
+accounts.yaml
+accounts.yml
+*credential*.json
+*credentials*.json
+*secret*.json
+*secrets*.json
+*token*.json
+*tokens*.json
+*cookie*.json
+*cookies*.json
+*.local.yaml
+*.local.yml
+*.local.json
+
+# Local backups
+.local-backup/

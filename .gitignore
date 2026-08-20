@@ -29,8 +29,27 @@ __pycache__/
 web/node_modules/
 web/dist/
 *.tsbuildinfo
-build/
-dist/
+/build/
+/dist/
+
+# Browser runtime state and local distributions
+/browser/config.yaml
+/browser/data/
+/browser/logs/
+/browser/bin/
+/browser/chrome/
+/browser/frontend/node_modules/
+/browser/frontend/dist/
+/browser/build/bin/
+/browser/build/build/
+/browser/build/dist/
+/browser/build/license-admin/
+/browser/build/license-python/
+/browser/build/license-server/
+/browser/build/windows/installer/tmp/
+/browser/publish/staging/
+/browser/publish/output/
+/browser/license-state.bin
 
 # Local release staging and archives
 .stage*/

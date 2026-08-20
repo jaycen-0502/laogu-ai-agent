@@ -1,13 +1,28 @@
 # Laogu AI Agent
 
-老谷系统由 Ubuntu 协调服务器、React 管理后台和 Windows Agent 组成。
+老谷系统由 Ubuntu 协调服务器、React 管理后台、Windows Agent、Laogu Browser 和桌面外部控制台组成。
 
-- 应用版本：`0.18.0`
+- 应用版本：`0.20.0`
 - 部署/恢复工具版本：`v0.18.2`
 - 生产地址示例：`https://api.jaycwl.org`
 
 本项目使用 GitHub 私有仓库。服务器不能匿名下载代码，必须先配置一次 GitHub
 只读 Deploy Key；密钥、数据库、Telegram Token 和生产配置永远不上传 GitHub。
+
+## 项目组件
+
+| 目录 | 组件 | 运行位置 |
+|---|---|---|
+| `server/`、`alembic/` | FastAPI 服务端和数据库迁移 | Ubuntu 服务器 |
+| `web/` | React 管理后台 | Ubuntu 服务器构建，由 Nginx 提供 |
+| `agent/` | Windows Agent 和任务执行层 | Windows |
+| `browser/` | Laogu Browser（Wails + Go + React）源码 | Windows |
+| `desktop/` | 桌面外部控制台源码 | Windows |
+| `packaging/windows/` | 桌面控制台 PyInstaller 打包配置 | Windows 构建机 |
+
+仓库只保存可审查、可复现构建的源码。以下内容不进入 Git：浏览器实例目录、Cookie、登录状态、
+本地 `config.yaml`、数据库、日志、代理/Chrome 运行时、授权私钥、密码文件以及编译后的 EXE。
+Windows 安装包和便携版应通过 GitHub Release 附件发布。
 
 ## 生产结构
 
@@ -24,6 +39,32 @@ Windows Agent
 ```
 
 Laogu Browser 及 Windows Agent 只在 Windows 运行，不安装到 Ubuntu 服务器。
+
+## Windows 程序构建
+
+### Laogu Browser
+
+```powershell
+cd browser
+npm --prefix frontend ci
+wails build -clean
+```
+
+输出位于 `browser\build\bin\Laogu-Browser.exe`，详细说明见
+[Browser 捆绑构建说明](browser/BUNDLE_BUILD_ZH_CN.md)。程序首次运行会生成本地配置和运行数据，
+这些文件不会被 Git 跟踪。
+
+### 桌面外部控制台
+
+```powershell
+python -m pip install -r desktop\requirements.txt
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File packaging\windows\build_portable.ps1 -Clean
+```
+
+输出位于 `dist\Laogu-Desktop\Laogu-Desktop.exe`。控制台会复用现有 Agent 能力，首次运行可导入
+同一 Windows 用户下由 DPAPI 保护的 Agent 凭据；如检测到独立命令行 Agent，会询问是否停止它，
+但不会关闭 Laogu Browser。
 
 ## 小白全新服务器一键部署
 

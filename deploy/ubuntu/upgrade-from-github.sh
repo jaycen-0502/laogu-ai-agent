@@ -36,6 +36,10 @@ ROOT_DIR="$(tar -tzf "$TMP/source.tar.gz" | awk -F/ 'NR==1{print $1}')"
 tar -xzf "$TMP/source.tar.gz" -C "$TMP"
 SRC="$TMP/$ROOT_DIR"
 test -f "$SRC/server/main.py" && test -f "$SRC/alembic.ini" && test -f "$SRC/web/package.json" || { echo "GitHub 包结构不正确，停止升级" >&2; exit 1; }
+# 将本次下载的升级脚本保存为后续标准入口，后续直接运行它即可获得最新默认版本提示。
+if [ -f "$SRC/deploy/ubuntu/upgrade-from-github.sh" ]; then
+  install -o root -g root -m 700 "$SRC/deploy/ubuntu/upgrade-from-github.sh" /usr/local/sbin/laogu-upgrade-from-github
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
 echo "2/8 备份 PostgreSQL 与当前程序"

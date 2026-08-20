@@ -3,7 +3,7 @@
 老谷系统由 Ubuntu 协调服务器、React 管理后台和 Windows Agent 组成。
 
 - 应用版本：`0.18.0`
-- 部署/恢复工具版本：`v0.18.1`
+- 部署/恢复工具版本：`v0.18.2`
 - 生产地址示例：`https://api.jaycwl.org`
 
 本项目使用 GitHub 私有仓库。服务器不能匿名下载代码，必须先配置一次 GitHub
@@ -73,7 +73,7 @@ ssh -T git@github.com
 ```bash
 git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent \
 && cd /opt/laogu-ai-agent \
-&& git checkout v0.18.1 \
+&& git checkout v0.18.2 \
 && sudo bash deploy/ubuntu/install.sh --domain api.jaycwl.org
 ```
 
@@ -101,7 +101,7 @@ laogu-backup-recovery.key
 ```bash
 git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent \
 && cd /opt/laogu-ai-agent \
-&& git checkout v0.18.1 \
+&& git checkout v0.18.2 \
 && sudo bash deploy/ubuntu/restore.sh
 ```
 

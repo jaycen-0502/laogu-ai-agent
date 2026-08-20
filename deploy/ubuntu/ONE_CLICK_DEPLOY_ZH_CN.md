@@ -34,7 +34,7 @@ apt update
 apt install -y git
 git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent
 cd /opt/laogu-ai-agent
-git checkout v0.18.0
+git checkout v0.18.2
 ```
 
 ### 3. 执行一键安装
@@ -130,7 +130,7 @@ scp C:\下载目录\laogu-recovery-时间.tar.gz.age.sha256 root@新服务器IP:
 ```bash
 git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent
 cd /opt/laogu-ai-agent
-git checkout v0.18.0
+git checkout v0.18.2
 sudo bash deploy/ubuntu/restore.sh
 ```
 
@@ -169,4 +169,4 @@ rm -f -- /root/restore/laogu-backup-recovery.key \
 TLS 私钥、数据库密码、JWT 密钥、Telegram Token、`agent_data/`、`logs/`、`data/`、
 `*.db`、`.env`、`node_modules/`、`.venv/`、构建目录和历史升级压缩包。
 
-代码使用正式标签部署，例如 `v0.18.0`；生产服务器不要直接跟随未验收的开发分支。
+代码使用正式标签部署，例如 `v0.18.2`；生产服务器不要直接跟随未验收的开发分支。

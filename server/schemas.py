@@ -40,6 +40,15 @@ class LicenseRevoke(BaseModel):
     reason: str = Field(default="", max_length=300)
 
 
+class LicenseIssue(BaseModel):
+    request_code: str = Field(min_length=32, max_length=20000)
+    days: int = Field(default=30, ge=1, le=3650)
+    customer: str = Field(default="", max_length=200)
+    license_id: str = Field(default="", max_length=120)
+    features: list[str] = Field(default_factory=lambda: ["browser", "playwright", "external_api"], max_length=20)
+    offline_grace_days: int = Field(default=7, ge=3, le=30)
+
+
 class InvitationCreate(BaseModel):
     role: Literal["OWNER", "MEMBER"] = "MEMBER"
     workspace_id: str | None = None

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Laogu encrypted backup every day
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=15m
+Persistent=true
+AccuracySec=1m
+Unit=laogu-backup.service
+
+[Install]
+WantedBy=timers.target

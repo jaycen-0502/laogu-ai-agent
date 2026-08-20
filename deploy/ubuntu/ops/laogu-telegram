@@ -1,0 +1,115 @@
+#!/usr/bin/env python3
+"""Minimal Telegram sender used by the encrypted backup jobs.
+
+Secrets are read from /etc/laogu/backup.env at runtime and are never stored in
+the repository.
+"""
+
+import json
+import mimetypes
+from pathlib import Path
+import sys
+import urllib.parse
+import urllib.request
+import uuid
+
+
+CONFIG = Path("/etc/laogu/backup.env")
+MAX_DOCUMENT_BYTES = 45 * 1024 * 1024
+
+
+def load_config():
+    values = {}
+    for line in CONFIG.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    token = values.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = values.get("TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        raise RuntimeError("Telegram configuration incomplete")
+    return token, chat_id
+
+
+def call(url, data, content_type):
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": content_type},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            result = json.load(response)
+        if not result.get("ok"):
+            raise RuntimeError("Telegram rejected request")
+        return result["result"]
+    except Exception:
+        raise RuntimeError("Telegram request failed") from None
+
+
+def send_message(base, chat_id, message):
+    data = urllib.parse.urlencode({"chat_id": chat_id, "text": message}).encode()
+    return call(base + "/sendMessage", data, "application/x-www-form-urlencoded")
+
+
+def send_document(base, chat_id, path, caption):
+    if path.stat().st_size > MAX_DOCUMENT_BYTES:
+        raise RuntimeError("Encrypted backup exceeds 45 MB safety limit")
+
+    boundary = "----laogu-" + uuid.uuid4().hex
+    chunks = []
+
+    def field(name, value):
+        chunks.extend(
+            [
+                f"--{boundary}\r\n".encode(),
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+                str(value).encode("utf-8"),
+                b"\r\n",
+            ]
+        )
+
+    field("chat_id", chat_id)
+    field("caption", caption)
+    mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    chunks.extend(
+        [
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="document"; filename="{path.name}"\r\n'.encode(),
+            f"Content-Type: {mime}\r\n\r\n".encode(),
+            path.read_bytes(),
+            b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ]
+    )
+    return call(
+        base + "/sendDocument",
+        b"".join(chunks),
+        f"multipart/form-data; boundary={boundary}",
+    )
+
+
+def main():
+    if len(sys.argv) < 3:
+        raise RuntimeError("Usage: laogu-telegram message TEXT | document FILE CAPTION")
+
+    token, chat_id = load_config()
+    base = f"https://api.telegram.org/bot{token}"
+    if sys.argv[1] == "message":
+        result = send_message(base, chat_id, sys.argv[2])
+    elif sys.argv[1] == "document" and len(sys.argv) >= 4:
+        path = Path(sys.argv[2])
+        if not path.is_file():
+            raise RuntimeError("Document does not exist")
+        result = send_document(base, chat_id, path, sys.argv[3])
+    else:
+        raise RuntimeError("Invalid command")
+    print(f"Telegram message_id={result.get('message_id', '-')}")
+
+
+try:
+    main()
+except Exception as exc:
+    print(f"ERROR: {exc}", file=sys.stderr)
+    raise SystemExit(1)

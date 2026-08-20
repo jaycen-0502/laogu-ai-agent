@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Laogu health check every seven days
+
+[Timer]
+OnCalendar=Thu *-*-* 09:00:00
+RandomizedDelaySec=10m
+Persistent=true
+AccuracySec=1m
+Unit=laogu-weekly-check.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+HOST="$(hostname)"
+
+on_error() {
+  rc=$?
+  trap - ERR
+  /usr/local/sbin/laogu-telegram message \
+    "❌ 老谷系统每周检查执行失败
+服务器：$HOST
+时间：$(date '+%F %T %Z')
+请检查：journalctl -u laogu-weekly-check.service" \
+    >/dev/null 2>&1 || true
+  exit "$rc"
+}
+trap on_error ERR
+
+ROOT_USAGE="$(df -P / | awk 'NR==2 {gsub("%","",$5); print $5}')"
+INODE_USAGE="$(df -Pi / | awk 'NR==2 {gsub("%","",$5); print $5}')"
+ROOT_FREE="$(df -hP / | awk 'NR==2 {print $4}')"
+AUTO_SIZE="$(du -sh /var/backups/laogu-auto 2>/dev/null | awk '{print $1}')"
+MANUAL_SIZE="$(du -sh /var/backups/laogu 2>/dev/null | awk '{print $1}')"
+MANUAL_BYTES="$(du -sb /var/backups/laogu 2>/dev/null | awk '{print $1}')"
+
+AUTO_COUNT="$(find /var/backups/laogu-auto -maxdepth 1 -type f -name '*.tar.gz.age' | wc -l | tr -d ' ')"
+LATEST="$(find /var/backups/laogu-auto -maxdepth 1 -type f -name '*.tar.gz.age' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+
+if [ -n "$LATEST" ]; then
+  LATEST_TIME="$(date -d "@$(stat -c %Y "$LATEST")" '+%F %T')"
+  LATEST_AGE="$(( $(date +%s) - $(stat -c %Y "$LATEST") ))"
+else
+  LATEST_TIME="不存在"
+  LATEST_AGE=999999999
+fi
+
+BACKEND="$(systemctl is-active laogu-server || true)"
+NGINX="$(systemctl is-active nginx || true)"
+POSTGRES="$(systemctl is-active postgresql || true)"
+BACKUP_TIMER="$(systemctl is-active laogu-backup.timer || true)"
+LAST_BACKUP_RESULT="$(systemctl show laogu-backup.service -p Result --value 2>/dev/null || true)"
+
+set -a
+. /etc/laogu/server.env
+set +a
+DB_URL="${LAOGU_SERVER_DATABASE_URL/postgresql+psycopg2/postgresql}"
+DB_URL="${DB_URL/postgresql+psycopg/postgresql}"
+DB_SIZE="$(psql "$DB_URL" --tuples-only --no-align --command "SELECT pg_size_pretty(pg_database_size(current_database()));")"
+unset DB_URL LAOGU_SERVER_DATABASE_URL
+
+JOURNAL_SIZE="$(journalctl --disk-usage 2>/dev/null | tail -n 1)"
+NGINX_LOG_SIZE="$(du -sh /var/log/nginx 2>/dev/null | awk '{print $1}')"
+APP_LOG_SIZE="$(du -sh /opt/laogu-ai-agent/logs 2>/dev/null | awk '{print $1}')"
+
+WARNINGS=()
+[ "$ROOT_USAGE" -ge 70 ] && WARNINGS+=("系统盘使用率达到 ${ROOT_USAGE}%")
+[ "$INODE_USAGE" -ge 70 ] && WARNINGS+=("inode使用率达到 ${INODE_USAGE}%")
+[ "$LATEST_AGE" -gt 172800 ] && WARNINGS+=("最近一次自动备份已超过48小时")
+[ "$BACKEND" = "active" ] || WARNINGS+=("后端服务状态异常：$BACKEND")
+[ "$NGINX" = "active" ] || WARNINGS+=("Nginx状态异常：$NGINX")
+[ "$POSTGRES" = "active" ] || WARNINGS+=("PostgreSQL状态异常：$POSTGRES")
+[ "$BACKUP_TIMER" = "active" ] || WARNINGS+=("自动备份定时器状态异常：$BACKUP_TIMER")
+[ "$LAST_BACKUP_RESULT" = "success" ] || WARNINGS+=("最近一次备份结果：$LAST_BACKUP_RESULT")
+[ "$MANUAL_BYTES" -lt $((5 * 1024 * 1024 * 1024)) ] || WARNINGS+=("手动升级备份已达到5GB")
+
+if [ "${#WARNINGS[@]}" -eq 0 ]; then
+  TITLE="✅ 老谷系统每周检查正常"
+  WARNING_TEXT="未发现需要处理的问题"
+else
+  TITLE="⚠️ 老谷系统每周检查发现异常"
+  WARNING_TEXT="$(printf '• %s\n' "${WARNINGS[@]}")"
+fi
+
+/usr/local/sbin/laogu-telegram message \
+  "$TITLE
+服务器：$HOST
+时间：$(date '+%F %T %Z')
+
+系统盘：${ROOT_USAGE}%（剩余 $ROOT_FREE）
+inode：${INODE_USAGE}%
+数据库：$DB_SIZE
+自动备份：$AUTO_SIZE，共 $AUTO_COUNT 份
+最近备份：$LATEST_TIME
+升级备份：$MANUAL_SIZE
+Nginx日志：${NGINX_LOG_SIZE:-未知}
+应用日志：${APP_LOG_SIZE:-未知}
+Journal：$JOURNAL_SIZE
+
+服务状态：
+后端=$BACKEND
+Nginx=$NGINX
+PostgreSQL=$POSTGRES
+备份定时器=$BACKUP_TIMER
+
+检查结果：
+$WARNING_TEXT"
+
+echo "WEEKLY_CHECK_OK"

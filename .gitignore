@@ -1,0 +1,45 @@
+# Secrets and production configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+server.env
+backup.env
+credentials.json
+
+# Runtime data
+agent_data/
+logs/
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# Web and desktop build output
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+build/
+dist/
+
+# Local release staging and archives
+.stage*/
+*.tar
+*.tar.gz
+*.zip
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

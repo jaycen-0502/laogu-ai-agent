@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+APP=/opt/laogu-ai-agent
+DEST=/var/backups/laogu-auto
+RECIPIENT_FILE=/etc/laogu/backup-age-recipient.txt
+STAMP="$(date +%Y%m%d-%H%M%S)"
+HOST="$(hostname)"
+WORK=""
+FAILED_LINE="unknown"
+
+trap 'FAILED_LINE=$LINENO' ERR
+
+finish() {
+  rc=$?
+  trap - EXIT
+  if [ -n "${WORK:-}" ] && [ -d "$WORK" ]; then
+    rm -rf -- "$WORK"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    /usr/local/sbin/laogu-telegram message \
+      "❌ 老谷系统自动备份失败
+服务器：$HOST
+时间：$(date '+%F %T %Z')
+错误位置：脚本第 ${FAILED_LINE} 行
+请登录服务器检查：journalctl -u laogu-backup.service" \
+      >/dev/null 2>&1 || true
+  fi
+  exit "$rc"
+}
+trap finish EXIT
+
+exec 9>/run/lock/laogu-backup.lock
+if ! flock -n 9; then
+  echo "已有备份任务正在运行，本次跳过"
+  exit 0
+fi
+
+install -d -o root -g root -m 700 "$DEST"
+WORK="$(mktemp -d "$DEST/.work.XXXXXX")"
+
+set -a
+. /etc/laogu/server.env
+set +a
+test -n "${LAOGU_SERVER_DATABASE_URL:-}"
+
+RECIPIENT="$(tr -d '[:space:]' < "$RECIPIENT_FILE")"
+case "$RECIPIENT" in
+  age1*) ;;
+  *) echo "无效的 age 公钥" >&2; exit 1 ;;
+esac
+
+DB_URL="${LAOGU_SERVER_DATABASE_URL/postgresql+psycopg2/postgresql}"
+DB_URL="${DB_URL/postgresql+psycopg/postgresql}"
+
+echo "1/7 备份 PostgreSQL"
+pg_dump --format=custom --no-owner --no-acl \
+  --file="$WORK/database.dump" "$DB_URL"
+pg_restore --list "$WORK/database.dump" > "$WORK/database-contents.txt"
+
+echo "2/7 备份精简源码"
+tar \
+  --exclude='*/__pycache__' \
+  --exclude='*.pyc' \
+  --exclude='*.db' \
+  --exclude='*.sqlite' \
+  --exclude='*.sqlite3' \
+  --exclude='*.log' \
+  --exclude='*.tar.gz' \
+  --exclude='*.zip' \
+  --exclude='node_modules' \
+  --exclude='web/dist' \
+  -C "$APP" \
+  -czf "$WORK/application-source.tar.gz" \
+  agent alembic common server web deploy scripts alembic.ini
+gzip -t "$WORK/application-source.tar.gz"
+
+if [ -d "$APP/data" ]; then
+  tar -C "$APP" -czf "$WORK/application-data.tar.gz" data
+  gzip -t "$WORK/application-data.tar.gz"
+else
+  : > "$WORK/application-data.tar.gz"
+  echo "应用数据目录不存在，写入空占位文件"
+fi
+
+echo "3/7 备份服务器配置"
+install -m 600 /etc/laogu/server.env "$WORK/server.env"
+install -m 600 "$RECIPIENT_FILE" "$WORK/backup-age-recipient.txt"
+systemctl cat laogu-server > "$WORK/laogu-server.service.txt"
+nginx -T > "$WORK/nginx-config.txt" 2> "$WORK/nginx-check.txt"
+
+echo "4/7 生成恢复信息"
+{
+  echo "backup_time=$(date --iso-8601=seconds)"
+  echo "hostname=$HOST"
+  echo "api_version=$(grep -o 'version=\"[^\"]*\"' "$APP/server/main.py" | head -1)"
+  echo "database_migration=$(cd "$APP" && runuser -u laogu -p -- .venv/bin/alembic current 2>/dev/null | tail -1)"
+} > "$WORK/manifest.txt"
+
+(
+  cd "$WORK"
+  sha256sum database.dump application-source.tar.gz application-data.tar.gz server.env \
+    laogu-server.service.txt nginx-config.txt > SHA256SUMS
+)
+
+echo "5/7 生成并加密恢复包"
+PLAIN="$WORK/laogu-recovery-$STAMP.tar.gz"
+tar -C "$WORK" -czf "$PLAIN" \
+  database.dump database-contents.txt application-source.tar.gz application-data.tar.gz server.env \
+  backup-age-recipient.txt laogu-server.service.txt nginx-config.txt \
+  nginx-check.txt manifest.txt SHA256SUMS
+gzip -t "$PLAIN"
+
+FINAL_TMP="$DEST/.laogu-recovery-$STAMP.tar.gz.age.tmp"
+FINAL="$DEST/laogu-recovery-$STAMP.tar.gz.age"
+age --encrypt --recipient "$RECIPIENT" --output "$FINAL_TMP" "$PLAIN"
+test -s "$FINAL_TMP"
+chmod 600 "$FINAL_TMP"
+mv "$FINAL_TMP" "$FINAL"
+sha256sum "$FINAL" > "$FINAL.sha256"
+chmod 600 "$FINAL.sha256"
+
+SIZE_BYTES="$(stat -c %s "$FINAL")"
+SIZE_HUMAN="$(du -h "$FINAL" | awk '{print $1}')"
+if [ "$SIZE_BYTES" -gt $((45 * 1024 * 1024)) ]; then
+  echo "加密备份超过 Telegram 45MB 安全上限" >&2
+  exit 1
+fi
+
+echo "6/7 上传 Telegram"
+HASH="$(awk '{print $1}' "$FINAL.sha256")"
+/usr/local/sbin/laogu-telegram document "$FINAL" \
+  "✅ 老谷系统自动备份成功
+服务器：$HOST
+时间：$(date '+%F %T %Z')
+文件：$(basename "$FINAL")
+大小：$SIZE_HUMAN
+SHA256：$HASH"
+
+echo "7/7 清理7天前的自动备份"
+find "$DEST" -maxdepth 1 -type f \
+  \( -name 'laogu-recovery-*.tar.gz.age' \
+     -o -name 'laogu-recovery-*.tar.gz.age.sha256' \) \
+  -mtime +7 -delete
+
+echo "BACKUP_OK $FINAL"

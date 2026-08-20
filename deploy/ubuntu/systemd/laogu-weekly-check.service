@@ -1,0 +1,12 @@
+[Unit]
+Description=Laogu weekly storage and backup health check
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/laogu-weekly-check
+TimeoutStartSec=10min

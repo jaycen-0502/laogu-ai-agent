@@ -207,6 +207,34 @@ sudo journalctl -u laogu-backup.service -n 80 --no-pager
 - 每周检查磁盘、服务、数据库和备份状态；
 - 私钥不提交 GitHub，也不包含在恢复包中。
 
+### 查找 age 备份公钥
+
+安装自动备份后，服务器会把当前加密接收者公钥保存为：
+
+```bash
+sudo cat /etc/laogu/backup-age-recipient.txt
+```
+
+正常输出是一行以 `age1` 开头的字符串。这一行就是可以交给
+`install-backup.sh` 使用的公钥，不是恢复私钥。
+
+如果该文件不存在，可以搜索常见位置：
+
+```bash
+sudo find /etc/laogu /root/restore /var/backups/laogu \
+  -type f -name "backup-age-recipient.txt" -print 2>/dev/null
+```
+
+如果只有恢复私钥（例如 `/root/restore/laogu-backup-recovery.key`），可以从私钥推导公钥：
+
+```bash
+sudo age-keygen -y /root/restore/laogu-backup-recovery.key
+```
+
+命令输出的 `age1...` 行就是公钥。公钥可以写回服务器的
+`/etc/laogu/backup-age-recipient.txt`；`age` 私钥必须离线保存，不能发送给助手、提交 GitHub
+或放进 Telegram 备份。仓库只包含查找和备份脚本，不保存任何真实密钥。
+
 恢复包中的 `database.dump` 恢复用户、工作区、Agent、任务、许可证和审计数据；
 `server.env` 恢复数据库连接、JWT 和 AI 凭证加密密钥；Telegram Bot Token 不在包内，
 恢复后必须重新输入。HTTPS 证书不搬迁，由 Certbot 在新服务器重新申请。

@@ -65,6 +65,32 @@ sudo journalctl -u laogu-backup.service -n 80 --no-pager
 看到 `BACKUP_OK` 且 Telegram 收到文件，才算备份通过。自动备份成功上传后，服务器本地
 `/var/backups/laogu-auto/` 只保留最近两份 `.tar.gz.age` 及其 `.sha256` 文件；Telegram 聊天记录不会自动删除。
 
+#### 忘记 age 公钥时怎么找
+
+服务器安装完成后，当前备份公钥保存在 `/etc/laogu/backup-age-recipient.txt`。执行：
+
+```bash
+sudo cat /etc/laogu/backup-age-recipient.txt
+```
+
+看到以 `age1` 开头的一行即为公钥。它可以安全用于配置备份，但不要把它和恢复私钥混淆。
+
+如果文件找不到，搜索备份和恢复目录：
+
+```bash
+sudo find /etc/laogu /root/restore /var/backups/laogu \
+  -type f -name "backup-age-recipient.txt" -print 2>/dev/null
+```
+
+如果手上只有恢复私钥，例如 `/root/restore/laogu-backup-recovery.key`，使用：
+
+```bash
+sudo age-keygen -y /root/restore/laogu-backup-recovery.key
+```
+
+输出的 `age1...` 字符串就是对应公钥。私钥原件只应离线保存，不能上传 GitHub、发给助手
+或放入 Telegram；本项目不会保存真实公钥以外的密钥材料。
+
 ## 三、日常验收
 
 ```bash

@@ -1021,6 +1021,8 @@ function UsersPage({ current }: { current: User }) {
   const [policyUser, setPolicyUser] = useState<User | null>(null);
   const [policy, setPolicy] = useState<{ features: Record<string, boolean>; models: Record<string, { provider_id?: string; model?: string }> } | null>(null);
   const [policyProviders, setPolicyProviders] = useState<AIProvider[]>([]);
+  const [editUser, setEditUser] = useState<User | null>(null);
+  const [editForm, setEditForm] = useState({ username: "", password: "", role: "MEMBER", workspace_id: "" });
   const result = usePage<User>(
     `/users?paged=true&page=${page}&page_size=20&q=${encodeURIComponent(q)}${includeDeleted ? "&include_deleted=true" : ""}`,
     [page, q, includeDeleted],
@@ -1071,6 +1073,29 @@ function UsersPage({ current }: { current: User }) {
         method: "PATCH",
         body: JSON.stringify(body),
       });
+      result.reload();
+    } catch (exc) {
+      setMessage(errorText(exc));
+    }
+  };
+  const openEdit = (item: User) => {
+    setMessage("");
+    setEditUser(item);
+    setEditForm({ username: item.username, password: "", role: item.role, workspace_id: item.workspace_id || "" });
+  };
+  const saveEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editUser) return;
+    const body: Record<string, unknown> = { username: editForm.username.trim() };
+    if (editUser.user_id !== current.user_id) {
+      body.role = editForm.role;
+      body.workspace_id = current.role === "ADMIN" ? editForm.workspace_id : current.workspace_id;
+    }
+    if (editForm.password) body.password = editForm.password;
+    try {
+      await apiClient(`/users/${editUser.user_id}`, { method: "PATCH", body: JSON.stringify(body) });
+      setEditUser(null);
+      setMessage(`用户“${editForm.username.trim()}”已更新`);
       result.reload();
     } catch (exc) {
       setMessage(errorText(exc));
@@ -1262,8 +1287,9 @@ function UsersPage({ current }: { current: User }) {
                 <State value={item.status} />
               </td>
               <td>{fmt(item.created_at)}</td>
-              <td>
-                <button onClick={() => void openPolicy(item)}>AI权限</button>
+              <td className="user-actions">
+                <button onClick={() => openEdit(item)}>编辑用户</button>
+                <button onClick={() => void openPolicy(item)}>AI 权限</button>
                 <button
                   disabled={item.user_id === current.user_id || (item.status === "DELETED" && current.role !== "ADMIN")}
                   onClick={() =>
@@ -1281,16 +1307,67 @@ function UsersPage({ current }: { current: User }) {
       </Table>
       {!result.data.items.length && <Empty />}
       <PageNav page={page} pages={result.data.pages} onPage={setPage} />
+      {editUser && (
+        <div className="modal-backdrop" onClick={() => setEditUser(null)}>
+          <form className="modal-panel user-edit-modal" onSubmit={saveEdit} onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div><h2>编辑用户</h2><span className="muted">修改账号资料、所属工作区或重置登录密码</span></div>
+              <button type="button" onClick={() => setEditUser(null)}>关闭</button>
+            </div>
+            <div className="edit-user-grid">
+              <label>
+                用户名
+                <small>用户登录系统时使用的账号名称</small>
+                <input value={editForm.username} onChange={(event) => setEditForm({ ...editForm, username: event.target.value })} minLength={3} required />
+              </label>
+              <label>
+                重置密码（可不填）
+                <small>留空表示保持原密码；填写后至少需要 8 位</small>
+                <input type="password" value={editForm.password} onChange={(event) => setEditForm({ ...editForm, password: event.target.value })} minLength={8} autoComplete="new-password" />
+              </label>
+              <label>
+                用户角色
+                <small>成员使用功能；负责人管理工作区；管理员管理整个平台</small>
+                <select value={editForm.role} disabled={editUser.user_id === current.user_id} onChange={(event) => setEditForm({ ...editForm, role: event.target.value })}>
+                  <option value="MEMBER">成员</option>
+                  <option value="OWNER">工作区负责人</option>
+                  {current.role === "ADMIN" && <option value="ADMIN">系统管理员</option>}
+                </select>
+              </label>
+              <label>
+                所属工作区
+                <small>决定该用户能看到哪一个工作区的浏览器和业务数据</small>
+                {current.role === "ADMIN" ? (
+                  <select value={editForm.workspace_id} disabled={editUser.user_id === current.user_id} onChange={(event) => setEditForm({ ...editForm, workspace_id: event.target.value })} required>
+                    <option value="">请选择工作区</option>
+                    {workspaces.map((workspace) => <option key={workspace.workspace_id || workspace.id} value={workspace.workspace_id || workspace.id}>{workspace.name}</option>)}
+                  </select>
+                ) : <input value={workspaces.find((workspace) => workspace.workspace_id === current.workspace_id)?.name || current.workspace_id || ""} disabled />}
+              </label>
+            </div>
+            {editUser.user_id === current.user_id && <p className="form-help">当前登录账号只能在这里修改用户名和密码，不能修改自己的角色或工作区，避免失去管理权限。</p>}
+            <div className="modal-actions"><button type="button" onClick={() => setEditUser(null)}>取消</button><button className="primary">保存修改</button></div>
+          </form>
+        </div>
+      )}
       {policyUser && policy && (
         <div className="modal-backdrop" onClick={() => setPolicyUser(null)}>
-          <section className="modal-panel narrow" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-header"><div><h2>AI 权限与模型</h2><span className="muted">{policyUser.username} · {policyUser.workspace_name || policyUser.workspace_id}</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
+          <section className="modal-panel ai-policy-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header"><div><h2>AI 功能权限与模型</h2><span className="muted">为 {policyUser.username} 分配允许使用的 AI 功能、服务商和模型</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
+            <div className="policy-header"><span>功能权限</span><span>使用的 AI 服务商</span><span>使用的模型</span></div>
             {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"] as const).map((feature) => {
+              const featureMeta = {
+                CHAT: ["AI 聊天", "与 AI 进行日常问答和连续对话"],
+                WRITING: ["AI 话术", "生成文案、回复内容和沟通话术"],
+                ANALYSIS: ["AI 分析", "分析账号、内容和业务数据"],
+                TASKS: ["AI 任务", "让 AI 生成并规划自动化任务"],
+                IMAGES: ["AI 生图", "使用文字描述生成图片"],
+              }[feature];
               const assignment = policy.models[feature] || {};
               const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id);
               const models = provider ? Array.from(new Set([...(provider.models || []), provider.default_model].filter(Boolean))) : [];
               return <div className="policy-row" key={feature}>
-                <label className="check-row"><input type="checkbox" checked={Boolean(policy.features[feature])} onChange={(event) => void savePolicy(feature, event.target.checked, assignment.provider_id || "", assignment.model || "")} />{feature}</label>
+                <label className="check-row policy-feature"><input type="checkbox" checked={Boolean(policy.features[feature])} onChange={(event) => void savePolicy(feature, event.target.checked, assignment.provider_id || "", assignment.model || "")} /><span><strong>{featureMeta[0]}</strong><small>{featureMeta[1]}</small></span></label>
                 <select value={assignment.provider_id || ""} disabled={!policy.features[feature]} onChange={(event) => void savePolicy(feature, true, event.target.value, "")}><option value="">自动使用工作区默认</option>{policyProviders.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name}</option>)}</select>
                 <select value={assignment.model || ""} disabled={!policy.features[feature] || !provider} onChange={(event) => void savePolicy(feature, true, assignment.provider_id || "", event.target.value)}><option value="">默认模型</option>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
               </div>;

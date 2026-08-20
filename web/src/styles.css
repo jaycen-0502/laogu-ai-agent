@@ -422,14 +422,76 @@ tbody tr:hover {
 .modal-panel.narrow { width: min(520px, 100%); }
 .policy-row {
   display: grid;
-  grid-template-columns: 110px 1fr 1fr;
-  gap: 8px;
+  grid-template-columns: minmax(210px, 1.25fr) minmax(180px, 1fr) minmax(160px, 1fr);
+  gap: 10px;
   align-items: center;
   margin-bottom: 9px;
 }
 .policy-row .check-row {
-  min-height: 36px;
-  padding: 6px;
+  min-height: 54px;
+  padding: 8px 10px;
+}
+.ai-policy-modal {
+  width: min(850px, 100%);
+}
+.policy-header {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.25fr) minmax(180px, 1fr) minmax(160px, 1fr);
+  gap: 10px;
+  margin: 14px 0 7px;
+  padding: 0 10px;
+  color: #718096;
+  font-size: 12px;
+}
+.policy-feature span,
+.policy-feature small {
+  display: block;
+}
+.policy-feature strong {
+  color: #243b53;
+}
+.policy-feature small {
+  margin-top: 3px;
+  color: #718096;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.user-edit-modal {
+  width: min(720px, 100%);
+}
+.edit-user-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+.edit-user-grid label > small {
+  display: block;
+  min-height: 34px;
+  margin: 4px 0 6px;
+  color: #718096;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.form-help {
+  margin: 14px 0 0;
+  color: #718096;
+  font-size: 12px;
+}
+@media (max-width: 760px) {
+  .policy-row,
+  .policy-header,
+  .edit-user-grid {
+    grid-template-columns: 1fr;
+  }
+  .policy-header {
+    display: none;
+  }
 }
 .modal-header,
 .modal-actions {

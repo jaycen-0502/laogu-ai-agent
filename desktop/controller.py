@@ -16,7 +16,7 @@ from agent.logger import build_logger
 from agent.task_service import TaskService
 from agent.agent_service import build_agent_service
 from agent.runtime_config import RuntimeConfig
-from agent.script_updater import get_automation_engine_class
+from agent.script_updater import get_automation_engine_class, sync_engine_from_server
 
 
 _AUTO_AGENT_SERVICE = object()
@@ -160,9 +160,22 @@ class DesktopController:
             raise BrowserManagerError(
                 "Profile started but Laogu Browser did not expose a CDP endpoint"
             )
+        engine_cache_dir = getattr(self.settings, "engine_cache_dir", None)
+        server_client = getattr(self.agent_service, "server_client", None)
+        if (
+            getattr(self.settings, "engine_auto_update", False)
+            and server_client is not None
+            and getattr(server_client, "agent_id", "")
+            and engine_cache_dir
+        ):
+            try:
+                sync_engine_from_server(server_client, engine_cache_dir)
+            except Exception as exc:
+                # A network or validation failure must never take down the
+                # desktop controller; the last known good/bundled engine wins.
+                self.logger.warning("远程自动化引擎更新不可用，继续使用本地版本：%s", exc)
         engine_class = get_automation_engine_class(
-            remote_url=getattr(self.settings, "engine_update_url", ""),
-            local_path=str(Path(__file__).resolve().parent.parent / "agent" / "x_automation_engine.py"),
+            cache_dir=str(engine_cache_dir) if engine_cache_dir else "",
         )
         engine = engine_class(cdp_url=cdp_url, logger=self.logger)
         result = asyncio.run(engine.run(config))

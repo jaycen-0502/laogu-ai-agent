@@ -30,6 +30,7 @@ from .config_check import check_server_config
 from .database import Base, create_database
 from .image_api import register_image_routes
 from .image_service import AIImageService
+from .engine_update_api import register_engine_update_routes
 from .writing_api import register_writing_routes
 from .writing_service import AIWritingService
 from .task_proposal_api import register_task_proposal_routes
@@ -1074,6 +1075,10 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         paged=paged,
         deny=deny,
         task_serializer=_task_dict,
+    )
+    register_engine_update_routes(
+        app,
+        current_agent=current_agent,
     )
     register_ai_provider_routes(
         app,

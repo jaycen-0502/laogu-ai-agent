@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from server.config import ServerSettings
 from server.main import create_app
+from common.release import DEFAULT_VERSION
 from scripts.verify_backup import verify_backup
 
 
@@ -29,7 +30,7 @@ def test_ops_metrics_is_admin_only_and_safe():
     response = client.get("/api/admin/ops/metrics", headers=auth(bootstrap["access_token"]))
     assert response.status_code == 200
     payload = response.json()
-    assert payload["service"]["version"] == "0.20.0"
+    assert payload["service"]["version"] == DEFAULT_VERSION
     assert payload["channels"] == {"websocket": True, "http_pull_fallback": True}
     assert payload["database"]["reachable"] is True
 

@@ -74,6 +74,8 @@ class Settings:
     agent_state_file: Path
     agent_heartbeat_seconds: int
     engine_update_url: str
+    engine_cache_dir: Path
+    engine_auto_update: bool
 
     @property
     def hook_url(self) -> str:
@@ -130,4 +132,7 @@ def load_settings() -> Settings:
         agent_state_file=PROJECT_ROOT / "agent_data" / "agent_state.db",
         agent_heartbeat_seconds=max(5, _env_int("LAOGU_AGENT_HEARTBEAT_SECONDS", 30)),
         engine_update_url=os.getenv("LAOGU_ENGINE_UPDATE_URL", "").strip(),
+        engine_cache_dir=PROJECT_ROOT / "agent_data" / "engine_cache",
+        engine_auto_update=os.getenv("LAOGU_ENGINE_AUTO_UPDATE", "true").strip().lower()
+        in {"1", "true", "yes"},
     )

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from server.config import ServerSettings
 from server.main import create_app
+from common.release import DEFAULT_VERSION
 from server.security import redact_payload
 from server.security_diagnostics import configuration_diagnostics
 
@@ -60,7 +61,7 @@ def test_security_diagnostics_is_admin_only_and_redacted():
     ).json()
     response = client.get("/api/admin/security/diagnostics", headers=auth(bootstrap["access_token"]))
     assert response.status_code == 200
-    assert response.json()["service"]["version"] == "0.20.0"
+    assert response.json()["service"]["version"] == DEFAULT_VERSION
     assert response.json()["websocket"]["http_pull_fallback"] is True
     assert "stage10e-test-secret" not in response.text
 

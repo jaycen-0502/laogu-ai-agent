@@ -24,7 +24,7 @@ curl -fsSL -H "Authorization: Bearer 你的GitHubToken" \
 sudo bash /tmp/laogu-upgrade.sh
 ```
 
-脚本会交互询问仓库和版本，建议填写 `v0.20.0`。GitHub Token 需要私有仓库只读权限；输入时不会显示，也不会保存。升级前会备份 PostgreSQL、应用代码，自动执行 `alembic upgrade head`，构建前端并检查 `/api/health`。
+脚本会交互询问仓库和版本，建议填写 `v0.21.6`。GitHub Token 需要私有仓库只读权限；输入时不会显示，也不会保存。升级前会备份 PostgreSQL、应用代码，自动执行 `alembic upgrade head`，构建前端并检查 `/api/health` 与 `/api/health/ready`。
 
 全新安装或灾备恢复完成后，系统会安装稳定的一键入口：
 

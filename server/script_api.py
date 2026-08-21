@@ -13,6 +13,7 @@ from common.script_validation import (
     validate_script_params,
     validate_script_source,
 )
+from common.safety_policy import evaluate_task
 
 from .models import Agent, Profile, Script, ScriptVersion, Task, User, Workspace, now
 from .schemas import ScriptCreate, ScriptExecute, ScriptUpdate, ScriptVersionCreate
@@ -253,6 +254,9 @@ def register_script_routes(
             parameters = validate_script_params(body.params, version.params_schema)
         except ScriptValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        safety = evaluate_task("script.execute", {"source": version.source, "params": parameters})
+        if not safety.allowed:
+            raise HTTPException(status_code=422, detail=safety.message)
         profile_ids = list(dict.fromkeys(str(profile_id).strip() for profile_id in body.profile_ids if str(profile_id).strip()))
         if not profile_ids:
             raise HTTPException(status_code=422, detail="At least one Profile is required")

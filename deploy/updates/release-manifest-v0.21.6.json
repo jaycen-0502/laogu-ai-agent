@@ -1,0 +1,18 @@
+{
+  "version": "0.21.6",
+  "channel": "stable",
+  "minimum_database_revision": "0015_agent_device_bindings",
+  "components": ["server", "web", "desktop", "agent", "browser"],
+  "upgrade_policy": {
+    "backup_required": true,
+    "run_alembic_before_restart": true,
+    "health_checks": ["/api/health", "/api/health/ready"],
+    "rollback_on_failed_health_check": true
+  },
+  "safety": {
+    "credentials_in_release_artifacts": false,
+    "unattended_high_risk_automation": false,
+    "cookie_or_token_export": false,
+    "audit_logs_required": true
+  }
+}

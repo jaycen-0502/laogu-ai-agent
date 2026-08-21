@@ -12,7 +12,9 @@
 `DEPLOY_ZH_CN.md` 和 `STAGE*.md` 是历史分阶段部署记录，仅用于问题追溯。
 
 Laogu Browser 只运行在 Windows，禁止安装到 Ubuntu 服务器。
-# 从私有 GitHub 一键升级（普通用户权限与模型分配）
+# GitHub 一键升级
+
+公开仓库默认匿名下载，不需要 GitHub Token；如果仓库改回私有，再通过环境变量临时传入只读 Token。
 
 生产服务器已连接 SSH 后，执行：
 

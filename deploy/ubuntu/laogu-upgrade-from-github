@@ -22,14 +22,13 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 command -v curl >/dev/null || { echo "缺少 curl" >&2; exit 1; }
 
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  read -r -s -p "私有仓库 GitHub Token（输入时不显示）：" GITHUB_TOKEN
-  echo
+AUTH_ARGS=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  AUTH_ARGS=(-H "Authorization: Bearer $GITHUB_TOKEN")
 fi
-test -n "$GITHUB_TOKEN" || { echo "没有 GitHub Token，停止升级" >&2; exit 1; }
 
 curl -fsSL --retry 3 \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "${AUTH_ARGS[@]}" \
   -H 'Accept: application/vnd.github+json' \
   "https://raw.githubusercontent.com/$REPO/$REF/deploy/ubuntu/upgrade-from-github.sh" \
   -o "$TMP"

@@ -65,7 +65,8 @@ tar -czf "$BACKUP/application-before-$STAMP.tar.gz" --exclude='server/*.db' --ex
 echo "3/8 检查版本与迁移"
 APP_VERSION="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SRC/web/package.json" | head -n 1)"
 test -n "$APP_VERSION" || { echo "无法读取应用版本，停止升级" >&2; exit 1; }
-grep -q "version=\"$APP_VERSION\"" "$SRC/server/main.py" || { echo "前后端版本不一致（$APP_VERSION），停止升级" >&2; exit 1; }
+SERVER_VERSION="$(sed -n 's/^[[:space:]]*DEFAULT_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$SRC/common/release.py" | head -n 1)"
+test "$SERVER_VERSION" = "$APP_VERSION" || { echo "前后端版本不一致（Web=$APP_VERSION，Server=$SERVER_VERSION），停止升级" >&2; exit 1; }
 test -f "$SRC/alembic/versions/0014_user_ai_policies.py" || { echo "缺少 0014 迁移，停止升级" >&2; exit 1; }
 
 # Never replace a production checkout with a branch that cannot understand

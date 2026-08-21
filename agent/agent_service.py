@@ -8,12 +8,17 @@ from contextlib import contextmanager
 from pathlib import Path
 import threading
 from typing import Any
+import logging
 
 from .models import TaskStatus
 from .profile_worker import ProfileWorkerError, ProfileWorkerManager
 from .runtime_config import RuntimeConfig
 from .server_client import ServerClient, ServerClientError
 from common.release import VERSION
+from .script_updater import sync_engine_from_server
+
+
+LOGGER = logging.getLogger("laogu-ai-agent.service")
 
 
 class AgentStateStore:
@@ -65,6 +70,8 @@ class AgentService:
         heartbeat_interval: int = 30,
         user_token: str = "",
         command_dispatcher=None,
+        engine_cache_dir: Path | None = None,
+        engine_auto_update: bool = False,
     ):
         self.server_client = server_client
         self.task_service = task_service
@@ -75,6 +82,8 @@ class AgentService:
         self.heartbeat_interval = max(5, heartbeat_interval)
         self.user_token = user_token
         self.command_dispatcher = command_dispatcher
+        self.engine_cache_dir = engine_cache_dir
+        self.engine_auto_update = engine_auto_update
         self.server_status = "OFFLINE"
         self.agent_status = "UNREGISTERED" if not server_client.agent_id else "OFFLINE"
         self.last_heartbeat = ""
@@ -255,6 +264,13 @@ class AgentService:
         try:
             if not self.heartbeat_once():
                 return False
+            if self.engine_auto_update and self.engine_cache_dir is not None:
+                try:
+                    sync_engine_from_server(self.server_client, self.engine_cache_dir)
+                except Exception as exc:
+                    # Engine delivery is optional and must not make an otherwise
+                    # healthy Agent appear offline or stop task processing.
+                    LOGGER.info("Engine update unavailable; using local version: %s", exc)
             self.sync_accounts_once()
             self.pull_and_execute_once()
             self.process_commands_once()
@@ -340,4 +356,6 @@ def build_agent_service(task_service, account_registry):
             task_service=task_service,
             runtime_config=RuntimeConfig(settings.agent_state_file.with_name("runtime_config.json")),
         ),
+        engine_cache_dir=settings.engine_cache_dir,
+        engine_auto_update=settings.engine_auto_update,
     )

@@ -21,7 +21,7 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r server/requirements.txt pytest psutil websocket-client
       - run: python -m compileall -q agent common desktop server tests
-      - run: python -m pytest tests/test_remote_license.py tests/test_security_hardening.py -q
+      - run: python -m pytest tests/test_remote_license.py tests/test_security_hardening.py tests/test_engine_update.py agent/tests/test_script_updater.py -q
 
   web:
     runs-on: ubuntu-latest

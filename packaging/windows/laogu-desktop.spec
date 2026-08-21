@@ -12,6 +12,11 @@ a = Analysis(
         (str(project / "scripts" / "x_readonly_tasks.js"), "scripts"),
     ],
     hiddenimports=[
+        # Loaded with importlib by agent.script_updater immediately before a
+        # configured automation run. PyInstaller cannot discover that dynamic
+        # import without an explicit entry.
+        "agent.x_automation_engine",
+        "playwright.async_api",
         "ntsecuritycon",
         "websocket",
         "win32api",

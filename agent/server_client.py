@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
 from .device_identity import current_device_id
+from common.release import VERSION
 
 
 class ServerClientError(RuntimeError):
@@ -142,6 +143,21 @@ class ServerClient:
         response = self._agent_request("GET", f"/api/agent/tasks/{task_id}/status", None)
         return str(response.get("status") or "UNKNOWN")
 
+    def fetch_engine_manifest(self) -> dict[str, Any]:
+        return self._agent_request("GET", "/api/agent/engine/manifest", None)
+
+    def fetch_engine_source(self, source_url: str = "/api/agent/engine/source") -> bytes:
+        # Do not follow a server-provided arbitrary URL with Agent credentials.
+        # The manifest may name only this same-origin, fixed endpoint.
+        if source_url != "/api/agent/engine/source":
+            raise ServerClientError("Server returned an invalid engine source URL")
+        if self.transport is not None:
+            result = self.transport("GET_RAW", source_url, None, self.credentials.get("agent_token", ""))
+            if not isinstance(result, bytes):
+                raise ServerClientError("Server returned invalid engine source")
+            return result
+        return self._raw_agent_request(source_url)
+
     def pull_commands(self, limit: int = 10) -> list[dict[str, Any]]:
         response = self._agent_request("POST", "/api/agent/commands/pull", {"agent_id": self.agent_id, "limit": limit})
         items = response.get("items", [])
@@ -227,6 +243,30 @@ class ServerClient:
             raise ServerClientError("Agent is not registered")
         return self._request(method, path, payload, token=token)
 
+    def _raw_agent_request(self, path: str) -> bytes:
+        token = self.credentials.get("agent_token", "")
+        if not token:
+            raise ServerClientError("Agent is not registered")
+        headers = {
+            "Accept": "text/x-python",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": f"Laogu-Desktop-Agent/{VERSION} (Windows; HTTPS)",
+            "X-Laogu-Client": "desktop-agent",
+            "X-Laogu-Device-ID": self.device_id,
+        }
+        request = urllib.request.Request(self.server_url + path, headers=headers, method="GET")
+        try:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+                payload = response.read(2 * 1024 * 1024 + 1)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise ServerClientError(f"Server returned HTTP {exc.code}: {detail[:300]}", status_code=exc.code) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise ServerClientError(f"Server unavailable: {exc}") from exc
+        if not payload or len(payload) > 2 * 1024 * 1024:
+            raise ServerClientError("Server returned invalid engine source")
+        return payload
+
     def _request(self, method: str, path: str, payload: dict[str, Any] | None, *, token: str = "") -> dict[str, Any]:
         if self.transport is not None:
             return self.transport(method, path, payload, token)
@@ -234,7 +274,7 @@ class ServerClient:
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json; charset=utf-8",
-            "User-Agent": "Laogu-Desktop-Agent/0.21.6 (Windows; HTTPS)",
+            "User-Agent": f"Laogu-Desktop-Agent/{VERSION} (Windows; HTTPS)",
             "X-Laogu-Client": "desktop-agent",
         }
         if token:

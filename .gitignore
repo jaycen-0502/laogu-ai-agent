@@ -31,6 +31,7 @@ web/dist/
 *.tsbuildinfo
 /build/
 /dist/
+project-export/
 
 # Browser runtime state and local distributions
 /browser/config.yaml

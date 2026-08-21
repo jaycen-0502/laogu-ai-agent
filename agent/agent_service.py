@@ -13,6 +13,7 @@ from .models import TaskStatus
 from .profile_worker import ProfileWorkerError, ProfileWorkerManager
 from .runtime_config import RuntimeConfig
 from .server_client import ServerClient, ServerClientError
+from common.release import VERSION
 
 
 class AgentStateStore:
@@ -60,7 +61,7 @@ class AgentService:
         state_store: AgentStateStore,
         *,
         agent_name: str = "Laogu Windows Agent",
-        client_version: str = "0.9.0",
+        client_version: str = VERSION,
         heartbeat_interval: int = 30,
         user_token: str = "",
         command_dispatcher=None,
@@ -81,6 +82,7 @@ class AgentService:
         self.command_channel = "HTTP_PULL"
         self.websocket_reconnects = 0
         self.last_channel_change = ""
+        self.lifecycle = "STOPPED"
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._command_thread: threading.Thread | None = None
@@ -101,7 +103,7 @@ class AgentService:
             return False
         running = sum(1 for task in self.task_service.task_manager.list_tasks() if task.status is TaskStatus.RUNNING)
         timestamp = datetime.now().astimezone().isoformat()
-        self.server_client.heartbeat({"agent_id": self.server_client.agent_id, "device_id": self.server_client.device_id, "client_version": self.client_version, "status": "ONLINE", "profile_count": len(self.account_registry.list()), "running_task_count": running, "timestamp": timestamp})
+        self.server_client.heartbeat({"agent_id": self.server_client.agent_id, "device_id": getattr(self.server_client, "device_id", ""), "client_version": self.client_version, "status": "ONLINE", "profile_count": len(self.account_registry.list()), "running_task_count": running, "timestamp": timestamp})
         self.server_status = "ONLINE"; self.agent_status = "ONLINE"; self.last_heartbeat = timestamp; self.last_error = ""
         return True
 
@@ -179,7 +181,7 @@ class AgentService:
             try:
                 self.server_client.send_result(payload)
             except ServerClientError as exc:
-                self.server_status = "OFFLINE"
+                self.server_status = "ONLINE" if exc.status_code == 401 else "OFFLINE"
                 if exc.status_code == 401:
                     self.agent_status = "REAUTH_REQUIRED"
             else:
@@ -258,18 +260,19 @@ class AgentService:
             self.process_commands_once()
             return True
         except ServerClientError as exc:
-            self.server_status = "OFFLINE"
+            self.server_status = "ONLINE" if exc.status_code == 401 else "OFFLINE"
             self.agent_status = "REAUTH_REQUIRED" if exc.status_code == 401 else "OFFLINE"
             self.last_error = str(exc)
             return False
 
     def status(self) -> dict[str, str]:
-        return {"server": self.server_status, "agent": self.agent_status, "command_channel": self.command_channel, "websocket_reconnects": str(self.websocket_reconnects), "last_channel_change": self.last_channel_change, "last_heartbeat": self.last_heartbeat, "last_error": self.last_error}
+        return {"server": self.server_status, "agent": self.agent_status, "lifecycle": self.lifecycle, "execution_mode": "EMBEDDED_DESKTOP", "command_channel": self.command_channel, "websocket_reconnects": str(self.websocket_reconnects), "last_channel_change": self.last_channel_change, "last_heartbeat": self.last_heartbeat, "last_error": self.last_error}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self.lifecycle = "RUNNING"
         if self.command_dispatcher is not None and hasattr(self.server_client, "run_command_socket"):
             self._command_thread = threading.Thread(target=self._command_loop, name="laogu-agent-command-channel", daemon=True)
             self._command_thread.start()
@@ -282,6 +285,7 @@ class AgentService:
             self._command_thread.join(timeout=5)
         if self._thread:
             self._thread.join(timeout=5)
+        self.lifecycle = "STOPPED"
 
     def _dispatch_socket_command(self, command: dict[str, Any]) -> dict[str, Any]:
         return self.command_dispatcher.dispatch(command)
@@ -330,7 +334,7 @@ def build_agent_service(task_service, account_registry):
         AgentStateStore(settings.agent_state_file),
         heartbeat_interval=settings.agent_heartbeat_seconds,
         user_token=settings.server_enrollment_token,
-        client_version="0.9.0",
+        client_version=VERSION,
         command_dispatcher=ProfileWorkerManager(
             task_service.task_manager.browser_manager,
             task_service=task_service,

@@ -18,22 +18,25 @@ command -v tar >/dev/null || { echo "缺少 tar" >&2; exit 1; }
 test -f /etc/laogu/server.env || { echo "找不到 /etc/laogu/server.env，停止升级" >&2; exit 1; }
 
 read -r -p "GitHub 仓库 [${REPO}]：" input_repo; REPO="${input_repo:-$REPO}"
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  read -r -s -p "私有仓库 GitHub Token（输入时不显示）：" GITHUB_TOKEN; echo
+# Public repositories work anonymously. For private repositories, set
+# GITHUB_TOKEN in the environment; it is used only for this process.
+AUTH_ARGS=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  AUTH_ARGS=(-H "Authorization: Bearer $GITHUB_TOKEN")
 fi
-test -n "$GITHUB_TOKEN" || { echo "没有 GitHub Token，停止升级" >&2; exit 1; }
 if [ -z "$REF" ]; then
-  latest_ref="$(curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/tags?per_page=100" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9.]*\)".*/\1/p' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+  latest_ref="$(curl -fsSL --retry 3 "${AUTH_ARGS[@]}" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/tags?per_page=100" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(v[0-9][0-9.]*\)".*/\1/p' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
   [ -n "$latest_ref" ] || { echo "无法读取 GitHub 最新版本标签，停止升级" >&2; exit 1; }
   REF="$latest_ref"
   echo "当前 GitHub 最新版本：$REF"
 else
-  [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "GITHUB_REF 必须是 v主版本.次版本.修订版本" >&2; exit 1; }
+  [[ "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || { echo "GITHUB_REF 格式不安全" >&2; exit 1; }
+  [[ "$REF" != *..* && "$REF" != */ ]] || { echo "GITHUB_REF 格式不安全" >&2; exit 1; }
   echo "指定升级版本：$REF"
 fi
 
 echo "1/8 下载 GitHub 版本：$REPO@$REF"
-curl -fsSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" \
+curl -fsSL --retry 3 "${AUTH_ARGS[@]}" -H "Accept: application/vnd.github+json" \
   "https://api.github.com/repos/$REPO/tarball/$REF" -o "$TMP/source.tar.gz"
 tar -tzf "$TMP/source.tar.gz" >/dev/null
 ROOT_DIR="$(tar -tzf "$TMP/source.tar.gz" | awk -F/ 'NR==1{print $1}')"
@@ -62,8 +65,18 @@ tar -czf "$BACKUP/application-before-$STAMP.tar.gz" --exclude='server/*.db' --ex
 echo "3/8 检查版本与迁移"
 APP_VERSION="$(sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SRC/web/package.json" | head -n 1)"
 test -n "$APP_VERSION" || { echo "无法读取应用版本，停止升级" >&2; exit 1; }
-grep -q "version=\"$APP_VERSION\"" "$SRC/server/main.py" || { echo "前后端版本不一致（$APP_VERSION），停止升级" >&2; exit 1; }
+SERVER_VERSION="$(sed -n 's/^[[:space:]]*DEFAULT_VERSION[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$SRC/common/release.py" | head -n 1)"
+SERVER_VERSION="$(awk -F'"' '/DEFAULT_VERSION[[:space:]]*=/{print $2; exit}' "$SRC/common/release.py")"
+test "$SERVER_VERSION" = "$APP_VERSION" || { echo "前后端版本不一致（Web=$APP_VERSION，Server=$SERVER_VERSION），停止升级" >&2; exit 1; }
 test -f "$SRC/alembic/versions/0014_user_ai_policies.py" || { echo "缺少 0014 迁移，停止升级" >&2; exit 1; }
+
+# Never replace a production checkout with a branch that cannot understand
+# the database revision already recorded in alembic_version.
+CURRENT_REVISION="$(set -a; . /etc/laogu/server.env; set +a; cd "$APP"; .venv/bin/alembic current 2>/dev/null | sed -n 's/.* \([0-9][A-Za-z0-9_-]*\).*/\1/p' | tail -n 1 || true)"
+if [ -n "$CURRENT_REVISION" ] && ! find "$SRC/alembic/versions" -maxdepth 1 -type f -name "*${CURRENT_REVISION}*.py" -print -quit | grep -q .; then
+  echo "目标版本缺少当前数据库迁移：$CURRENT_REVISION，停止升级" >&2
+  exit 1
+fi
 
 echo "4/8 停止服务并同步代码"
 systemctl stop laogu-server

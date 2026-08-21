@@ -26,10 +26,15 @@ def load_config():
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip()
     token = values.get("TELEGRAM_BOT_TOKEN", "")
-    chat_id = values.get("TELEGRAM_CHAT_ID", "")
-    if not token or not chat_id:
+    admin_user_id = values.get("TELEGRAM_ADMIN_USER_ID", "")
+    chat_id = values.get("TELEGRAM_CHAT_ID", admin_user_id)
+    if not token or not admin_user_id or not chat_id:
         raise RuntimeError("Telegram configuration incomplete")
-    return token, chat_id
+    if not admin_user_id.isdigit() or int(admin_user_id) <= 0:
+        raise RuntimeError("TELEGRAM_ADMIN_USER_ID must be a positive numeric user ID")
+    if chat_id != admin_user_id:
+        raise RuntimeError("TELEGRAM_CHAT_ID must equal TELEGRAM_ADMIN_USER_ID")
+    return token, admin_user_id
 
 
 def call(url, data, content_type):
@@ -51,6 +56,14 @@ def call(url, data, content_type):
 def send_message(base, chat_id, message):
     data = urllib.parse.urlencode({"chat_id": chat_id, "text": message}).encode()
     return call(base + "/sendMessage", data, "application/x-www-form-urlencoded")
+
+
+def verify_private_admin(base, admin_user_id):
+    data = urllib.parse.urlencode({"chat_id": admin_user_id}).encode()
+    chat = call(base + "/getChat", data, "application/x-www-form-urlencoded")
+    if str(chat.get("id", "")) != admin_user_id or chat.get("type") != "private":
+        raise RuntimeError("Telegram target is not the configured private administrator chat")
+    return chat
 
 
 def send_document(base, chat_id, path, caption):
@@ -91,12 +104,16 @@ def send_document(base, chat_id, path, caption):
 
 
 def main():
-    if len(sys.argv) < 3:
-        raise RuntimeError("Usage: laogu-telegram message TEXT | document FILE CAPTION")
+    if len(sys.argv) < 2:
+        raise RuntimeError("Usage: laogu-telegram verify | message TEXT | document FILE CAPTION")
 
     token, chat_id = load_config()
     base = f"https://api.telegram.org/bot{token}"
-    if sys.argv[1] == "message":
+    if sys.argv[1] == "verify":
+        chat = verify_private_admin(base, chat_id)
+        print(f"TELEGRAM_PRIVATE_ADMIN_OK id={chat_id} name={chat.get('first_name', '-')}")
+        return
+    if sys.argv[1] == "message" and len(sys.argv) >= 3:
         result = send_message(base, chat_id, sys.argv[2])
     elif sys.argv[1] == "document" and len(sys.argv) >= 4:
         path = Path(sys.argv[2])

@@ -10,7 +10,7 @@ from typing import Callable
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .models import License, LicenseCheck, LicenseDevice, LicenseRevocation, User, now
@@ -20,6 +20,7 @@ from .security import audit, client_ip, redact
 
 ACTIVATION_PREFIX = "LGACT1."
 REQUEST_PREFIX = "LGREQ1."
+LICENSE_CHECK_CLEANUP_INTERVAL = timedelta(hours=1)
 
 
 def _decode_b64(value: str) -> bytes:
@@ -88,8 +89,10 @@ def _load_issuer_private_key(settings) -> Ed25519PrivateKey:
     if not key_path or not password_path:
         raise HTTPException(status_code=503, detail="Online license signing is not configured")
     try:
-        key_bytes = open(key_path, "rb").read()
-        password = open(password_path, "rb").read().strip()
+        with open(key_path, "rb") as key_file:
+            key_bytes = key_file.read()
+        with open(password_path, "rb") as password_file:
+            password = password_file.read().strip()
         if not password:
             raise ValueError("empty key password")
         key = serialization.load_pem_private_key(key_bytes, password=password)
@@ -175,6 +178,16 @@ def _masked_ip(value: str) -> str:
     return "***"
 
 
+def _prune_license_checks(request: Request, db: Session, checked_at: datetime) -> None:
+    cleanup_after = getattr(request.app.state, "license_check_cleanup_after", None)
+    if cleanup_after is not None and checked_at < cleanup_after:
+        return
+    retention_days = request.app.state.settings.license_check_retention_days
+    cutoff = checked_at - timedelta(days=retention_days)
+    db.execute(delete(LicenseCheck).where(LicenseCheck.checked_at < cutoff))
+    request.app.state.license_check_cleanup_after = checked_at + LICENSE_CHECK_CLEANUP_INTERVAL
+
+
 def register_remote_license_routes(app, *, get_db: Callable, current_user: Callable, deny: Callable) -> None:
     """Register the remote license control plane.
 
@@ -210,7 +223,23 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
             raise HTTPException(status_code=403, detail="Forbidden")
         settings = request.app.state.settings
         configured = bool(str(getattr(settings, "license_issuer_private_key_file", "") or "").strip() and str(getattr(settings, "license_issuer_key_password_file", "") or "").strip())
-        return {"configured": configured, "mode": "server" if configured else "offline_terminal"}
+        if not configured:
+            return {
+                "configured": False,
+                "available": False,
+                "mode": "offline_terminal",
+                "reason": "Online license signing is not configured",
+            }
+        try:
+            _load_issuer_private_key(settings)
+        except HTTPException as exc:
+            return {
+                "configured": True,
+                "available": False,
+                "mode": "offline_terminal",
+                "reason": str(exc.detail),
+            }
+        return {"configured": True, "available": True, "mode": "server", "reason": None}
 
     @app.post("/api/license/issue")
     def issue_license(body: LicenseIssue, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -353,6 +382,7 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
             raise HTTPException(status_code=403, detail="License device mismatch")
         item = db.scalar(select(License).where(License.license_id == external_id, License.activation_code_hash == code_hash))
         checked = now()
+        _prune_license_checks(request, db, checked)
         if not item:
             db.add(LicenseCheck(external_license_id=external_id, device_id=body.device_id, app_version=body.app_version, result="NOT_REGISTERED", reason="not_registered", checked_at=checked, ip=client_ip(request)))
             db.commit()

@@ -2,17 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import asyncio
+from pathlib import Path
 from typing import Any, Iterable
 
 from agent.account_discovery import AccountDiscovery
 from agent.account_registry import AccountRecord, AccountRegistry
-from agent.browser_manager import BrowserManager
+from agent.browser_manager import BrowserManager, BrowserManagerError
 from agent.config import load_settings
 from agent.laogu_api import LaoguApi
 from agent.laogu_hook_runner import LaoguProjectHookRunner
 from agent.logger import build_logger
 from agent.task_service import TaskService
 from agent.agent_service import build_agent_service
+from agent.runtime_config import RuntimeConfig
+from agent.script_updater import get_automation_engine_class
 
 
 _AUTO_AGENT_SERVICE = object()
@@ -63,9 +67,12 @@ class DesktopController:
         registry: AccountRegistry | None = None,
         task_service: TaskService | None = None,
         agent_service=_AUTO_AGENT_SERVICE,
+        runtime_config: RuntimeConfig | None = None,
     ):
         settings = load_settings()
+        self.settings = settings
         logger = build_logger(settings.log_file)
+        self.logger = logger
         self.api = api or LaoguApi(settings)
         self.browser_manager = browser_manager or BrowserManager(self.api)
         self.registry = registry or AccountRegistry(
@@ -95,6 +102,9 @@ class DesktopController:
                 hook_runner=hook_runner,
             )
         self.task_service = task_service or TaskService()
+        self.runtime_config = runtime_config or RuntimeConfig(
+            settings.agent_state_file.with_name("runtime_config.json")
+        )
         self.agent_service = (
             build_agent_service(self.task_service, self.registry)
             if agent_service is _AUTO_AGENT_SERVICE
@@ -124,6 +134,69 @@ class DesktopController:
     def stop_profile(self, profile_id: str) -> dict[str, Any]:
         return self.browser_manager.stop_profile(str(profile_id))
 
+    def set_profile_task_config(self, profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        """Persist a validated per-profile configuration for the next run."""
+        if not isinstance(config, dict):
+            raise ValueError("Profile task config must be an object")
+        return self.runtime_config.update(str(profile_id), dict(config), mode="HOT_UPDATE")
+
+    def get_profile_task_config(self, profile_id: str) -> dict[str, Any]:
+        return self.runtime_config.snapshot(str(profile_id))
+
+    def start_automation_task(self, profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        """Start a Profile and run the safe read-only CDP validation workflow."""
+        profile_id = str(profile_id)
+        saved = self.set_profile_task_config(profile_id, config)
+        started = self.browser_manager.start_profile(profile_id)
+        cdp_url = self._extract_cdp_url(started)
+        if not cdp_url:
+            try:
+                cdp_url = self._extract_cdp_url(self.browser_manager.check_status(profile_id))
+            except Exception as exc:
+                raise BrowserManagerError(
+                    f"Profile started but did not expose a CDP endpoint: {exc}"
+                ) from exc
+        if not cdp_url:
+            raise BrowserManagerError(
+                "Profile started but Laogu Browser did not expose a CDP endpoint"
+            )
+        engine_class = get_automation_engine_class(
+            remote_url=getattr(self.settings, "engine_update_url", ""),
+            local_path=str(Path(__file__).resolve().parent.parent / "agent" / "x_automation_engine.py"),
+        )
+        engine = engine_class(cdp_url=cdp_url, logger=self.logger)
+        result = asyncio.run(engine.run(config))
+        return {
+            "status": "SUCCESS",
+            "profile_id": profile_id,
+            "cdp_url": cdp_url,
+            "runtime_config": saved,
+            "result": result,
+        }
+
+    @staticmethod
+    def _extract_cdp_url(payload: Any) -> str:
+        """Read only documented CDP endpoint fields from nested API responses."""
+        if isinstance(payload, dict):
+            for key in ("cdpUrl", "cdp_url", "debuggerUrl", "debugger_url", "webSocketDebuggerUrl"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+            for key in ("port", "cdpPort", "cdp_port", "debuggerPort", "debugger_port"):
+                value = payload.get(key)
+                if isinstance(value, int) and 1 <= value <= 65535:
+                    return f"http://127.0.0.1:{value}"
+            for value in payload.values():
+                found = DesktopController._extract_cdp_url(value)
+                if found:
+                    return found
+        elif isinstance(payload, list):
+            for value in payload:
+                found = DesktopController._extract_cdp_url(value)
+                if found:
+                    return found
+        return ""
+
     def task_statistics(self, period: str = "today") -> dict[str, Any]:
         return self.task_service.statistics.summary(period)
 
@@ -140,8 +213,40 @@ class DesktopController:
 
     def server_agent_status(self) -> dict[str, str]:
         if self.agent_service is None:
-            return {"server": "OFFLINE", "agent": "UNCONFIGURED", "last_heartbeat": "", "last_error": "LAOGU_SERVER_URL not configured"}
+            return {"server": "OFFLINE", "agent": "UNCONFIGURED", "lifecycle": "STOPPED", "execution_mode": "EMBEDDED_DESKTOP", "cdp_url": self.settings.base_url, "last_heartbeat": "", "last_error": "LAOGU_SERVER_URL not configured"}
+        status = self.agent_service.status()
+        status.setdefault("cdp_url", self.settings.base_url)
+        return status
+
+    def current_agent_id(self) -> str:
+        """Return the non-secret Agent identifier currently stored locally."""
+        if self.agent_service is None:
+            return ""
+        client = getattr(self.agent_service, "server_client", None)
+        return str(getattr(client, "agent_id", "") or "")
+
+    def replace_agent_credentials(self, agent_id: str, agent_token: str) -> dict[str, str]:
+        """DPAPI-protect replacement credentials and verify them immediately."""
+        agent_id = str(agent_id).strip()
+        agent_token = str(agent_token).strip()
+        if not agent_id:
+            raise ValueError("Agent ID 不能为空")
+        if not agent_token.startswith("lag_") or len(agent_token) < 20:
+            raise ValueError("Agent Token 格式无效")
+        if self.agent_service is None:
+            raise RuntimeError("服务器运行端尚未配置")
+        client = getattr(self.agent_service, "server_client", None)
+        if client is None or not hasattr(client, "replace_agent_token"):
+            raise RuntimeError("当前运行端不支持凭据更新")
+
+        client.replace_agent_token(agent_id, agent_token)
+        if not self.agent_service.heartbeat_once():
+            raise RuntimeError(self.agent_service.last_error or "运行端认证失败")
         return self.agent_service.status()
+
+    def profile_runtime_status(self, profile_id: str) -> dict[str, Any]:
+        """Return documented runtime/CDP fields for one Profile."""
+        return self.browser_manager.check_status(str(profile_id))
 
     def stop_agent_service(self) -> None:
         if self.agent_service is not None:

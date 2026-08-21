@@ -1,5 +1,7 @@
 from datetime import datetime
 import os
+from pathlib import Path
+import tempfile
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -8,8 +10,9 @@ from PySide6.QtWidgets import QApplication
 from agent.account_registry import AccountRecord
 from agent.models import AccountStatus, BrowserStatus, LoginStatus
 from desktop.controller import DesktopController, account_to_row
-from desktop.main_window import MainWindow
+from desktop.main_window import AgentReauthDialog, MainWindow, TaskConfigDialog
 from desktop.workers import FunctionWorker
+from agent.runtime_config import RuntimeConfig
 
 
 class FakeApi:
@@ -97,6 +100,13 @@ class FakeAgentService:
         return {"server": "ONLINE", "agent": "ONLINE", "last_heartbeat": "2026-08-17T10:00:00+08:00", "last_error": ""}
 
 
+class ReauthAgentService:
+    def start(self): pass
+    def stop(self): pass
+    def status(self):
+        return {"server": "ONLINE", "agent": "REAUTH_REQUIRED", "last_heartbeat": "", "last_error": "HTTP 401"}
+
+
 def make_record(profile_id="p-11"):
     now = datetime.now().astimezone()
     return AccountRecord(
@@ -157,6 +167,28 @@ def test_controller_runs_only_whitelisted_read_only_task():
     assert controller.task_service.calls == [("p-11", "x.search", {"query": "Python"})]
 
 
+def test_controller_persists_profile_task_config():
+    with tempfile.TemporaryDirectory() as directory:
+        runtime = RuntimeConfig(Path(directory) / "runtime_config.json")
+        controller = DesktopController(
+            api=FakeApi(),
+            browser_manager=FakeBrowserManager(),
+            discovery=FakeDiscovery(),
+            registry=FakeRegistry(),
+            task_service=FakeTaskService(),
+            agent_service=None,
+            runtime_config=runtime,
+        )
+        saved = controller.set_profile_task_config("p-11", {"keyword": "Python", "daily_task_limit": 50})
+        assert saved["active"]["keyword"] == "Python"
+        assert controller.get_profile_task_config("p-11")["active"]["daily_task_limit"] == 50
+
+
+def test_controller_extracts_cdp_endpoint_from_nested_start_response():
+    assert DesktopController._extract_cdp_url({"data": {"debuggerPort": 9222}}) == "http://127.0.0.1:9222"
+    assert DesktopController._extract_cdp_url({"result": {"cdpUrl": "http://127.0.0.1:9333"}}) == "http://127.0.0.1:9333"
+
+
 def test_selected_profile_ids_are_read_from_selected_rows():
     app = qapp()
     window = MainWindow(make_controller(records=[make_record()]))
@@ -192,18 +224,53 @@ def test_desktop_read_only_task_controls_are_present():
     app = qapp()
     window = MainWindow(make_controller(records=[make_record()]))
     assert window.check_login_button.text() == "登录检查"
-    assert window.read_profile_button.text() == "读取 Profile"
+    assert window.read_profile_button.text() == "读取档案"
     assert window.read_timeline_button.text() == "读取时间线"
+    assert window.automation_button.text() == "配置并运行自动化"
     assert "关键词" in window.search_input.placeholderText()
     window.close()
+    app.processEvents()
+
+
+def test_task_config_dialog_has_safe_defaults_and_returns_config():
+    app = qapp()
+    dialog = TaskConfigDialog()
+    values = dialog.config()
+    assert values["daily_task_limit"] == 50
+    assert values["max_follower_threshold"] == 150
+    assert values["max_engagement_threshold"] == 10_000
+    assert values["sleep_on_rate_limit"] is True
+    dialog.close()
+    app.processEvents()
+
+
+def test_agent_reauth_dialog_masks_token_and_returns_new_credentials():
+    app = qapp()
+    dialog = AgentReauthDialog("agent-123")
+    dialog.agent_token_input.setText("lag_example_replacement_token")
+    assert dialog.agent_token_input.echoMode().name == "Password"
+    assert dialog.credentials() == ("agent-123", "lag_example_replacement_token")
+    dialog.close()
     app.processEvents()
 
 
 def test_desktop_server_agent_status_is_displayed():
     app = qapp()
     window = MainWindow(make_controller(records=[], agent_service=FakeAgentService()))
-    assert window.server_state_label.text() == "Server: ONLINE"
-    assert window.agent_state_label.text() == "Agent: ONLINE"
+    assert window.server_state_label.text() == "服务器：在线"
+    assert window.agent_state_label.text() == "运行端：在线"
     assert "2026-08-17 10:00:00" in window.heartbeat_label.text()
+    assert window.reauth_button.isHidden()
+    window.close()
+    app.processEvents()
+
+
+def test_desktop_shows_reauthentication_when_server_rejects_agent():
+    app = qapp()
+    window = MainWindow(make_controller(records=[], agent_service=ReauthAgentService()))
+    assert not window.reauth_button.isHidden()
+    assert window.server_state_label.text() == "服务器：在线"
+    assert window.agent_state_label.text() == "运行端：需要重新认证"
+    assert "重新认证" in window.live_status_label.text()
     window.close()
     app.processEvents()

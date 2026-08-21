@@ -231,7 +231,12 @@ class ServerClient:
         if self.transport is not None:
             return self.transport(method, path, payload, token)
         body = None if payload is None else json.dumps(payload).encode("utf-8")
-        headers = {"Accept": "application/json", "Content-Type": "application/json; charset=utf-8"}
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "Laogu-Desktop-Agent/0.21.6 (Windows; HTTPS)",
+            "X-Laogu-Client": "desktop-agent",
+        }
         if token:
             headers["X-Laogu-Device-ID"] = self.device_id
         if token:

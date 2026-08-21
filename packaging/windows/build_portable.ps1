@@ -6,14 +6,23 @@ $ErrorActionPreference = "Stop"
 $Project = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Spec = Join-Path $PSScriptRoot "laogu-desktop.spec"
 $Dist = Join-Path $Project "dist\Laogu-Desktop"
+$Work = Join-Path $Project "build\laogu-desktop"
+
+foreach ($Path in @($Dist, $Work)) {
+    $AbsolutePath = [System.IO.Path]::GetFullPath($Path)
+    $ProjectPrefix = $Project.TrimEnd('\') + '\'
+    if (-not $AbsolutePath.StartsWith($ProjectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to operate outside the project directory: $AbsolutePath"
+    }
+}
 
 Set-Location $Project
 if ($Clean) {
-    Remove-Item -LiteralPath (Join-Path $Project "build\laogu-desktop") -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $Dist -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-python -m PyInstaller --noconfirm --distpath (Join-Path $Project "dist") --workpath (Join-Path $Project "build\laogu-desktop") $Spec
+python -m PyInstaller --noconfirm --distpath (Join-Path $Project "dist") --workpath $Work $Spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Dist "config"), (Join-Path $Dist "logs"), (Join-Path $Dist "agent_data") | Out-Null

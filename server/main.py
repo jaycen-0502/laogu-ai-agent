@@ -42,6 +42,8 @@ from .schemas import AccountSync, AgentRegister, BootstrapRequest, Heartbeat, In
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
 from .security_diagnostics import configuration_diagnostics, database_diagnostic
 from .script_api import register_script_routes
+from common.release import VERSION, release_info
+from common.safety_policy import evaluate_task
 
 
 LOGGER = logging.getLogger("laogu.server")
@@ -161,7 +163,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     engine, SessionLocal = create_database(database_url)
     if settings.environment != "production":
         Base.metadata.create_all(engine)
-    app = FastAPI(title="Laogu Coordination Server", version="0.20.0", debug=False)
+    app = FastAPI(title="Laogu Coordination Server", version=VERSION, debug=False)
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
     app.state.settings = settings
@@ -292,6 +294,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if request.url.path == "/api/ai/task-proposals":
             limit = settings.rate_limit_ai_task_proposal
             rate_bucket = "/api/ai/task-proposals"
+        if request.url.path == "/api/license/issue" and request.method == "POST":
+            limit = settings.rate_limit_license_issue
+            rate_bucket = "/api/license/issue"
+        if request.url.path == "/api/license/check" and request.method == "POST":
+            limit = settings.rate_limit_license_check
+            rate_bucket = "/api/license/check"
         if limit is not None:
             if not limiter.allow(f"{rate_bucket}:{client_ip(request)}", limit, time.monotonic()):
                 return secure_response(429, "Too many requests")
@@ -452,7 +460,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
 
     @app.get("/api/health")
     def health():
-        return {"ok": True}
+        return {"ok": True, "release": release_info(component="server")}
 
     @app.get("/api/health/ready")
     def ready(db: Session = Depends(get_db)):
@@ -460,7 +468,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             db.execute(text("SELECT 1"))
         except Exception:
             raise HTTPException(status_code=503, detail="Service unavailable")
-        return {"ok": True}
+        return {"ok": True, "release": release_info(component="server")}
 
     @app.get("/api/admin/security/diagnostics")
     @app.get("/api/security/diagnostics", include_in_schema=False)
@@ -942,6 +950,8 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     def create_task(request: Request, body: TaskCreate, user: User = Depends(current_user), db: Session = Depends(get_db)):
         if body.task_type == "script.execute": raise HTTPException(status_code=422, detail="Use the Script execute endpoint")
         if body.task_type not in ALLOWED_TASK_TYPES: raise HTTPException(status_code=422, detail="Unsupported task type")
+        safety = evaluate_task(body.task_type, body.params)
+        if not safety.allowed: raise HTTPException(status_code=422, detail=safety.message)
         allowed = {"query"} if body.task_type == "x.search" else ({"url"} if body.task_type == "browser.open_url" else set())
         if set(body.params) - allowed or (body.task_type == "x.search" and not str(body.params.get("query") or "").strip()): raise HTTPException(status_code=422, detail="Unsupported task parameters")
         query = select(Profile).where(Profile.profile_id == body.profile_id)

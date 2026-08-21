@@ -3,6 +3,7 @@ import { apiClient, ApiError } from "../api/client";
 import type { ControlOverview, ControlProfileDetail } from "../types";
 
 const fmt = (value?: string | null) => value ? new Date(value).toLocaleString("zh-CN") : "-";
+const numberText = (value?: number | null) => (value ?? 0).toLocaleString("zh-CN");
 const errorText = (value: unknown) => value instanceof ApiError ? value.message : "请求失败，请稍后重试";
 const stateLabel: Record<string, string> = {
   ONLINE: "在线", OFFLINE: "离线", PENDING: "等待中", DISPATCHED: "已派发", RUNNING: "运行中",
@@ -58,7 +59,7 @@ export function ControlCenterPage() {
       <div className="metric-card"><span>等待 / 运行任务</span><strong>{s.pending_tasks} / {s.running_tasks}</strong></div>
       <div className="metric-card good"><span>成功任务</span><strong>{s.success_tasks}</strong></div>
       <div className="metric-card bad"><span>失败 / 超时任务</span><strong>{s.failed_tasks}</strong></div>
-      <div className="metric-card"><span>AI Token</span><strong>{s.ai_total_tokens.toLocaleString()}</strong></div>
+      <div className="metric-card"><span>AI Token</span><strong>{numberText(s.ai_total_tokens)}</strong></div>
     </div>
 
     <div className="control-stat-strip">

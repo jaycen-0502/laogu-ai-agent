@@ -18,6 +18,7 @@ export function LicensesPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [issuerConfigured, setIssuerConfigured] = useState(false);
+  const [issuerAvailable, setIssuerAvailable] = useState(false);
   const [issueOpen, setIssueOpen] = useState(false);
   const [requestCode, setRequestCode] = useState("");
   const [issueDays, setIssueDays] = useState("30");
@@ -74,9 +75,11 @@ export function LicensesPage() {
 
   const loadIssuerStatus = async () => {
     try {
-      const status = await apiClient<{ configured: boolean }>("/license/issuer-status");
+      const status = await apiClient<{ configured: boolean; available: boolean }>("/license/issuer-status");
       setIssuerConfigured(status.configured);
+      setIssuerAvailable(status.available);
     } catch (exc) {
+      setIssuerAvailable(false);
       setError(errorText(exc));
     }
   };
@@ -112,9 +115,9 @@ export function LicensesPage() {
   return <>
     <div className="page-title">
       <div><h1>远程授权</h1><p className="muted">查看授权有效期、设备和在线检查记录。不会显示私钥。</p></div>
-      <div className="row-actions"><button onClick={() => void load()} disabled={loading}>{loading ? "刷新中…" : "刷新"}</button><button className="primary" onClick={() => { setIssueOpen(true); setIssuedCode(""); }} disabled={!issuerConfigured}>在线生成激活码</button></div>
+      <div className="row-actions"><button onClick={() => { void load(); void loadIssuerStatus(); }} disabled={loading}>{loading ? "刷新中…" : "刷新"}</button><button className="primary" onClick={() => { setIssueOpen(true); setIssuedCode(""); }} disabled={!issuerAvailable}>在线生成激活码</button></div>
     </div>
-    {!issuerConfigured && <div className="alert">在线签发尚未配置。请继续使用授权终端离线签发；配置服务器私钥后此按钮会自动启用。</div>}
+    {!issuerAvailable && <div className="alert">{issuerConfigured ? "服务器签名密钥不可用，请检查文件权限、密码文件或密钥匹配；离线授权终端仍可使用。" : "在线签发尚未配置。请继续使用授权终端离线签发；配置服务器私钥后此按钮会自动启用。"}</div>}
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert">{message}</div>}
     <section className="panel">

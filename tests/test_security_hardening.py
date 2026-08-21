@@ -102,7 +102,7 @@ def test_alembic_upgrade_downgrade_upgrade_and_legacy_token_migration(tmp_path, 
         migrated = db.execute("SELECT agent_id, token_hash, status FROM agent_tokens").fetchone()
         assert migrated == ("a1", legacy_hash, "ACTIVE")
         assert db.execute("SELECT token_hash FROM agents WHERE id='a1'").fetchone()[0] == ""
-            assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0014_user_ai_policies"
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0015_agent_device_bindings"
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scripts'").fetchone() == ("scripts",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_providers'").fetchone() == ("ai_providers",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'").fetchone() == ("chat_sessions",)
@@ -289,6 +289,12 @@ def test_valid_production_configuration_and_runtime_bounds():
         check_server_config(replace(valid, jwt_expire_minutes=0))
     with pytest.raises(ProductionConfigError):
         check_server_config(replace(valid, agent_token_ttl_days=0))
+    with pytest.raises(ProductionConfigError):
+        check_server_config(replace(valid, rate_limit_license_issue=0))
+    with pytest.raises(ProductionConfigError):
+        check_server_config(replace(valid, rate_limit_license_check=0))
+    with pytest.raises(ProductionConfigError):
+        check_server_config(replace(valid, license_check_retention_days=0))
 
 
 def test_workspace_agent_task_isolation_and_task_result_routing():
@@ -378,7 +384,9 @@ def test_health_and_readiness_do_not_expose_sensitive_details():
     health = client.get("/api/health")
     ready = client.get("/api/health/ready")
     assert health.status_code == ready.status_code == 200
-    assert health.json() == ready.json() == {"ok": True}
+    assert health.json() == ready.json()
+    assert health.json().get("ok") is True
+    assert health.json().get("release", {}).get("version")
     assert "database" not in json.dumps(ready.json()).lower()
 
 

@@ -37,9 +37,9 @@ from .task_proposal_api import register_task_proposal_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
-from .models import AIProvider, Account, Activity, Agent, AgentToken, AuditLog, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, User, UserAIPolicy, Workspace, now
+from .models import AIProvider, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
-from .schemas import AccountSync, AgentRegister, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
+from .schemas import AccountSync, AgentRegister, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
 from .security_diagnostics import configuration_diagnostics, database_diagnostic
 from .script_api import register_script_routes
@@ -944,6 +944,53 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             for key, value in incoming.model_dump().items(): setattr(account, key, value)
         agent.profile_count = len(body.items); db.commit()
         return {"ok": True, "synced": len(body.items)}
+
+    @app.post("/api/agent/automation-metrics")
+    def sync_automation_metric(
+        request: Request,
+        body: AutomationMetricSync,
+        agent: Agent = Depends(current_agent),
+        db: Session = Depends(get_db),
+    ):
+        if body.agent_id != agent.id:
+            deny(request, db, action="AUTOMATION_METRIC_SYNC", agent=agent)
+        existing = db.scalar(select(AutomationMetric).where(AutomationMetric.run_id == body.run_id))
+        if existing is not None:
+            if existing.agent_id != agent.id:
+                raise HTTPException(status_code=409, detail="Automation run ID already belongs to another Agent")
+            return {"ok": True, "idempotent": True, "run_id": existing.run_id}
+        profile = db.scalar(
+            select(Profile).where(Profile.agent_id == agent.id, Profile.profile_id == body.profile_id)
+        )
+        account = db.scalar(
+            select(Account).where(Account.agent_id == agent.id, Account.profile_id == body.profile_id)
+        )
+        if profile is None or account is None:
+            raise HTTPException(status_code=409, detail="Profile/account must be synchronized before metrics")
+        if body.x_account_id and account.x_account_id and body.x_account_id != account.x_account_id:
+            raise HTTPException(status_code=409, detail="X account does not match the synchronized Profile")
+        metric = AutomationMetric(
+            run_id=body.run_id,
+            workspace_id=agent.workspace_id,
+            agent_id=agent.id,
+            profile_id=body.profile_id,
+            x_account_id=account.x_account_id or body.x_account_id,
+            account_tag=body.account_tag,
+            metric_date=body.metric_date,
+            started_at=body.started_at,
+            finished_at=body.finished_at,
+            status=body.status,
+            processed_count=body.processed_count,
+            likes=body.likes,
+            follows=body.follows,
+            comments=body.comments,
+            scanned_posts=body.scanned_posts,
+            own_followers=body.own_followers,
+            own_following=body.own_following,
+        )
+        db.add(metric)
+        db.commit()
+        return {"ok": True, "idempotent": False, "run_id": metric.run_id}
 
     @app.get("/api/profiles")
     def profiles(q: str = "", status: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), paged_response: bool = Query(False, alias="paged"), user: User = Depends(current_user), db: Session = Depends(get_db)):

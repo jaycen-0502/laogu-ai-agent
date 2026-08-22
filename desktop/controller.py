@@ -5,9 +5,11 @@ from datetime import datetime
 import asyncio
 from pathlib import Path
 from typing import Any, Iterable
+from uuid import uuid4
 
 from agent.account_discovery import AccountDiscovery
 from agent.account_registry import AccountRecord, AccountRegistry
+from agent.automation_statistics import AutomationStatisticsStore
 from agent.browser_manager import BrowserManager, BrowserManagerError
 from agent.config import load_settings
 from agent.laogu_api import LaoguApi
@@ -68,6 +70,7 @@ class DesktopController:
         task_service: TaskService | None = None,
         agent_service=_AUTO_AGENT_SERVICE,
         runtime_config: RuntimeConfig | None = None,
+        automation_statistics: AutomationStatisticsStore | None = None,
     ):
         settings = load_settings()
         self.settings = settings
@@ -105,8 +108,15 @@ class DesktopController:
         self.runtime_config = runtime_config or RuntimeConfig(
             settings.agent_state_file.with_name("runtime_config.json")
         )
+        self.automation_statistics = automation_statistics or AutomationStatisticsStore(
+            settings.agent_state_file
+        )
         self.agent_service = (
-            build_agent_service(self.task_service, self.registry)
+            build_agent_service(
+                self.task_service,
+                self.registry,
+                automation_statistics=self.automation_statistics,
+            )
             if agent_service is _AUTO_AGENT_SERVICE
             else agent_service
         )
@@ -181,14 +191,61 @@ class DesktopController:
             cache_dir=str(engine_cache_dir) if engine_cache_dir else "",
         )
         engine = engine_class(cdp_url=cdp_url, logger=self.logger)
-        result = asyncio.run(engine.run(config))
+        run_id = uuid4().hex
+        started_at = datetime.now().astimezone().isoformat()
+        account = next(
+            (item for item in self.registry.list() if item.profile_id == profile_id),
+            None,
+        )
+        x_account_id = str(getattr(account, "x_account_id", "") or "")
+        account_tag = str(
+            config.get("account_tag")
+            or getattr(account, "x_username", "")
+            or getattr(account, "profile_name", "")
+            or profile_id
+        )
+        try:
+            result = asyncio.run(engine.run(config))
+        except Exception as exc:
+            self._record_automation_result(
+                run_id, profile_id, x_account_id, account_tag, started_at,
+                {"status": "ERROR", "error": str(exc)},
+            )
+            raise
+        self._record_automation_result(
+            run_id, profile_id, x_account_id, account_tag, started_at, result
+        )
         return {
             "status": "SUCCESS",
             "profile_id": profile_id,
+            "run_id": run_id,
             "cdp_url": cdp_url,
             "runtime_config": saved,
             "result": result,
         }
+
+    def _record_automation_result(
+        self,
+        run_id: str,
+        profile_id: str,
+        x_account_id: str,
+        account_tag: str,
+        started_at: str,
+        result: dict[str, Any],
+    ) -> None:
+        try:
+            self.automation_statistics.record_result(
+                run_id=run_id,
+                profile_id=profile_id,
+                x_account_id=x_account_id,
+                account_tag=account_tag,
+                started_at=started_at,
+                result=result if isinstance(result, dict) else {"status": "ERROR"},
+            )
+            if self.agent_service is not None:
+                self.agent_service.flush_automation_metrics()
+        except Exception as exc:
+            self.logger.info("Automation statistics sync deferred: %s", exc)
 
     @staticmethod
     def _extract_cdp_url(payload: Any) -> str:
@@ -214,7 +271,22 @@ class DesktopController:
         return ""
 
     def task_statistics(self, period: str = "today") -> dict[str, Any]:
-        return self.task_service.statistics.summary(period)
+        summary = dict(self.task_service.statistics.summary(period) or {})
+        if period != "today":
+            return summary
+        automation = self.automation_statistics.summary()
+        existing = dict(summary.get("by_account") or {})
+        for key, values in automation.get("by_account", {}).items():
+            merged = dict(existing.get(key) or {})
+            merged.update(values)
+            existing[key] = merged
+        summary["by_account"] = existing
+        for key in (
+            "automation_runs", "processed_count", "likes", "follows",
+            "comments", "scanned_posts",
+        ):
+            summary[key] = automation.get(key, 0)
+        return summary
 
     def recent_activities(self, limit: int = 20) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.task_service.statistics.recent_activities(limit)]

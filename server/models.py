@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -127,6 +127,34 @@ class Account(Base):
     last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mapping_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint("agent_id", "profile_id", name="uq_account_agent_profile"),)
+
+
+class AutomationMetric(Base):
+    """Whitelisted counters reported by the desktop automation result adapter."""
+
+    __tablename__ = "automation_metrics"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
+    profile_id: Mapped[str] = mapped_column(String(100), index=True)
+    x_account_id: Mapped[str] = mapped_column(String(40), default="", index=True)
+    account_tag: Mapped[str] = mapped_column(String(120), default="")
+    metric_date: Mapped[date] = mapped_column(Date, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="ERROR")
+    processed_count: Mapped[int] = mapped_column(Integer, default=0)
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    follows: Mapped[int] = mapped_column(Integer, default=0)
+    comments: Mapped[int] = mapped_column(Integer, default=0)
+    scanned_posts: Mapped[int] = mapped_column(Integer, default=0)
+    own_followers: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    own_following: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        Index("ix_automation_metrics_agent_profile_date", "agent_id", "profile_id", "metric_date"),
+    )
 
 
 class Task(Base):

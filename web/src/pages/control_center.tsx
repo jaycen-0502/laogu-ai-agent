@@ -80,9 +80,10 @@ export function ControlCenterPage() {
     </section>
 
     <section className="panel"><div className="section-heading"><h2>Profile / Account</h2><span className="muted">点击一行查看任务和活动详情</span></div>
-      {data.profiles.length ? <div className="table-wrap"><table><thead><tr><th>Profile</th><th>账号</th><th>Agent</th><th>浏览器</th><th>登录</th><th>当前任务</th><th>最近状态</th></tr></thead><tbody>{data.profiles.map((profile) => <tr className="clickable" key={profile.profile_record_id} onClick={() => void openProfile(profile.profile_record_id)}>
+      {data.profiles.length ? <div className="table-wrap"><table><thead><tr><th>Profile</th><th>账号</th><th>今日执行</th><th>Agent</th><th>浏览器</th><th>登录</th><th>当前任务</th><th>最近状态</th></tr></thead><tbody>{data.profiles.map((profile) => <tr className="clickable" key={profile.profile_record_id} onClick={() => void openProfile(profile.profile_record_id)}>
         <td><strong>{profile.x_username || profile.profile_id}</strong><div className="mono">{profile.profile_id}</div></td>
         <td>{profile.x_username || "-"}<div className="muted">{profile.account_status || "UNKNOWN"}</div></td>
+        <td><strong>赞 {numberText(profile.today_metrics?.likes)} · 关 {numberText(profile.today_metrics?.follows)} · 评 {numberText(profile.today_metrics?.comments)}</strong><div className="muted">扫描 {numberText(profile.today_metrics?.scanned_posts)} · {numberText(profile.today_metrics?.automation_runs)} 次</div></td>
         <td>{profile.agent_name || profile.agent_id.slice(0, 10)}</td>
         <td><State value={profile.browser_status} /></td>
         <td><State value={profile.login_status} /></td>
@@ -101,6 +102,7 @@ export function ControlCenterPage() {
     {detail && <div className="control-detail-backdrop" onClick={() => setDetail(null)}><section className="panel control-detail" onClick={(event) => event.stopPropagation()}>
       <div className="section-heading"><div><h2>{detail.profile.x_username || detail.profile.profile_id}</h2><p className="muted">{detail.profile.profile_id} · {detail.agent?.agent_name || detail.profile.agent_id}</p></div><button onClick={() => setDetail(null)}>关闭</button></div>
       <div className="control-detail-summary"><span>浏览器 <State value={detail.profile.browser_status} /></span><span>登录 <State value={detail.profile.login_status} /></span><span>账号 <State value={detail.profile.account_status} /></span><span>任务 <strong>{detail.tasks.length}</strong></span></div>
+      <h3>今日自动化执行</h3><div className="control-stat-strip"><span>运行 <strong>{numberText(detail.today_metrics.automation_runs)}</strong></span><span>点赞 <strong>{numberText(detail.today_metrics.likes)}</strong></span><span>关注 <strong>{numberText(detail.today_metrics.follows)}</strong></span><span>评论 <strong>{numberText(detail.today_metrics.comments)}</strong></span><span>扫描帖子 <strong>{numberText(detail.today_metrics.scanned_posts)}</strong></span></div>
       <h3>任务历史</h3>{detail.tasks.length ? <div className="control-event-list">{detail.tasks.slice(0, 20).map((task) => <div className="control-event" key={task.task_id}><div><strong>{task.script_name || task.task_type}</strong><small>{fmt(task.created_at)} · {task.error || task.task_id}</small></div><State value={task.status} /></div>)}</div> : <div className="empty">暂无任务</div>}
       <h3>活动历史</h3>{detail.activities.length ? <div className="control-event-list">{detail.activities.slice(0, 20).map((activity) => <div className="control-event" key={activity.activity_id}><div><strong>{activity.summary}</strong><small>{fmt(activity.timestamp)}</small></div><State value={activity.status} /></div>)}</div> : <div className="empty">暂无活动</div>}
     </section></div>}

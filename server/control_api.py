@@ -18,6 +18,7 @@ from .models import (
     Activity,
     Agent,
     AuditLog,
+    AutomationMetric,
     ChatSession,
     Profile,
     Script,
@@ -49,6 +50,26 @@ def register_control_routes(
     task_serializer: Callable,
     activity_serializer: Callable,
 ) -> None:
+    metric_fields = ("processed_count", "likes", "follows", "comments", "scanned_posts")
+
+    def empty_metrics() -> dict[str, int]:
+        return {"automation_runs": 0, **{key: 0 for key in metric_fields}}
+
+    def metric_dict(item: AutomationMetric) -> dict:
+        return {
+            "run_id": item.run_id,
+            "profile_id": item.profile_id,
+            "x_account_id": item.x_account_id,
+            "account_tag": item.account_tag,
+            "metric_date": item.metric_date.isoformat(),
+            "started_at": _dt(item.started_at),
+            "finished_at": _dt(item.finished_at),
+            "status": item.status,
+            **{key: int(getattr(item, key) or 0) for key in metric_fields},
+            "own_followers": item.own_followers,
+            "own_following": item.own_following,
+        }
+
     def scoped(db: Session, model, user: User):
         query = select(model)
         if user.role != "ADMIN":
@@ -96,6 +117,15 @@ def register_control_routes(
         writings = scoped(db, AIWritingRecord, user)
         images = scoped(db, AIImage, user)
         chats = scoped(db, ChatSession, user)
+        metrics = scoped(db, AutomationMetric, user)
+        today = datetime.now().astimezone().date()
+        today_metrics = [item for item in metrics if item.metric_date == today]
+        metrics_by_profile: dict[tuple[str, str], dict[str, int]] = {}
+        for item in today_metrics:
+            aggregate = metrics_by_profile.setdefault((item.agent_id, item.profile_id), empty_metrics())
+            aggregate["automation_runs"] += 1
+            for field in metric_fields:
+                aggregate[field] += int(getattr(item, field) or 0)
 
         agent_payloads = []
         for agent in sorted(agents, key=lambda item: item.created_at or datetime.min, reverse=True):
@@ -123,6 +153,7 @@ def register_control_routes(
                 "profile_record_id": profile.id,
                 "current_task": task_serializer(current) if current else None,
                 "task_count": len(profile_tasks),
+                "today_metrics": metrics_by_profile.get((profile.agent_id, profile.profile_id), empty_metrics()),
             }
             profile_payloads.append(payload)
 
@@ -167,6 +198,11 @@ def register_control_routes(
                 "writing_count": len(writings),
                 "image_count": len(images),
                 "chat_session_count": len(chats),
+                "today_automation_runs": len(today_metrics),
+                **{
+                    f"today_{field}": sum(int(getattr(item, field) or 0) for item in today_metrics)
+                    for field in metric_fields
+                },
             },
             "agents": agent_payloads,
             "profiles": profile_payloads,
@@ -196,12 +232,34 @@ def register_control_routes(
             .order_by(Activity.timestamp.desc())
             .limit(100)
         ))
+        automation_metrics = list(db.scalars(
+            select(AutomationMetric)
+            .where(
+                AutomationMetric.agent_id == profile.agent_id,
+                AutomationMetric.profile_id == profile.profile_id,
+            )
+            .order_by(AutomationMetric.finished_at.desc())
+            .limit(100)
+        ))
+        today = datetime.now().astimezone().date()
+        profile_today = empty_metrics()
+        for item in automation_metrics:
+            if item.metric_date != today:
+                continue
+            profile_today["automation_runs"] += 1
+            for field in metric_fields:
+                profile_today[field] += int(getattr(item, field) or 0)
         return {
-            "profile": profile_serializer(profile, account) | {"profile_record_id": profile.id},
+            "profile": profile_serializer(profile, account) | {
+                "profile_record_id": profile.id,
+                "today_metrics": profile_today,
+            },
             "agent": agent_serializer(agent, settings) if agent else None,
             "account": account_serializer(account) if account else None,
             "tasks": task_details(db, tasks),
             "activities": [activity_serializer(item) for item in activities],
+            "today_metrics": profile_today,
+            "automation_metrics": [metric_dict(item) for item in automation_metrics],
         }
 
     @app.get("/api/control/timeline")

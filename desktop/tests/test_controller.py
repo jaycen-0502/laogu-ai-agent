@@ -8,6 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from agent.account_registry import AccountRecord
+from agent.automation_statistics import AutomationStatisticsStore
 from agent.models import AccountStatus, BrowserStatus, LoginStatus
 from desktop.controller import DesktopController, account_to_row
 from desktop.main_window import AgentReauthDialog, MainWindow, TaskConfigDialog
@@ -94,10 +95,14 @@ class FakeTask:
 
 
 class FakeAgentService:
+    def __init__(self): self.metric_flushes = 0
     def start(self): pass
     def stop(self): pass
     def status(self):
         return {"server": "ONLINE", "agent": "ONLINE", "last_heartbeat": "2026-08-17T10:00:00+08:00", "last_error": ""}
+    def flush_automation_metrics(self):
+        self.metric_flushes += 1
+        return 1
 
 
 class ReauthAgentService:
@@ -182,6 +187,26 @@ def test_controller_persists_profile_task_config():
         saved = controller.set_profile_task_config("p-11", {"keyword": "Python", "daily_task_limit": 50})
         assert saved["active"]["keyword"] == "Python"
         assert controller.get_profile_task_config("p-11")["active"]["daily_task_limit"] == 50
+
+
+def test_controller_records_engine_result_in_external_statistics_layer():
+    with tempfile.TemporaryDirectory() as directory:
+        statistics = AutomationStatisticsStore(Path(directory) / "state.db")
+        agent_service = FakeAgentService()
+        controller = DesktopController(
+            api=FakeApi(), browser_manager=FakeBrowserManager(), discovery=FakeDiscovery(),
+            registry=FakeRegistry([make_record()]), task_service=FakeTaskService(),
+            agent_service=agent_service, automation_statistics=statistics,
+        )
+        controller._record_automation_result(
+            "run-controller", "p-11", "123456789", "@example",
+            datetime.now().astimezone().isoformat(),
+            {"status": "SUCCESS", "likes": 4, "follows": 2, "views": 9},
+        )
+        summary = controller.task_statistics("today")
+        assert summary["by_account"]["p-11"]["likes"] == 4
+        assert summary["by_account"]["123456789"]["scanned_posts"] == 9
+        assert agent_service.metric_flushes == 1
 
 
 def test_controller_extracts_cdp_endpoint_from_nested_start_response():

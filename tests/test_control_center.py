@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from server.config import ServerSettings
 from server.main import create_app
-from server.models import Account, Activity, Agent, AuditLog, Profile, Script, ScriptVersion, Task
+from server.models import Account, Activity, Agent, AuditLog, AutomationMetric, Profile, Script, ScriptVersion, Task
 
 
 def auth(token: str) -> dict[str, str]:
@@ -52,6 +52,13 @@ def make_env():
         db.add(version); db.flush(); task.script_version_id = version.id; db.add(task); db.flush()
         db.add(Activity(workspace_id=boot["workspace_id"], agent_id=agent_one.id, profile_id=profile_one.profile_id, x_account_id="", task_id=task.id, script_id=script.id, script_version_id=version.id, activity_type="script.execute", status="RUNNING", summary="script.execute", timestamp=now))
         db.add(AuditLog(workspace_id=boot["workspace_id"], action="CONTROL_TEST", resource_type="task", resource_id=task.id, result="SUCCESS", timestamp=now))
+        db.add(AutomationMetric(
+            run_id="control-run-1", workspace_id=boot["workspace_id"],
+            agent_id=agent_one.id, profile_id=profile_one.profile_id,
+            x_account_id="", metric_date=now.astimezone().date(),
+            started_at=now, finished_at=now, status="SUCCESS",
+            processed_count=5, likes=2, follows=1, comments=0, scanned_posts=7,
+        ))
         db.commit()
         profile_one_id, profile_two_id = profile_one.id, profile_two.id
     return client, admin_token, member_token, profile_one_id, profile_two_id
@@ -69,9 +76,14 @@ def test_control_overview_aggregates_data_and_profile_detail_is_scoped():
     assert body["summary"]["logged_in_accounts"] == 1
     assert body["profiles"][0]["profile_record_id"] == primary_profile_id
     assert body["profiles"][0]["current_task"]["status"] == "RUNNING"
+    assert body["profiles"][0]["today_metrics"]["likes"] == 2
+    assert body["profiles"][0]["today_metrics"]["scanned_posts"] == 7
+    assert body["summary"]["today_automation_runs"] == 1
     detail = client.get(f"/api/control/profiles/{primary_profile_id}", headers=auth(member_token))
     assert detail.status_code == 200, detail.text
     assert len(detail.json()["tasks"]) == 1
+    assert detail.json()["today_metrics"]["follows"] == 1
+    assert detail.json()["automation_metrics"][0]["run_id"] == "control-run-1"
     assert client.get(f"/api/control/profiles/{secondary_profile_id}", headers=auth(member_token)).status_code == 404
     timeline = client.get("/api/control/timeline?limit=10", headers=auth(member_token))
     assert timeline.status_code == 200

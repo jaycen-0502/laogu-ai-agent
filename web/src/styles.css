@@ -93,11 +93,14 @@ h2 {
   position: fixed;
   inset: 0 auto 0 0;
   width: 224px;
+  height: 100vh;
+  box-sizing: border-box;
   background: #102a2a;
   color: #e7f7f5;
   padding: 20px 14px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .brand {
   display: flex;
@@ -161,7 +164,17 @@ nav {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 0 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #3f7772 transparent;
 }
+nav::-webkit-scrollbar { width: 7px; }
+nav::-webkit-scrollbar-thumb { background: #3f7772; border-radius: 8px; }
+nav::-webkit-scrollbar-track { background: transparent; }
 nav a {
   color: #bcd4d2;
   text-decoration: none;
@@ -175,6 +188,7 @@ nav a.active {
 }
 .sidebar-bottom {
   margin-top: auto;
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;

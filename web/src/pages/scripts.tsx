@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { apiClient, ApiError, jsonBody } from "../api/client";
+import { apiClient, ApiError, jsonBody, uploadEngine } from "../api/client";
 import type {
   Page,
   Profile,
@@ -84,6 +84,9 @@ export function ScriptsPage({ user }: { user: User }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
+  const [engineVersion, setEngineVersion] = useState("");
+  const [engineMessage, setEngineMessage] = useState("");
+  const engineInput = useRef<HTMLInputElement>(null);
   const [data, setData] = useState<Page<Script> | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -105,12 +108,24 @@ export function ScriptsPage({ user }: { user: User }) {
           <h1>脚本中心</h1>
           <p className="muted">管理已登记的JavaScript脚本及不可变版本</p>
         </div>
+        {user.role === "ADMIN" && <>
+          <input ref={engineInput} type="file" accept=".py,text/x-python" hidden onChange={async (event) => {
+            const file = event.target.files?.[0]; event.target.value = "";
+            if (!file || !engineVersion.trim()) { setEngineMessage("请先填写自动化脚本版本号"); return; }
+            setEngineMessage("正在上传自动化脚本…");
+            try { const result = await uploadEngine(file, engineVersion.trim()); setEngineMessage(`发布成功：版本 ${result.version}，控制中心点击“检查脚本更新”即可下载`); setEngineVersion(""); }
+            catch (exc) { setEngineMessage(exc instanceof Error ? exc.message : "脚本发布失败"); }
+          }} />
+          <input value={engineVersion} onChange={(event) => setEngineVersion(event.target.value)} placeholder="自动化脚本版本" />
+          <button className="button-link" onClick={() => engineInput.current?.click()}>发布 Python 自动化脚本</button>
+        </>}
         {user.role !== "MEMBER" && (
           <Link className="button-link primary" to="/scripts/new">
             新建脚本
           </Link>
         )}
       </div>
+      {engineMessage && <div className="alert">{engineMessage}</div>}
       <div className="toolbar">
         <input
           value={q}

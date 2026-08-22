@@ -18,7 +18,7 @@ from agent.logger import build_logger
 from agent.task_service import TaskService
 from agent.agent_service import build_agent_service
 from agent.runtime_config import RuntimeConfig
-from agent.script_updater import get_automation_engine_class, sync_engine_from_server
+from agent.script_updater import get_automation_engine_class, get_file_sha256, read_engine_state, sync_engine_from_server
 
 
 _AUTO_AGENT_SERVICE = object()
@@ -246,6 +246,35 @@ class DesktopController:
                 self.agent_service.flush_automation_metrics()
         except Exception as exc:
             self.logger.info("Automation statistics sync deferred: %s", exc)
+
+    def automation_engine_update_status(self) -> dict[str, Any]:
+        if self.agent_service is None:
+            raise RuntimeError("当前运行端未连接 Web 服务")
+        client = getattr(self.agent_service, "server_client", None)
+        manifest = client.fetch_engine_manifest()
+        cache_dir = Path(self.settings.engine_cache_dir)
+        state = read_engine_state(cache_dir)
+        active_sha = str(state.get("active_sha256") or "").lower()
+        active_path = cache_dir / str(state.get("active_path") or "")
+        try:
+            active_path.resolve().relative_to(cache_dir.resolve())
+            installed_ok = bool(active_sha and active_path.is_file() and get_file_sha256(active_path) == active_sha)
+        except (OSError, ValueError):
+            installed_ok = False
+        remote_sha = str(manifest.get("sha256") or "").lower()
+        return {"remote_version": str(manifest.get("version") or ""), "remote_sha256": remote_sha, "installed_version": str(state.get("active_version") or ""), "installed_sha256": active_sha if installed_ok else "", "update_available": not installed_ok or remote_sha != active_sha}
+
+    def download_automation_engine_update(self, progress=None) -> dict[str, Any]:
+        if progress: progress(10, "正在连接 Web 后台…")
+        if self.agent_service is None: raise RuntimeError("当前运行端未连接 Web 服务")
+        if progress: progress(35, "正在下载脚本…")
+        changed = sync_engine_from_server(self.agent_service.server_client, self.settings.engine_cache_dir)
+        if progress: progress(85, "正在校验并替换脚本…")
+        status = self.automation_engine_update_status()
+        status["downloaded"] = bool(changed)
+        status["message"] = "脚本已下载并替换成功" if changed else "当前已是最新脚本"
+        if progress: progress(100, "下载完成，替换成功")
+        return status
 
     @staticmethod
     def _extract_cdp_url(payload: Any) -> str:

@@ -92,3 +92,12 @@ export const jsonBody = (value: unknown): RequestInit => ({
   method: "POST",
   body: JSON.stringify(value),
 });
+
+export async function uploadEngine(source: Blob, version: string) {
+  const headers = new Headers({ Accept: "application/json", "Content-Type": "text/x-python" });
+  const token = authStore.get(); if (token) headers.set("Authorization", `Bearer ${token}`);
+  const response = await fetch(`/api/admin/engine/publish?version=${encodeURIComponent(version)}`, { method: "POST", headers, body: source, signal: AbortSignal.timeout(30000) });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new ApiError(response.status, String(payload?.detail || "脚本发布失败"));
+  return payload as { ok: boolean; version: string; sha256: string; size: number };
+}

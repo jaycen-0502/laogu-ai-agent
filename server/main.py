@@ -1154,6 +1154,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     )
     register_engine_update_routes(
         app,
+        current_user=current_user,
         current_agent=current_agent,
     )
     register_ai_provider_routes(

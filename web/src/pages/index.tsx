@@ -467,6 +467,18 @@ function AgentsPage({ current }: { current: User }) {
       setRegisterMessage(errorText(exc));
     }
   };
+  const recoverAgent = async (item: Agent) => {
+    if (!window.confirm(`确认恢复“${item.agent_name}”的授权吗？旧 Token 会保持失效，并清除旧设备绑定。`)) return;
+    try {
+      const recovered = await apiClient<{ agent_id: string; agent_token: string; workspace_id: string }>(`/agents/${item.agent_id}/recover`, { method: "POST" });
+      setRegisterResult(recovered);
+      setRegisterMessage("运行端授权已恢复。请只在新的 Windows 运行端保存这次 Token；首次心跳会重新绑定当前设备。 ");
+      result.reload();
+      if (selected?.agent_id === item.agent_id) setSelected({ ...selected, status: "OFFLINE", binding_status: "UNBOUND", last_heartbeat: null });
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
   const downloadSetupScript = () => {
     if (!registerResult) return;
     const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
@@ -592,8 +604,8 @@ if ($setupSucceeded) {
             {selected.recent_tasks?.length || 0}
           </p>
           <p className="form-help">如果 Windows Agent 的 Token 遗失或泄露，可以重新生成；旧 Token 会立即失效。</p>
-          <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>
-          <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>
+          {selected.status === "DELETED" ? <button onClick={() => void recoverAgent(selected)}>恢复授权</button> : <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>}
+          {selected.status !== "DELETED" && <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>}
           <button onClick={() => setSelected(null)}>关闭</button>
         </div>
       )}

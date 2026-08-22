@@ -100,7 +100,8 @@ class AgentReauthDialog(QDialog):
         layout = QFormLayout(self)
 
         self.agent_id_input = QLineEdit(str(agent_id).strip())
-        self.agent_id_input.setPlaceholderText("从 Web 后台复制 Agent ID")
+        self.agent_id_input.setReadOnly(True)
+        self.agent_id_input.setToolTip("Agent ID 由服务器签发，不能在控制中心修改")
         layout.addRow("Agent ID", self.agent_id_input)
 
         self.agent_token_input = QLineEdit()
@@ -109,8 +110,8 @@ class AgentReauthDialog(QDialog):
         layout.addRow("Agent Token", self.agent_token_input)
 
         hint = QLabel(
-            "请先在 Web 后台的“运行端”页面重新生成 Agent Token。"
-            "保存后 Token 将由 Windows DPAPI 加密，界面和日志均不会回显。"
+            "Agent ID 由服务器固定绑定本机，控制中心不允许修改。"
+            "请只粘贴 Web 后台重新生成的新 Token；保存后由 Windows DPAPI 加密。"
         )
         hint.setWordWrap(True)
         hint.setObjectName("subtitle")
@@ -566,7 +567,18 @@ class MainWindow(QMainWindow):
         lifecycle_zh = {"RUNNING": "运行中", "STOPPED": "已停止", "STARTING": "启动中", "STOPPING": "停止中"}.get(lifecycle, lifecycle)
         self.server_state_label.setText(f"服务器：{server_zh}")
         self.agent_state_label.setText(f"运行端：{agent_zh}" + (f" · {lifecycle_zh}" if lifecycle else ""))
-        online = agent == "ONLINE"
+        online = server == "ONLINE" and agent == "ONLINE"
+        # Keep the console open for status and authentication, but disable all
+        # remote control actions until the authenticated Agent is online.
+        for button in (
+            getattr(self, "start_button", None), getattr(self, "stop_button", None),
+            getattr(self, "run_all_button", None), getattr(self, "stop_all_button", None),
+            getattr(self, "automation_button", None), getattr(self, "check_login_button", None),
+            getattr(self, "read_profile_button", None), getattr(self, "read_timeline_button", None),
+            getattr(self, "search_button", None),
+        ):
+            if button is not None:
+                button.setEnabled(online)
         self.reauth_button.setVisible(agent in {"REAUTH_REQUIRED", "UNCONFIGURED", "UNREGISTERED"})
         if agent == "REAUTH_REQUIRED":
             live_text = "●  服务器可达，运行端凭据需要重新认证"

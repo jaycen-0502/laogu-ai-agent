@@ -161,7 +161,7 @@ def test_scan_updates_registry_and_filters_profiles():
 
 
 def test_controller_runs_only_whitelisted_read_only_task():
-    controller = make_controller(records=[make_record()])
+    controller = make_controller(records=[make_record()], agent_service=FakeAgentService())
     result = controller.run_read_only_task("p-11", "x.search", {"query": "Python"})
     assert result["status"] == "SUCCESS"
     assert controller.task_service.calls == [("p-11", "x.search", {"query": "Python"})]

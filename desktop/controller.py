@@ -129,9 +129,11 @@ class DesktopController:
         return self.list_accounts()
 
     def start_profile(self, profile_id: str) -> dict[str, Any]:
+        self._require_remote_agent()
         return self.browser_manager.start_profile(str(profile_id))
 
     def stop_profile(self, profile_id: str) -> dict[str, Any]:
+        self._require_remote_agent()
         return self.browser_manager.stop_profile(str(profile_id))
 
     def set_profile_task_config(self, profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
@@ -145,6 +147,7 @@ class DesktopController:
 
     def start_automation_task(self, profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
         """Start a Profile and run the safe read-only CDP validation workflow."""
+        self._require_remote_agent()
         profile_id = str(profile_id)
         saved = self.set_profile_task_config(profile_id, config)
         started = self.browser_manager.start_profile(profile_id)
@@ -222,7 +225,16 @@ class DesktopController:
     def run_read_only_task(
         self, profile_id: str, task_type: str, params: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        self._require_remote_agent()
         return self.task_service.run(profile_id, task_type, params).to_dict()
+
+    def _require_remote_agent(self) -> None:
+        """Block control actions until the authenticated remote Agent is online."""
+        if self.agent_service is None:
+            raise RuntimeError("未连接 Web 服务器，控制中心已锁定。请先完成运行端认证。")
+        status = self.agent_service.status() or {}
+        if status.get("server") != "ONLINE" or status.get("agent") != "ONLINE":
+            raise RuntimeError("运行端尚未认证成功或 Web 服务器不可达，暂不能执行控制操作。")
 
     def server_agent_status(self) -> dict[str, str]:
         if self.agent_service is None:
@@ -252,6 +264,9 @@ class DesktopController:
         if client is None or not hasattr(client, "replace_agent_token"):
             raise RuntimeError("当前运行端不支持凭据更新")
 
+        current_id = str(getattr(client, "agent_id", "") or "")
+        if not current_id or agent_id != current_id:
+            raise ValueError("Agent ID 不允许修改，只能替换服务器重新生成的 Token。")
         client.replace_agent_token(agent_id, agent_token)
         if not self.agent_service.heartbeat_once():
             raise RuntimeError(self.agent_service.last_error or "运行端认证失败")

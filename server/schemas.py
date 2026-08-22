@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -129,6 +129,25 @@ class AccountSyncItem(BaseModel):
 class AccountSync(BaseModel):
     agent_id: str
     items: list[AccountSyncItem]
+
+
+class AutomationMetricSync(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=32)
+    run_id: str = Field(min_length=1, max_length=64)
+    profile_id: str = Field(min_length=1, max_length=100)
+    x_account_id: str = Field(default="", max_length=40)
+    account_tag: str = Field(default="", max_length=120)
+    metric_date: date
+    started_at: datetime
+    finished_at: datetime
+    status: str = Field(default="ERROR", max_length=20)
+    processed_count: int = Field(default=0, ge=0, le=1_000_000)
+    likes: int = Field(default=0, ge=0, le=1_000_000)
+    follows: int = Field(default=0, ge=0, le=1_000_000)
+    comments: int = Field(default=0, ge=0, le=1_000_000)
+    scanned_posts: int = Field(default=0, ge=0, le=10_000_000)
+    own_followers: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    own_following: int | None = Field(default=None, ge=0, le=2_000_000_000)
 
 
 class TaskCreate(BaseModel):

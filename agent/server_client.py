@@ -136,6 +136,13 @@ class ServerClient:
     def send_result(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._agent_request("POST", "/api/tasks/result", payload)
 
+    def send_automation_metric(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._agent_request(
+            "POST",
+            "/api/agent/automation-metrics",
+            {"agent_id": self.agent_id, **payload},
+        )
+
     def fetch_task_script(self, task_id: str) -> dict[str, Any]:
         return self._agent_request("GET", f"/api/agent/tasks/{task_id}/script", None)
 

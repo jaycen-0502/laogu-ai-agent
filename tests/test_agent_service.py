@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 
 from agent.agent_service import AgentService, AgentStateStore
+from agent.automation_statistics import AutomationStatisticsStore
 from agent.server_client import ServerClientError
 
 
@@ -29,6 +30,11 @@ class FakeClient:
         return list(self.tasks)
 
     def send_result(self, payload):
+        if not self.online: raise ServerClientError("offline")
+        self.results.append(payload)
+        return {"ok": True}
+
+    def send_automation_metric(self, payload):
         if not self.online: raise ServerClientError("offline")
         self.results.append(payload)
         return {"ok": True}
@@ -113,6 +119,28 @@ def test_server_disconnect_does_not_stop_local_components():
         assert service.cycle_once() is False
         assert service.status()["server"] == "OFFLINE"
         assert tasks.executions == 0
+
+
+def test_automation_metrics_remain_queued_offline_and_upload_after_reconnect():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        client = FakeClient()
+        store = AutomationStatisticsStore(Path(temp_dir) / "state.db")
+        store.record_result(
+            run_id="run-1", profile_id="p1", x_account_id="x1",
+            started_at=datetime.now().astimezone().isoformat(),
+            result={"status": "SUCCESS", "likes": 2, "views": 5},
+        )
+        service = AgentService(
+            client, FakeTaskService(), FakeRegistry(),
+            AgentStateStore(Path(temp_dir) / "state.db"),
+            automation_statistics=store,
+        )
+        client.online = False
+        assert service.flush_automation_metrics() == 0
+        assert len(store.pending()) == 1
+        client.online = True
+        assert service.flush_automation_metrics() == 1
+        assert store.pending() == []
 
 
 def test_pulled_tasks_are_submitted_as_one_concurrent_batch():

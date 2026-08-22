@@ -61,6 +61,35 @@ def test_auth_agent_heartbeat_account_task_and_idempotent_result():
         assert client.post("/api/agents/heartbeat", headers=auth("wrong-token"), json={"agent_id": registered["agent_id"], "timestamp": datetime.now().astimezone().isoformat()}).status_code == 401
 
 
+def test_agent_automation_metrics_are_idempotent_and_bound_to_synced_account():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        client = make_client(temp_dir)
+        _, _, _, registered = setup_workspace(client)
+        headers = auth(registered["agent_token"])
+        synced = client.post(
+            "/api/accounts/sync", headers=headers,
+            json={"agent_id": registered["agent_id"], "items": [{"profile_id": "profile-11", "x_username": "@one", "x_account_id": "x-11"}]},
+        )
+        assert synced.status_code == 200
+        timestamp = datetime.now().astimezone().isoformat()
+        payload = {
+            "agent_id": registered["agent_id"], "run_id": "run-11",
+            "profile_id": "profile-11", "x_account_id": "x-11",
+            "metric_date": datetime.now().astimezone().date().isoformat(),
+            "started_at": timestamp, "finished_at": timestamp, "status": "SUCCESS",
+            "processed_count": 7, "likes": 2, "follows": 1,
+            "comments": 0, "scanned_posts": 9,
+        }
+        first = client.post("/api/agent/automation-metrics", headers=headers, json=payload)
+        second = client.post("/api/agent/automation-metrics", headers=headers, json=payload)
+        assert first.status_code == 200 and first.json()["idempotent"] is False
+        assert second.status_code == 200 and second.json()["idempotent"] is True
+        mismatch = dict(payload, run_id="run-mismatch", x_account_id="somebody-else")
+        assert client.post("/api/agent/automation-metrics", headers=headers, json=mismatch).status_code == 409
+        missing = dict(payload, run_id="run-missing", profile_id="missing")
+        assert client.post("/api/agent/automation-metrics", headers=headers, json=missing).status_code == 409
+
+
 def test_workspace_permission_isolation_and_task_type_restriction():
     with tempfile.TemporaryDirectory() as temp_dir:
         client = make_client(temp_dir)

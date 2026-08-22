@@ -72,6 +72,7 @@ class AgentService:
         command_dispatcher=None,
         engine_cache_dir: Path | None = None,
         engine_auto_update: bool = False,
+        automation_statistics=None,
     ):
         self.server_client = server_client
         self.task_service = task_service
@@ -84,6 +85,7 @@ class AgentService:
         self.command_dispatcher = command_dispatcher
         self.engine_cache_dir = engine_cache_dir
         self.engine_auto_update = engine_auto_update
+        self.automation_statistics = automation_statistics
         self.server_status = "OFFLINE"
         self.agent_status = "UNREGISTERED" if not server_client.agent_id else "OFFLINE"
         self.last_heartbeat = ""
@@ -127,6 +129,23 @@ class AgentService:
         for payload in self.state_store.pending():
             self.server_client.send_result(payload)
             self.state_store.mark_uploaded(str(payload["task_id"]))
+            uploaded += 1
+        return uploaded
+
+    def flush_automation_metrics(self) -> int:
+        """Upload locally persisted counters; retain them when delivery fails."""
+        if self.automation_statistics is None:
+            return 0
+        uploaded = 0
+        for payload in self.automation_statistics.pending():
+            try:
+                self.server_client.send_automation_metric(payload)
+            except ServerClientError as exc:
+                if exc.status_code == 401:
+                    raise
+                LOGGER.info("Automation metric remains queued: %s", exc)
+                break
+            self.automation_statistics.mark_uploaded(str(payload["run_id"]))
             uploaded += 1
         return uploaded
 
@@ -272,6 +291,7 @@ class AgentService:
                     # healthy Agent appear offline or stop task processing.
                     LOGGER.info("Engine update unavailable; using local version: %s", exc)
             self.sync_accounts_once()
+            self.flush_automation_metrics()
             self.pull_and_execute_once()
             self.process_commands_once()
             return True
@@ -333,7 +353,7 @@ class AgentService:
             self._stop.wait(self.heartbeat_interval)
 
 
-def build_agent_service(task_service, account_registry):
+def build_agent_service(task_service, account_registry, *, automation_statistics=None):
     from .config import load_settings
     from .server_client import CredentialStore
 
@@ -358,4 +378,5 @@ def build_agent_service(task_service, account_registry):
         ),
         engine_cache_dir=settings.engine_cache_dir,
         engine_auto_update=settings.engine_auto_update,
+        automation_statistics=automation_statistics,
     )

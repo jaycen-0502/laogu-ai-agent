@@ -852,6 +852,35 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         audit(db, request, action="AGENT_DELETE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message=f"revoked_tokens={revoked}")
         return {"agent_id": agent.id, "status": "DELETED", "revoked": revoked}
 
+    @app.post("/api/agents/{agent_id}/recover")
+    def recover_agent(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Reactivate a deleted runtime with a fresh, one-time Token.
+
+        Recovery never restores an old credential or device binding. The next
+        successful heartbeat binds the new Token to the recovering Windows
+        device, preventing a deleted runtime from being silently reused.
+        """
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        require_agent_manager(request, db, user, agent)
+        if agent.status != "DELETED":
+            raise HTTPException(status_code=409, detail="Agent is not deleted")
+        issued = now()
+        for old in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
+            old.status = TOKEN_REVOKED
+            old.revoked_at = issued
+        agent.status = "OFFLINE"
+        agent.bound_device_id = None
+        agent.bound_ip = None
+        agent.bound_at = None
+        agent.last_heartbeat = None
+        agent.last_ip = None
+        raw_token, token = create_token(db, agent.id)
+        db.commit()
+        audit(db, request, action="AGENT_RECOVER", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message="new token issued; device binding reset")
+        return {"agent_id": agent.id, "token_id": token.token_id, "agent_token": raw_token, "workspace_id": agent.workspace_id, "status": agent.status}
+
     @app.post("/api/agents/heartbeat")
     def heartbeat(request: Request, body: Heartbeat, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         if body.agent_id != agent.id: deny(request, db, action="AGENT_HEARTBEAT", agent=agent)

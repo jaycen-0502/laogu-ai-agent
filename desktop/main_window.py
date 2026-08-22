@@ -4,7 +4,7 @@ from datetime import datetime
 import json
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QProgressDialog,
     QLineEdit,
     QSplitter,
     QStyle,
@@ -128,6 +129,7 @@ class AgentReauthDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
+    engine_progress_signal = Signal(int, str)
     HEADERS = (
         "Profile",
         "Profile ID",
@@ -144,6 +146,8 @@ class MainWindow(QMainWindow):
         self.controller = controller or DesktopController()
         self.thread_pool = QThreadPool.globalInstance()
         self._workers: set[FunctionWorker] = set()
+        self._engine_progress_dialog: QProgressDialog | None = None
+        self.engine_progress_signal.connect(self._engine_progress)
         self._closing = False
         self._active_jobs = 0
         self._profiles: list[dict[str, Any]] = []
@@ -437,6 +441,10 @@ class MainWindow(QMainWindow):
         self.automation_button = self._button("配置并运行自动化", QStyle.SP_MediaPlay)
         self.automation_button.setObjectName("primaryButton")
         action_layout.addWidget(self.automation_button, 2, 0, 1, 4)
+        self.engine_update_button = self._button("检查脚本更新", QStyle.SP_BrowserReload)
+        self.engine_update_label = QLabel("自动化脚本：尚未检查", objectName="summary")
+        action_layout.addWidget(self.engine_update_button, 3, 0, 1, 4)
+        action_layout.addWidget(self.engine_update_label, 4, 0, 1, 4)
         left_layout.addWidget(action_panel)
 
         runtime_panel = QFrame(objectName="runtimePanel")
@@ -519,6 +527,7 @@ class MainWindow(QMainWindow):
         self.run_all_button.clicked.connect(self.start_all)
         self.stop_all_button.clicked.connect(self.stop_all)
         self.automation_button.clicked.connect(self.configure_and_run_automation)
+        self.engine_update_button.clicked.connect(self.check_automation_engine_update)
         self.reauth_button.clicked.connect(self.reauthenticate_agent)
         self.check_login_button.clicked.connect(self.run_check_login)
         self.read_profile_button.clicked.connect(self.run_read_profile)
@@ -943,9 +952,37 @@ class MainWindow(QMainWindow):
         worker = FunctionWorker(function)
         self._workers.add(worker)
         worker.signals.finished.connect(on_finished)
+        worker.signals.progress.connect(self._engine_progress)
         worker.signals.error.connect(lambda message: self._job_failed(label, message))
         worker.signals.done.connect(lambda: self._job_done(worker))
         self.thread_pool.start(worker)
+
+    def check_automation_engine_update(self) -> None:
+        self._run_job("检查自动化脚本版本", self.controller.automation_engine_update_status, self._engine_update_checked)
+
+    def _engine_update_checked(self, status: Any) -> None:
+        if not status.get("update_available"):
+            self.engine_update_label.setText("自动化脚本：已是最新")
+            return
+        if QMessageBox.question(self, "发现脚本更新", "Web 后台有新的自动化脚本，是否下载并替换？") != QMessageBox.StandardButton.Yes:
+            return
+        self._engine_progress_dialog = QProgressDialog("正在准备下载…", "", 0, 100, self)
+        self._engine_progress_dialog.setWindowTitle("正在更新自动化脚本")
+        self._engine_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self._engine_progress_dialog.setAutoClose(False)
+        self._run_job("下载并替换自动化脚本", lambda: self.controller.download_automation_engine_update(progress=self.engine_progress_signal.emit), self._engine_update_finished)
+
+    def _engine_progress(self, value: int, message: str = "") -> None:
+        if self._engine_progress_dialog is None: return
+        self._engine_progress_dialog.setValue(max(0, min(100, int(value))))
+        if message: self._engine_progress_dialog.setLabelText(message)
+
+    def _engine_update_finished(self, status: Any) -> None:
+        if self._engine_progress_dialog:
+            self._engine_progress_dialog.close(); self._engine_progress_dialog.deleteLater(); self._engine_progress_dialog = None
+        self.engine_update_label.setText("自动化脚本：替换成功，请重启控制中心")
+        self.engine_update_button.setEnabled(False)
+        QMessageBox.information(self, "脚本更新完成", "脚本已下载并替换成功。请重启控制中心后使用。")
 
     def _job_done(self, worker: FunctionWorker) -> None:
         self._workers.discard(worker)
@@ -967,6 +1004,7 @@ class MainWindow(QMainWindow):
             self.read_timeline_button,
             self.search_button,
             self.automation_button,
+            self.engine_update_button,
             self.reauth_button,
         ):
             button.setEnabled(not busy)

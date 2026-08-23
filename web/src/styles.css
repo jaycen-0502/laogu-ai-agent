@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   font-family: Inter, "Microsoft YaHei UI", system-ui, sans-serif;
   color: #17202a;
   background: #f3f6f8;
@@ -301,6 +301,18 @@ nav a.active {
 .toolbar.compact {
   margin-bottom: 0;
 }
+
+.translation-toolbar {
+  display: flex; align-items: end; gap: 12px; margin-bottom: 18px;
+}
+.translation-toolbar label,
+.translation-columns label {
+  display: flex; flex: 1; flex-direction: column; gap: 7px; color: #51636e; font-size: 13px; font-weight: 600;
+}
+.translation-toolbar select { min-width: 180px; }
+.translation-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.translation-columns textarea { width: 100%; min-height: 280px; resize: vertical; box-sizing: border-box; }
+.translation-columns .muted { font-weight: 400; }
 .toolbar input {
   width: 310px;
 }
@@ -1423,3 +1435,4 @@ label {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
 }
+

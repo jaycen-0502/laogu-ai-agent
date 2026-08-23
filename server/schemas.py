@@ -90,7 +90,7 @@ class UserUpdate(BaseModel):
 
 
 class UserAIPolicyUpdate(BaseModel):
-    feature: Literal["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"]
+    feature: Literal["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES", "TRANSLATE"]
     enabled: bool = True
     provider_id: str | None = None
     model: str | None = Field(default=None, max_length=160)
@@ -278,6 +278,17 @@ class AIImageGenerate(BaseModel):
     quality: Literal["low", "medium", "high"] = "medium"
 
 
+
+TRANSLATION_LANGUAGES = Literal[
+    "auto", "zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"
+]
+
+class AITranslateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    source_language: TRANSLATION_LANGUAGES = "auto"
+    target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"] = "zh-CN"
+    provider_id: str | None = Field(default=None, max_length=32)
+    model: str | None = Field(default=None, max_length=160)
 class AIAccountAnalysisCreate(BaseModel):
     account_id: str = Field(min_length=1, max_length=32)
     provider_id: str | None = Field(default=None, max_length=32)
@@ -324,5 +335,6 @@ class AITaskProposalCreate(BaseModel):
     provider_id: str | None = Field(default=None, max_length=32)
     model: str | None = Field(default=None, max_length=160)
     timeout: int = Field(default=60, ge=1, le=300)
+
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 import os
@@ -39,6 +39,7 @@ class ServerSettings:
     rate_limit_ai_analysis: int = 10
     rate_limit_ai_writing: int = 10
     rate_limit_ai_task_proposal: int = 10
+    rate_limit_ai_translate: int = 20
     license_issuer_public_key: str = ""
     license_issuer_private_key_file: str = ""
     license_issuer_key_password_file: str = ""
@@ -82,6 +83,7 @@ def load_server_settings() -> ServerSettings:
         rate_limit_ai_analysis=int(os.getenv("LAOGU_RATE_LIMIT_AI_ANALYSIS", "10")),
         rate_limit_ai_writing=int(os.getenv("LAOGU_RATE_LIMIT_AI_WRITING", "10")),
         rate_limit_ai_task_proposal=int(os.getenv("LAOGU_RATE_LIMIT_AI_TASK_PROPOSAL", "10")),
+        rate_limit_ai_translate=int(os.getenv("LAOGU_RATE_LIMIT_AI_TRANSLATE", "20")),
         license_issuer_public_key=os.getenv("LAOGU_LICENSE_ISSUER_PUBLIC_KEY", "").strip(),
         license_issuer_private_key_file=os.getenv("LAOGU_LICENSE_ISSUER_PRIVATE_KEY_FILE", "").strip(),
         license_issuer_key_password_file=os.getenv("LAOGU_LICENSE_ISSUER_KEY_PASSWORD_FILE", "").strip(),
@@ -89,3 +91,4 @@ def load_server_settings() -> ServerSettings:
         rate_limit_license_check=int(os.getenv("LAOGU_RATE_LIMIT_LICENSE_CHECK", "300")),
         license_check_retention_days=int(os.getenv("LAOGU_LICENSE_CHECK_RETENTION_DAYS", "30")),
     )
+

@@ -302,7 +302,7 @@ class TelegramBindingUpdate(BaseModel):
     workspace_id: str = Field(min_length=1, max_length=32)
     bot_token: str | None = Field(default=None, min_length=20, max_length=500)
     admin_telegram_user_id: str = Field(min_length=1, max_length=32)
-    default_target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"] = "zh-CN"
+    default_target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR", "zh-ja-auto"] = "zh-CN"
     enabled: bool = False
 
 

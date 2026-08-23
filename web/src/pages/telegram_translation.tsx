@@ -4,7 +4,7 @@ import type { Page, Workspace } from "../types";
 
 type Binding = { configured: boolean; workspace_id: string; enabled: boolean; bot_token_last4: string; admin_telegram_user_id: string; default_target_language: string; last_error: string; last_poll_at: string | null };
 type AllowedUser = { id: string; telegram_user_id: string; username: string; display_name: string; enabled: boolean; created_at: string };
-const languages = [["zh-CN", "简体中文"], ["zh-TW", "繁体中文"], ["en", "English"], ["ja", "日本語"], ["ko", "한국어"], ["fr", "Français"], ["de", "Deutsch"], ["es", "Español"], ["ru", "Русский"], ["pt-BR", "Português (Brasil)"]] as const;
+const languages = [["zh-ja-auto", "中日双向自动识别"], ["zh-CN", "简体中文"], ["zh-TW", "繁体中文"], ["en", "English"], ["ja", "日本語"], ["ko", "한국어"], ["fr", "Français"], ["de", "Deutsch"], ["es", "Español"], ["ru", "Русский"], ["pt-BR", "Português (Brasil)"]] as const;
 const errorMessage = (error: unknown) => error instanceof ApiError ? error.message : "请求失败，请稍后重试";
 
 export function TelegramTranslationPage() {
@@ -89,6 +89,6 @@ export function TelegramTranslationPage() {
       <label>备注<input value={newUser.display_name} onChange={(event) => setNewUser({ ...newUser, display_name: event.target.value })} /></label>
     </div><button className="primary" disabled={busy === "add" || !binding?.configured}>授权用户</button></form>
     <section className="panel"><h2>已授权用户</h2>{allowedUsers.length ? <div className="table-wrap"><table><thead><tr><th>用户 ID</th><th>用户名</th><th>备注</th><th>操作</th></tr></thead><tbody>{allowedUsers.map((item) => <tr key={item.id}><td className="mono">{item.telegram_user_id}</td><td>{item.username ? `@${item.username}` : "-"}</td><td>{item.display_name || "-"}</td><td><button className="danger-button" onClick={() => void remove(item)} disabled={busy === item.id}>取消授权</button></td></tr>)}</tbody></table></div> : <div className="empty">暂无授权用户</div>}</section>
-    <section className="panel"><h2>使用方法</h2><p>直接发送文本使用默认语言翻译；<code>/to en 文本</code> 可临时指定目标语言。</p></section>
+    <section className="panel"><h2>使用方法</h2><p>选择“中日双向自动识别”后，中文会自动翻译成日语，日语会自动翻译成中文；<code>/to en 文本</code> 可临时指定其他目标语言。</p></section>
   </>;
 }

@@ -14,6 +14,22 @@ import httpx
 SUPPORTED_PROVIDER_TYPES = frozenset({"OPENAI", "OPENAI_COMPATIBLE"})
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 
+# Suggestions only: providers may expose additional model IDs. The API never
+# treats this list as an allowlist, so OpenAI-compatible relays remain usable.
+COMMON_MODEL_SUGGESTIONS = (
+    "gpt-5.4-2026-03-05",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+    "gpt-5.6",
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-image-1",
+    "gpt-image-1.5",
+    "gpt-image-2",
+    "apt-imaae-2",
+)
+
 
 class CredentialError(RuntimeError):
     pass
@@ -106,7 +122,7 @@ class AIProviderTester:
     def _validate_destination(self, base_url: str) -> None:
         validate_provider_destination(base_url, production=self.production)
 
-    def test(self, base_url: str, api_key: str, *, default_model: str = "") -> dict:
+    def test(self, base_url: str, api_key: str, *, default_model: str = "", configured_models: list[str] | None = None) -> dict:
         self._validate_destination(base_url)
         started = time.monotonic()
         try:
@@ -122,7 +138,9 @@ class AIProviderTester:
             raise ProviderConnectionError("AI provider connection failed") from exc
         if response.status_code == 401:
             raise ProviderConnectionError("AI provider authentication failed (HTTP 401)")
-        if response.status_code >= 400:
+        # A number of OpenAI-compatible relays intentionally omit /models;
+        # authenticate by probing /responses below instead of rejecting them.
+        if response.status_code >= 400 and response.status_code not in {404, 405}:
             raise ProviderConnectionError(f"AI provider returned HTTP {response.status_code}")
         try:
             payload = response.json()
@@ -140,22 +158,29 @@ class AIProviderTester:
             configured_model = str(default_model or "").strip()
             if not configured_model:
                 raise ProviderConnectionError("AI provider returned an invalid model list")
-            try:
-                probe = httpx.get(
-                    f"{base_url.rstrip('/')}/responses",
-                    headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
-                    timeout=self.timeout_seconds,
-                    follow_redirects=False,
-                )
-            except httpx.TimeoutException as exc:
-                raise ProviderConnectionError("AI provider connection timed out") from exc
-            except httpx.HTTPError as exc:
-                raise ProviderConnectionError("AI provider connection failed") from exc
-            if probe.status_code == 401:
-                raise ProviderConnectionError("AI provider authentication failed (HTTP 401)")
-            if probe.status_code not in {200, 400, 405, 422, 426}:
-                raise ProviderConnectionError(f"AI provider returned HTTP {probe.status_code}")
+            probe_status = 404
+            for endpoint in ("responses", "chat/completions"):
+                try:
+                    probe = httpx.get(
+                        f"{base_url.rstrip('/')}/{endpoint}",
+                        headers={"Authorization": f"Bearer {api_key}", "Accept": "application/json"},
+                        timeout=self.timeout_seconds,
+                        follow_redirects=False,
+                    )
+                except httpx.TimeoutException as exc:
+                    raise ProviderConnectionError("AI provider connection timed out") from exc
+                except httpx.HTTPError as exc:
+                    raise ProviderConnectionError("AI provider connection failed") from exc
+                probe_status = probe.status_code
+                if probe_status == 401:
+                    raise ProviderConnectionError("AI provider authentication failed (HTTP 401)")
+                if probe_status in {200, 400, 405, 422, 426}:
+                    break
+            if probe_status not in {200, 400, 405, 422, 426}:
+                raise ProviderConnectionError(f"AI provider returned HTTP {probe_status}")
             models = [configured_model]
+        configured = [str(item).strip() for item in (configured_models or []) if str(item).strip()]
+        models = list(dict.fromkeys([*models, *configured]))[:500]
         return {
             "status": "SUCCESS",
             "models": models,

@@ -180,6 +180,40 @@ def test_connection_failure_is_safe_and_does_not_leak_key():
     assert "[REDACTED]" in response.json()["error"]
 
 
+def test_fetch_models_refreshes_catalog_without_returning_api_key():
+    env = make_env()
+    item = create_provider(env)
+    calls = []
+
+    class FakeTester:
+        def test(self, base_url, api_key, *, default_model=""):
+            calls.append((base_url, api_key, default_model))
+            return {"status": "SUCCESS", "models": ["relay-model-b", "relay-model-a"], "latency_ms": 7}
+
+    env["client"].app.state.ai_provider_tester = FakeTester()
+    response = env["client"].post(
+        f"/api/ai/providers/{item['provider_id']}/models",
+        headers=auth(env["owner"]),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["models"] == ["relay-model-b", "relay-model-a"]
+    assert API_KEY not in response.text
+    assert calls == [("https://api.openai.com/v1", API_KEY, "gpt-test")]
+    detail = env["client"].get(f"/api/ai/providers/{item['provider_id']}", headers=auth(env["owner"])).json()
+    assert detail["models"] == ["relay-model-b", "relay-model-a"]
+    actions = {row["action"] for row in env["client"].get("/api/audit", headers=auth(env["owner"])).json()}
+    assert "AI_PROVIDER_MODELS_FETCHED" in actions
+
+
+def test_fetch_models_requires_provider_manager_permissions():
+    env = make_env()
+    item = create_provider(env)
+    assert env["client"].post(
+        f"/api/ai/providers/{item['provider_id']}/models",
+        headers=auth(env["member"]),
+    ).status_code == 403
+
+
 def test_disabled_provider_can_be_deleted_but_enabled_provider_cannot():
     env = make_env()
     disabled = create_provider(env, name="Delete Me")

@@ -1,4 +1,4 @@
-export type Role = "ADMIN" | "OWNER" | "MEMBER";
+﻿export type Role = "ADMIN" | "OWNER" | "MEMBER";
 export type User = {
   user_id: string;
   username: string;
@@ -324,7 +324,7 @@ export type AIProvider = {
   api_key_masked: string;
   has_api_key: boolean;
   default_model: string;
-  models: string[];
+  models: string[];`r`n  models: string[];
   status: "ENABLED" | "DISABLED";
   is_default: boolean;
   last_test_status: "UNKNOWN" | "SUCCESS" | "FAILED";
@@ -377,7 +377,7 @@ export type AIImage = {
   user_id: string;
   provider_id: string;
   provider_name: string;
-  model: "gpt-image-2";
+  model: string;
   prompt: string;
   resolution: "1K" | "2K";
   size: string;
@@ -494,3 +494,4 @@ export type AITaskProposal = {
   created_at: string;
   completed_at: string | null;
 };
+

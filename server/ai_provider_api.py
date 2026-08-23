@@ -26,6 +26,19 @@ def _dt(value):
     return value.isoformat() if value else None
 
 
+def _clean_models(values) -> list[str]:
+    """Normalize administrator-entered IDs without imposing a model allowlist."""
+    result: list[str] = []
+    for value in values or []:
+        model = str(value or "").strip()
+        if not model or len(model) > 160 or model in result:
+            continue
+        result.append(model)
+        if len(result) >= 500:
+            break
+    return result
+
+
 def _provider_dict(item: AIProvider) -> dict:
     return {
         "provider_id": item.id,
@@ -36,7 +49,7 @@ def _provider_dict(item: AIProvider) -> dict:
         "api_key_masked": f"****{item.api_key_last4}" if item.api_key_last4 else "",
         "has_api_key": bool(item.api_key_encrypted),
         "default_model": item.default_model,
-        "models": item.available_models or [],
+        "models": _clean_models(item.available_models),
         "status": item.status,
         "is_default": item.is_default,
         "last_test_status": item.last_test_status,
@@ -115,6 +128,33 @@ def register_ai_provider_routes(
         db.flush()
         item.is_default = True
 
+    def probe_provider(item: AIProvider) -> dict:
+        """Fetch a provider's model catalog without exposing its API key."""
+        try:
+            api_key = cipher.decrypt(item.api_key_encrypted)
+            try:
+                return app.state.ai_provider_tester.test(
+                    item.base_url,
+                    api_key,
+                    default_model=item.default_model,
+                    configured_models=item.available_models or [],
+                )
+            except TypeError as exc:
+                # Keep compatibility with injected/legacy tester adapters that
+                # predate the optional configured_models argument.
+                if "configured_models" not in str(exc):
+                    raise
+                return app.state.ai_provider_tester.test(
+                    item.base_url,
+                    api_key,
+                    default_model=item.default_model,
+                )
+        except CredentialError:
+            return {"status": "FAILED", "models": [], "error": "AI credential cannot be decrypted"}
+        except ProviderConnectionError as exc:
+            safe_error = str(exc).replace(api_key, "[REDACTED]")[:200]
+            return {"status": "FAILED", "models": [], "error": safe_error}
+
     @app.get("/api/ai/providers")
     def list_providers(
         q: str = "",
@@ -178,7 +218,7 @@ def register_ai_provider_routes(
             api_key_encrypted=encrypted,
             api_key_last4=body.api_key[-4:],
             default_model=body.default_model.strip(),
-            available_models=[],
+            available_models=_clean_models([body.default_model, *body.models]),
             status=status,
             is_default=False,
             created_by=user.id,
@@ -204,7 +244,7 @@ def register_ai_provider_routes(
         item = visible_provider(provider_id, user, db)
         require_manager(request, user, db, item.workspace_id)
         updates = body.model_dump(exclude_unset=True)
-        for key in ("name", "provider_type", "base_url", "api_key", "status", "is_default"):
+        for key in ("name", "provider_type", "base_url", "api_key", "status", "is_default", "models"):
             if key in updates and updates[key] is None:
                 raise HTTPException(status_code=422, detail=f"{key} cannot be null")
         next_type = checked_type(str(updates.get("provider_type", item.provider_type)))
@@ -232,6 +272,10 @@ def register_ai_provider_routes(
             item.available_models = []
         if "default_model" in updates:
             item.default_model = str(updates["default_model"] or "").strip()
+        if "models" in updates:
+            item.available_models = _clean_models([item.default_model, *(updates.get("models") or [])])
+        elif "default_model" in updates:
+            item.available_models = _clean_models([item.default_model, *(item.available_models or [])])
         item.status = next_status
         if next_status == "DISABLED":
             item.is_default = False
@@ -253,18 +297,7 @@ def register_ai_provider_routes(
     ):
         item = visible_provider(provider_id, user, db)
         require_manager(request, user, db, item.workspace_id)
-        try:
-            api_key = cipher.decrypt(item.api_key_encrypted)
-            result = app.state.ai_provider_tester.test(
-                item.base_url,
-                api_key,
-                default_model=item.default_model,
-            )
-        except CredentialError:
-            result = {"status": "FAILED", "models": [], "error": "AI credential cannot be decrypted"}
-        except ProviderConnectionError as exc:
-            safe_error = str(exc).replace(api_key, "[REDACTED]")[:200]
-            result = {"status": "FAILED", "models": [], "error": safe_error}
+        result = probe_provider(item)
         item.last_test_status = result["status"]
         item.last_tested_at = now()
         item.last_error = str(result.get("error") or "")[:200]
@@ -274,6 +307,37 @@ def register_ai_provider_routes(
         db.commit()
         audit(db, request, action="AI_PROVIDER_TESTED", result=result["status"], user_id=user.id, workspace_id=item.workspace_id, resource_type="ai_provider", resource_id=item.id, message=item.last_error)
         return result | {"provider_id": item.id, "tested_at": _dt(item.last_tested_at)}
+
+    @app.post("/api/ai/providers/{provider_id}/models")
+    def fetch_provider_models(
+        provider_id: str,
+        request: Request,
+        user: User = Depends(current_user),
+        db: Session = Depends(get_db),
+    ):
+        """Refresh and persist the model catalog from an AI relay/provider."""
+        item = visible_provider(provider_id, user, db)
+        require_manager(request, user, db, item.workspace_id)
+        result = probe_provider(item)
+        item.last_test_status = result["status"]
+        item.last_tested_at = now()
+        item.last_error = str(result.get("error") or "")[:200]
+        if result["status"] == "SUCCESS":
+            item.available_models = _clean_models(result.get("models") or [])
+        item.updated_at = now()
+        db.commit()
+        audit(
+            db,
+            request,
+            action="AI_PROVIDER_MODELS_FETCHED",
+            result=result["status"],
+            user_id=user.id,
+            workspace_id=item.workspace_id,
+            resource_type="ai_provider",
+            resource_id=item.id,
+            message=item.last_error,
+        )
+        return result | {"provider_id": item.id, "fetched_at": _dt(item.last_tested_at)}
 
     @app.delete("/api/ai/providers/{provider_id}")
     def delete_provider(

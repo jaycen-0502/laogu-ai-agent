@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any, Literal
@@ -242,7 +242,7 @@ class AIProviderCreate(BaseModel):
     base_url: str = Field(default="", max_length=500)
     api_key: str = Field(min_length=1, max_length=1000)
     default_model: str = Field(default="", max_length=160)
-    status: str = "DISABLED"
+    models: list[str] = Field(default_factory=list, max_length=500)`r`n    status: str = "DISABLED"
     is_default: bool = False
     workspace_id: str | None = None
 
@@ -271,7 +271,7 @@ class ChatMessageCreate(BaseModel):
 class AIImageGenerate(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     provider_id: str | None = Field(default=None, max_length=32)
-    resolution: Literal["1K", "2K"] = "1K"
+    model: str | None = Field(default=None, max_length=160)`r`n    resolution: Literal["1K", "2K"] = "1K"
     quality: Literal["low", "medium", "high"] = "medium"
 
 
@@ -321,3 +321,4 @@ class AITaskProposalCreate(BaseModel):
     provider_id: str | None = Field(default=None, max_length=32)
     model: str | None = Field(default=None, max_length=160)
     timeout: int = Field(default=60, ge=1, le=300)
+

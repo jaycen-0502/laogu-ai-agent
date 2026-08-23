@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, ApiError } from "../api/client";
 import type { AIProvider, Page, User, Workspace } from "../types";
 
 const MODEL_SUGGESTIONS = [
-  "gpt-5.4-2026-03-05", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6",
-  "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-image-1",
-  "gpt-image-1.5", "gpt-image-2", "apt-imaae-2",
+  "codex-auto-review", "gpt-4o-audio-preview", "gpt-4o-realtime-preview",
+  "gpt-5.2", "gpt-5.2-2025-12-11", "gpt-5.2-chat-latest", "gpt-5.2-pro",
+  "gpt-5.2-pro-2025-12-11", "gpt-5.4", "gpt-5.4-2026-03-05", "gpt-5.4-mini",
+  "gpt-5.5", "gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
+  "gpt-image-1", "gpt-image-1.5", "gpt-image-2",
 ];
 
 
@@ -52,6 +54,68 @@ const emptyForm = (workspaceId = ""): FormState => ({
   workspace_id: workspaceId,
 });
 
+function parseModels(value: string) {
+  return Array.from(new Set(value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)));
+}
+
+function ModelCombobox({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const normalizedValue = value.trim().toLowerCase();
+  const filtered = useMemo(
+    () => options.filter((model) => !normalizedValue || model.toLowerCase().includes(normalizedValue)).slice(0, 80),
+    [normalizedValue, options],
+  );
+
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  return (
+    <div className="model-combobox" ref={rootRef}>
+      <input
+        value={value}
+        placeholder="例如 gpt-5.4 或中转站自定义模型名"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        onFocus={() => setOpen(true)}
+        onChange={(event) => { onChange(event.target.value); setOpen(true); }}
+        onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}
+      />
+      {open && filtered.length > 0 && (
+        <div className="model-combobox-menu" role="listbox">
+          {filtered.map((model) => (
+            <button
+              type="button"
+              className="model-combobox-option"
+              role="option"
+              aria-selected={model === value}
+              key={model}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { onChange(model); setOpen(false); }}
+            >
+              {model}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AIProvidersPage({ user }: { user: User }) {
   const canManage = user.role !== "MEMBER";
   const [data, setData] = useState<Page<AIProvider> | null>(null);
@@ -65,6 +129,10 @@ export function AIProvidersPage({ user }: { user: User }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const modelOptions = useMemo(() => {
+    const configured = (data?.items || []).flatMap((item) => [...(item.models || []), item.default_model]);
+    return Array.from(new Set([...MODEL_SUGGESTIONS, ...configured].map((model) => model.trim()).filter(Boolean)));
+  }, [data]);
 
   const load = useCallback(async () => {
     const query = new URLSearchParams({
@@ -129,8 +197,8 @@ export function AIProvidersPage({ user }: { user: User }) {
         name: form.name,
         provider_type: form.provider_type,
         base_url: form.provider_type === "OPENAI" && !form.base_url.trim() ? "" : form.base_url,
-        default_model: form.default_model,
-        models: Array.from(new Set(form.models_text.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean))),
+        default_model: form.default_model.trim(),
+        models: Array.from(new Set([...parseModels(form.models_text), form.default_model.trim()].filter(Boolean))),
         status: form.status,
         is_default: form.is_default,
       };
@@ -275,12 +343,12 @@ export function AIProvidersPage({ user }: { user: User }) {
             </label>
             <label>
               默认模型
-              <input
+              <ModelCombobox
                 value={form.default_model}
-                placeholder="例如 gpt-5.4"
-                list="provider-models"
-                onChange={(event) => setForm({ ...form, default_model: event.target.value })}
+                options={Array.from(new Set([...modelOptions, ...parseModels(form.models_text)]))}
+                onChange={(default_model) => setForm({ ...form, default_model })}
               />
+              <small className="muted">可搜索已有模型，也可以直接输入中转站提供的任意模型 ID。</small>
             </label>
             <label>
               支持的模型（每行一个，也可填写中转站自定义模型）
@@ -316,10 +384,6 @@ export function AIProvidersPage({ user }: { user: User }) {
           <option value="DISABLED">已禁用</option>
         </select>
       </div>
-
-      <datalist id="provider-models">
-        {Array.from(new Set([...MODEL_SUGGESTIONS, ...(data?.items || []).flatMap((item) => item.models)])).map((model) => <option key={model} value={model} />)}
-      </datalist>
 
       <div className="table-wrap">
         <table>

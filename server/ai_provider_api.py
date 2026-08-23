@@ -302,7 +302,11 @@ def register_ai_provider_routes(
         item.last_tested_at = now()
         item.last_error = str(result.get("error") or "")[:200]
         if result["status"] == "SUCCESS":
-            item.available_models = list(result.get("models") or [])[:500]
+            item.available_models = _clean_models([
+                item.default_model,
+                *(item.available_models or []),
+                *(result.get("models") or []),
+            ])
         item.updated_at = now()
         db.commit()
         audit(db, request, action="AI_PROVIDER_TESTED", result=result["status"], user_id=user.id, workspace_id=item.workspace_id, resource_type="ai_provider", resource_id=item.id, message=item.last_error)
@@ -323,7 +327,11 @@ def register_ai_provider_routes(
         item.last_tested_at = now()
         item.last_error = str(result.get("error") or "")[:200]
         if result["status"] == "SUCCESS":
-            item.available_models = _clean_models(result.get("models") or [])
+            item.available_models = _clean_models([
+                item.default_model,
+                *(item.available_models or []),
+                *(result.get("models") or []),
+            ])
         item.updated_at = now()
         db.commit()
         audit(

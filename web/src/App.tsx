@@ -26,6 +26,7 @@ const AITasksPage = lazy(() => import("./pages/ai_tasks").then((module) => ({ de
 const ControlCenterPage = lazy(() => import("./pages/control_center").then((module) => ({ default: module.ControlCenterPage })));
 const OpsMetricsPage = lazy(() => import("./pages/ops_metrics").then((module) => ({ default: module.OpsMetricsPage })));
 const LicensesPage = lazy(() => import("./pages/licenses").then((module) => ({ default: module.LicensesPage })));
+const TelegramTranslationPage = lazy(() => import("./pages/telegram_translation").then((module) => ({ default: module.TelegramTranslationPage })));
 
 const menu = [
   ["/ai/chat", "AI 聊天", ["ADMIN", "OWNER", "MEMBER"]],
@@ -37,6 +38,7 @@ const menu = [
   ["/control-center", "统一控制中心", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ops", "运维监控", ["ADMIN"]],
   ["/licenses", "远程授权", ["ADMIN"]],
+  ["/telegram-translation", "Telegram 翻译", ["ADMIN"]],
   ["/ai-providers", "AI 服务商", ["ADMIN", "OWNER", "MEMBER"]],
   ["/dashboard", "控制台", ["ADMIN", "OWNER", "MEMBER"]],
   ["/workspaces", "工作区", ["ADMIN", "OWNER", "MEMBER"]],
@@ -200,6 +202,7 @@ export default function App() {
         <Route path="control-center" element={<Suspense fallback={<div className="loading">正在加载统一控制中心…</div>}><ControlCenterPage /></Suspense>} />
         <Route path="ops" element={<Suspense fallback={<div className="loading">正在加载运维监控…</div>}><OpsMetricsPage /></Suspense>} />
         <Route path="licenses" element={<Suspense fallback={<div className="loading">正在加载远程授权…</div>}><LicensesPage /></Suspense>} />
+        <Route path="telegram-translation" element={<Suspense fallback={<div className="loading">正在加载 Telegram 翻译…</div>}><TelegramTranslationPage /></Suspense>} />
         <Route path="ai-providers" element={<Suspense fallback={<div className="loading">正在加载 AI 服务商…</div>}><AIProvidersPage user={user!} /></Suspense>} />
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />

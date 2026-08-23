@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .models import AIProvider, User, UserAIPolicy
 
-FEATURES = ("CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES")
+FEATURES = ("CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES", "TRANSLATE")
 DEFAULT_MEMBER_FEATURES = {"CHAT", "WRITING", "ANALYSIS", "TASKS"}
 
 
@@ -73,3 +73,4 @@ def resolve_provider(
 
 def public_permissions(db: Session, user: User) -> dict[str, bool]:
     return {feature: feature_enabled(db, user, feature) for feature in FEATURES}
+

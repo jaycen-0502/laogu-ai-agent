@@ -34,6 +34,7 @@ from .engine_update_api import register_engine_update_routes
 from .writing_api import register_writing_routes
 from .writing_service import AIWritingService
 from .task_proposal_api import register_task_proposal_routes
+from .translation_api import register_translation_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
@@ -295,6 +296,9 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if request.url.path == "/api/ai/task-proposals":
             limit = settings.rate_limit_ai_task_proposal
             rate_bucket = "/api/ai/task-proposals"
+        if request.url.path == "/api/ai/translate":
+            limit = settings.rate_limit_ai_translate
+            rate_bucket = "/api/ai/translate"
         if request.url.path == "/api/license/issue" and request.method == "POST":
             limit = settings.rate_limit_license_issue
             rate_bucket = "/api/license/issue"
@@ -319,11 +323,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
                         member = None
                     if member and member.status == "ACTIVE" and member.role == "MEMBER":
                         path = request.url.path
-                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/ai/chat", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
+                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/ai/chat", "/api/ai/translate", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
                         if not path.startswith(allowed):
                             return secure_response(403, "该账号无权访问此功能")
                         feature_by_prefix = {
                             "/api/ai/chat": "CHAT",
+            "/api/ai/translate": "TRANSLATE",
                             "/api/ai/writing": "WRITING",
                             "/api/ai/analysis": "ANALYSIS",
                             "/api/ai/task-proposals": "TASKS",
@@ -1209,6 +1214,13 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         proposal_service=task_proposal_service,
         task_serializer=_task_dict,
     )
+    register_translation_routes(
+        app,
+        get_db=get_db,
+        current_user=current_user,
+        cipher=credential_cipher,
+        ai_service=ai_service,
+    )
     register_control_routes(
         app,
         get_db=get_db,
@@ -1237,3 +1249,4 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
 
 
 app = create_app()
+

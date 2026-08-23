@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+﻿import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Link,
   Navigate,
@@ -18,6 +18,7 @@ const ScriptEditorPage = lazy(() => import("./pages/scripts").then((module) => (
 const ScriptRunsPage = lazy(() => import("./pages/scripts").then((module) => ({ default: module.ScriptRunsPage })));
 const AIProvidersPage = lazy(() => import("./pages/ai_providers").then((module) => ({ default: module.AIProvidersPage })));
 const AIChatPage = lazy(() => import("./pages/ai_chat").then((module) => ({ default: module.AIChatPage })));
+const AITranslationPage = lazy(() => import("./pages/ai_translation").then((module) => ({ default: module.AITranslationPage })));
 const AIImagesPage = lazy(() => import("./pages/ai_images").then((module) => ({ default: module.AIImagesPage })));
 const AIAnalysisPage = lazy(() => import("./pages/ai_analysis").then((module) => ({ default: module.AIAnalysisPage })));
 const AIWritingPage = lazy(() => import("./pages/ai_writing").then((module) => ({ default: module.AIWritingPage })));
@@ -28,6 +29,7 @@ const LicensesPage = lazy(() => import("./pages/licenses").then((module) => ({ d
 
 const menu = [
   ["/ai/chat", "AI 聊天", ["ADMIN", "OWNER", "MEMBER"]],
+  ["/ai/translation", "AI 翻译", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/images", "AI 生图", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/analysis", "AI 分析", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/writing", "AI 话术", ["ADMIN", "OWNER", "MEMBER"]],
@@ -64,12 +66,12 @@ function Layout({ user }: { user: User }) {
     authStore.clear();
     navigate("/login");
   };
-  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
+  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/translation", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
   const canSee = (path: string, roles: readonly string[]) => {
     if (!roles.some((role) => role === user.role)) return false;
     if (user.role !== "MEMBER") return true;
     if (!memberPaths.has(path)) return false;
-    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
+    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/translation" ? "TRANSLATE" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
     return !feature || user.permissions?.[feature] !== false;
   };
   return (
@@ -136,8 +138,8 @@ function Protected({ user }: { user: User | null }) {
   if (!user) return <Navigate to="/login" replace />;
   const location = useLocation();
   if (user.role === "MEMBER") {
-    const allowed = ["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/writing", "/ai/analysis", "/ai/tasks"];
-    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
+    const allowed = ["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/translation", "/ai/writing", "/ai/analysis", "/ai/tasks"];
+    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/translation") ? "TRANSLATE" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
     if (!allowed.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`)) || (feature && user.permissions?.[feature] === false)) {
       return <Navigate to="/dashboard" replace />;
     }
@@ -190,6 +192,7 @@ export default function App() {
       />
       <Route element={<Protected user={user} />}>
         <Route path="ai/chat" element={<Suspense fallback={<div className="loading">正在加载 AI 聊天…</div>}><AIChatPage /></Suspense>} />
+        <Route path="ai/translation" element={<Suspense fallback={<div className="loading">正在加载 AI 翻译…</div>}><AITranslationPage /></Suspense>} />
         <Route path="ai/images" element={<Suspense fallback={<div className="loading">正在加载 AI 生图…</div>}><AIImagesPage /></Suspense>} />
         <Route path="ai/analysis" element={<Suspense fallback={<div className="loading">正在加载 AI 分析…</div>}><AIAnalysisPage /></Suspense>} />
         <Route path="ai/writing" element={<Suspense fallback={<div className="loading">正在加载 AI 话术…</div>}><AIWritingPage /></Suspense>} />
@@ -373,3 +376,4 @@ function InvitePage({ onAccepted }: { onAccepted: (user: User, token: string) =>
     </div>
   );
 }
+

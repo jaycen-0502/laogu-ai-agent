@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { apiClient, authStore, ApiError, jsonBody } from "../api/client";
 import type {
   Account,
@@ -1473,13 +1473,14 @@ function UsersPage({ current }: { current: User }) {
           <section className="modal-panel ai-policy-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><h2>AI 功能权限与模型</h2><span className="muted">为 {policyUser.username} 分配允许使用的 AI 功能、服务商和模型</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
             <div className="policy-header"><span>功能权限</span><span>使用的 AI 服务商</span><span>使用的模型</span></div>
-            {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"] as const).map((feature) => {
+            {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES", "TRANSLATE"] as const).map((feature) => {
               const featureMeta = {
                 CHAT: ["AI 聊天", "与 AI 进行日常问答和连续对话"],
                 WRITING: ["AI 话术", "生成文案、回复内容和沟通话术"],
                 ANALYSIS: ["AI 分析", "分析账号、内容和业务数据"],
                 TASKS: ["AI 任务", "让 AI 生成并规划自动化任务"],
                 IMAGES: ["AI 生图", "使用文字描述生成图片"],
+                TRANSLATE: ["AI 翻译", "在指定语言之间翻译文本"],
               }[feature];
               const assignment = policy.models[feature] || {};
               const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id);
@@ -1587,3 +1588,4 @@ export function ResourcesPage({
       return <DashboardPage />;
   }
 }
+

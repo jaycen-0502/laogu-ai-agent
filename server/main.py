@@ -35,6 +35,8 @@ from .writing_api import register_writing_routes
 from .writing_service import AIWritingService
 from .task_proposal_api import register_task_proposal_routes
 from .translation_api import register_translation_routes
+from .telegram_bot_service import TelegramBotManager
+from .telegram_translation_api import register_telegram_translation_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
@@ -235,6 +237,16 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         settings.ai_chat_max_output_tokens,
         production=settings.environment == "production",
     )
+    telegram_manager = TelegramBotManager(SessionLocal, credential_cipher, ai_service)
+    app.state.telegram_manager = telegram_manager
+
+    @app.on_event("startup")
+    async def start_telegram_manager() -> None:
+        telegram_manager.start()
+
+    @app.on_event("shutdown")
+    async def stop_telegram_manager() -> None:
+        telegram_manager.stop()
     analysis_service = AIAnalysisService(ai_service)
     writing_service = AIWritingService(analysis_service)
     task_proposal_service = AITaskProposalService(analysis_service)
@@ -1231,6 +1243,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         account_serializer=_account_dict,
         task_serializer=_task_dict,
         activity_serializer=_activity_dict,
+    )
+    register_telegram_translation_routes(
+        app,
+        get_db=get_db,
+        current_user=current_user,
+        cipher=credential_cipher,
     )
     register_command_routes(
         app,

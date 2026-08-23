@@ -316,6 +316,35 @@ class AIProvider(Base):
     )
 
 
+class TelegramBotBinding(Base):
+    __tablename__ = "telegram_bot_bindings"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), unique=True, index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    bot_token_encrypted: Mapped[str] = mapped_column(Text)
+    bot_token_last4: Mapped[str] = mapped_column(String(4), default="")
+    admin_telegram_user_id: Mapped[str] = mapped_column(String(32), index=True)
+    default_target_language: Mapped[str] = mapped_column(String(20), default="zh-CN")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    last_error: Mapped[str] = mapped_column(String(200), default="")
+    last_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class TelegramAllowedUser(Base):
+    __tablename__ = "telegram_allowed_users"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    binding_id: Mapped[str] = mapped_column(ForeignKey("telegram_bot_bindings.id", ondelete="CASCADE"), index=True)
+    telegram_user_id: Mapped[str] = mapped_column(String(32), index=True)
+    username: Mapped[str] = mapped_column(String(120), default="")
+    display_name: Mapped[str] = mapped_column(String(160), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("binding_id", "telegram_user_id", name="uq_telegram_allowed_binding_user"),)
+
+
 class ChatSession(Base):
     __tablename__ = "chat_sessions"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)

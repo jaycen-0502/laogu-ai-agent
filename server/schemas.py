@@ -289,11 +289,31 @@ class AITranslateRequest(BaseModel):
     target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"] = "zh-CN"
     provider_id: str | None = Field(default=None, max_length=32)
     model: str | None = Field(default=None, max_length=160)
+
+
 class AIAccountAnalysisCreate(BaseModel):
     account_id: str = Field(min_length=1, max_length=32)
     provider_id: str | None = Field(default=None, max_length=32)
     model: str | None = Field(default=None, max_length=160)
     lookback_days: int = Field(default=30, ge=1, le=365)
+
+
+class TelegramBindingUpdate(BaseModel):
+    workspace_id: str = Field(min_length=1, max_length=32)
+    bot_token: str | None = Field(default=None, min_length=20, max_length=500)
+    admin_telegram_user_id: str = Field(min_length=1, max_length=32)
+    default_target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"] = "zh-CN"
+    enabled: bool = False
+
+
+class TelegramAllowedUserCreate(BaseModel):
+    telegram_user_id: str = Field(min_length=1, max_length=32)
+    username: str = Field(default="", max_length=120)
+    display_name: str = Field(default="", max_length=160)
+
+
+class TelegramBindingTest(BaseModel):
+    bot_token: str = Field(min_length=20, max_length=500)
 
 
 class AIKeywordAnalysisCreate(BaseModel):

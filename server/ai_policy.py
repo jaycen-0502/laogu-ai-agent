@@ -63,7 +63,10 @@ def resolve_provider(
     allowed = set(provider.available_models or [])
     if provider.default_model:
         allowed.add(provider.default_model)
-    if allowed and selected_model not in allowed:
+    # Administrators/owners may target a newly released or relay-specific
+    # model immediately; members remain constrained by the provider model
+    # list and their assigned policy.
+    if allowed and selected_model not in allowed and user.role == "MEMBER":
         raise HTTPException(status_code=422, detail="AI model is not allowed for this provider")
     return provider, selected_model
 

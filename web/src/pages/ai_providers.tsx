@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { apiClient, ApiError } from "../api/client";
 import type { AIProvider, Page, User, Workspace } from "../types";
 
+const MODEL_SUGGESTIONS = [
+  "gpt-5.4-2026-03-05", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6",
+  "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-image-1",
+  "gpt-image-1.5", "gpt-image-2", "apt-imaae-2",
+];
+
 
 const messageOf = (error: unknown) =>
   error instanceof ApiError ? error.message : "请求失败，请稍后重试";
@@ -28,6 +34,7 @@ type FormState = {
   base_url: string;
   api_key: string;
   default_model: string;
+  models_text: string;
   status: "ENABLED" | "DISABLED";
   is_default: boolean;
   workspace_id: string;
@@ -39,6 +46,7 @@ const emptyForm = (workspaceId = ""): FormState => ({
   base_url: "",
   api_key: "",
   default_model: "",
+  models_text: MODEL_SUGGESTIONS.join("\n"),
   status: "DISABLED",
   is_default: false,
   workspace_id: workspaceId,
@@ -101,6 +109,7 @@ export function AIProvidersPage({ user }: { user: User }) {
       base_url: item.base_url,
       api_key: "",
       default_model: item.default_model,
+      models_text: (item.models || []).join("\n"),
       status: item.status,
       is_default: item.is_default,
       workspace_id: item.workspace_id,
@@ -121,6 +130,7 @@ export function AIProvidersPage({ user }: { user: User }) {
         provider_type: form.provider_type,
         base_url: form.provider_type === "OPENAI" && !form.base_url.trim() ? "" : form.base_url,
         default_model: form.default_model,
+        models: Array.from(new Set(form.models_text.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean))),
         status: form.status,
         is_default: form.is_default,
       };
@@ -153,6 +163,26 @@ export function AIProvidersPage({ user }: { user: User }) {
       setMessage(result.status === "SUCCESS"
         ? `连接成功，发现 ${result.models.length} 个模型`
         : `连接失败：${result.error || "未知错误"}`);
+      await load();
+    } catch (exc) {
+      setError(messageOf(exc));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const fetchModels = async (item: AIProvider) => {
+    setBusy(`models:${item.provider_id}`);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiClient<{ status: string; models: string[]; error?: string }>(
+        `/ai/providers/${item.provider_id}/models`,
+        { method: "POST" },
+      );
+      setMessage(result.status === "SUCCESS"
+        ? `获取成功，发现 ${result.models.length} 个模型`
+        : `获取失败：${result.error || "未知错误"}`);
       await load();
     } catch (exc) {
       setError(messageOf(exc));
@@ -252,6 +282,15 @@ export function AIProvidersPage({ user }: { user: User }) {
                 onChange={(event) => setForm({ ...form, default_model: event.target.value })}
               />
             </label>
+            <label>
+              支持的模型（每行一个，也可填写中转站自定义模型）
+              <textarea
+                rows={4}
+                value={form.models_text}
+                placeholder={MODEL_SUGGESTIONS.join("\n")}
+                onChange={(event) => setForm({ ...form, models_text: event.target.value })}
+              />
+            </label>
             <label className="check-row provider-default-check">
               <input
                 type="checkbox"
@@ -279,7 +318,7 @@ export function AIProvidersPage({ user }: { user: User }) {
       </div>
 
       <datalist id="provider-models">
-        {Array.from(new Set((data?.items || []).flatMap((item) => item.models))).map((model) => <option key={model} value={model} />)}
+        {Array.from(new Set([...MODEL_SUGGESTIONS, ...(data?.items || []).flatMap((item) => item.models)])).map((model) => <option key={model} value={model} />)}
       </datalist>
 
       <div className="table-wrap">
@@ -310,6 +349,9 @@ export function AIProvidersPage({ user }: { user: User }) {
                       <button onClick={() => startEdit(item)}>编辑</button>
                       <button disabled={busy === `test:${item.provider_id}`} onClick={() => void testConnection(item)}>
                         {busy === `test:${item.provider_id}` ? "测试中…" : "测试连接"}
+                      </button>
+                      <button disabled={busy === `models:${item.provider_id}`} onClick={() => void fetchModels(item)}>
+                        {busy === `models:${item.provider_id}` ? "获取中…" : "获取模型列表"}
                       </button>
                       <button disabled={item.status === "ENABLED" || busy === `delete:${item.provider_id}`} onClick={() => void remove(item)}>删除</button>
                     </div>

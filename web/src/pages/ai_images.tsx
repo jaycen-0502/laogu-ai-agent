@@ -18,12 +18,15 @@ const qualityNames: Record<string, string> = {
   high: "高（更慢、费用更高）",
 };
 
+const IMAGE_MODEL_SUGGESTIONS = ["gpt-image-1", "gpt-image-1.5", "gpt-image-2", "apt-imaae-2"];
+
 const errorText = (value: unknown) =>
   value instanceof ApiError ? value.message : "请求失败，请稍后重试";
 
 export function AIImagesPage() {
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [providerId, setProviderId] = useState("");
+  const [model, setModel] = useState("gpt-image-2");
   const [prompt, setPrompt] = useState("");
   const [resolution, setResolution] = useState<"1K" | "2K">("1K");
   const [quality, setQuality] = useState<"low" | "medium" | "high">("medium");
@@ -41,6 +44,10 @@ export function AIImagesPage() {
     () => providers.find((item) => item.provider_id === providerId),
     [providers, providerId],
   );
+  const imageModels = useMemo(() => {
+    const configured = selectedProvider?.models || [];
+    return Array.from(new Set([...IMAGE_MODEL_SUGGESTIONS, ...configured.filter((item) => /image|imaage/i.test(item))]));
+  }, [selectedProvider]);
 
   const loadImages = async (targetPage = page) => {
     setLoading(true);
@@ -63,6 +70,8 @@ export function AIImagesPage() {
         setProviders(enabled);
         const preferred = enabled.find((item) => item.is_default) || enabled[0];
         setProviderId(preferred?.provider_id || "");
+        const preferredImage = preferred?.models?.find((item) => /image|imaage/i.test(item));
+        setModel(preferredImage || "gpt-image-2");
       })
       .catch((exc) => setError(errorText(exc)));
   }, []);
@@ -110,7 +119,7 @@ export function AIImagesPage() {
     try {
       await apiClient<AIImage>(
         "/ai/images/generate",
-        jsonBody({ provider_id: providerId, prompt: cleanPrompt, resolution, quality }),
+        jsonBody({ provider_id: providerId, model, prompt: cleanPrompt, resolution, quality }),
         360000,
       );
       setMessage("图片生成成功，已安全保存到服务器");
@@ -154,7 +163,7 @@ export function AIImagesPage() {
       <div className="page-title">
         <div>
           <h1>AI 生图</h1>
-          <p className="muted">独立调用 gpt-image-2，每次生成一张图片；与 AI 聊天模型互不影响。</p>
+          <p className="muted">支持 Provider 已配置的图像模型；与 AI 聊天模型互不影响。</p>
         </div>
         <button onClick={() => void loadImages(page)} disabled={loading || generating}>刷新图库</button>
       </div>
@@ -169,7 +178,7 @@ export function AIImagesPage() {
             <h2>生成新图片</h2>
             <span className="muted">生成通常需要几十秒，复杂提示词可能接近 2 分钟。</span>
           </div>
-          <span className="state state-enabled">固定模型：gpt-image-2</span>
+          <span className="state state-enabled">模型：{model}</span>
         </div>
         <label>
           图片描述
@@ -191,6 +200,12 @@ export function AIImagesPage() {
             </select>
           </label>
           <label>
+            图像模型
+            <select value={model} disabled={generating} onChange={(event) => setModel(event.target.value)}>
+              {imageModels.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <label>
             分辨率
             <select value={resolution} disabled={generating} onChange={(event) => setResolution(event.target.value as "1K" | "2K")}>
               <option value="1K">1K · 1024 × 1024</option>
@@ -207,7 +222,7 @@ export function AIImagesPage() {
             {generating ? "正在生成，请稍候…" : "生成图片"}
           </button>
         </div>
-        {selectedProvider && <div className="muted">请求将发送到：{selectedProvider.name} · {selectedProvider.base_url}</div>}
+        {selectedProvider && <div className="muted">请求将发送到：{selectedProvider.name} · 服务地址已隐藏</div>}
       </form>
 
       <div className="image-gallery-header">

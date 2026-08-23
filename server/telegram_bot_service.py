@@ -22,6 +22,7 @@ SUPPORTED_TARGETS = {"zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru",
 POLL_TIMEOUT_SECONDS = 35
 MAX_TEXT_LENGTH = 20_000
 USER_RATE_LIMIT = 20
+ZH_JA_AUTO = "zh-ja-auto"
 
 
 def _audit_request() -> Request:
@@ -157,7 +158,19 @@ class TelegramBotManager:
             if len(parts) < 3 or parts[1] not in SUPPORTED_TARGETS or not parts[2].strip():
                 raise AIRequestError("Invalid target language")
             return "auto", parts[1], parts[2][:MAX_TEXT_LENGTH]
+        if default_target == ZH_JA_AUTO:
+            return "auto", TelegramBotManager._detect_zh_ja_target(text), text[:MAX_TEXT_LENGTH]
         return "auto", default_target if default_target in SUPPORTED_TARGETS else "zh-CN", text[:MAX_TEXT_LENGTH]
+
+    @staticmethod
+    def _detect_zh_ja_target(text: str) -> str:
+        kana_count = sum(1 for char in text if "぀" <= char <= "ヿ")
+        han_count = sum(1 for char in text if "㐀" <= char <= "鿿")
+        if kana_count:
+            return "zh-CN"
+        if han_count:
+            return "ja"
+        return "zh-CN"
 
     def _allow_request(self, telegram_user_id: str) -> bool:
         current = time.monotonic()

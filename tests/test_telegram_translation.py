@@ -49,5 +49,7 @@ def test_telegram_command_parser_and_rate_limit():
     manager = TelegramBotManager(None, None, None)
     assert manager._parse("hello", "zh-CN") == ("auto", "zh-CN", "hello")
     assert manager._parse("/to ja hello", "zh-CN") == ("auto", "ja", "hello")
+    assert manager._parse("こんにちは", "zh-ja-auto") == ("auto", "zh-CN", "こんにちは")
+    assert manager._parse("你好世界", "zh-ja-auto") == ("auto", "ja", "你好世界")
     assert all(manager._allow_request("10001") for _ in range(20))
     assert manager._allow_request("10001") is False

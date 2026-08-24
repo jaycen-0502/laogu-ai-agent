@@ -1,20 +1,24 @@
 # Reviewed Python engine updates
 
 The Windows desktop runtime can refresh the reviewed, read-only
-`agent/x_automation_engine.py` from the coordination server. The server never
-accepts Python source from the web UI: it serves only the file included in the
-deployed GitHub release.
+multiple named, read-only Python engines from the coordination server. The
+bundled `agent/x_automation_engine.py` remains the default fallback. Admins can
+publish engines from the Web Script Center using an engine ID such as
+`new-account` and a display name such as `新号`.
 
 ## Release flow
 
-1. Change `agent/x_automation_engine.py` and keep the workflow read-only.
-2. Run the updater and server tests locally.
-3. Merge the change to `main` and run the normal server upgrade script.
-4. The authenticated Agent endpoint exposes a SHA-256 manifest and source.
-5. Each Windows Agent fetches the manifest during its heartbeat cycle and again
-   immediately before a desktop automation run.
-6. The source is compiled, AST-checked, hashed, loaded, and atomically cached
-   below `agent_data/engine_cache/`.
+1. In the Web Script Center, enter an engine ID, display name, description and
+   version, then upload a Python file exposing `XAutomationEngine`.
+2. The server validates the source, stores it under
+   `agent_data/engine_publish/<engine-id>/`, and exposes a signed-by-HTTPS,
+   SHA-256 manifest to authenticated Agents.
+3. The Windows control center lists the available engine names in the
+   automation dialog. Selecting one downloads it on demand and caches it under
+   `agent_data/engine_cache/<engine-id>/versions/`.
+4. The selected engine is loaded for that task. The default engine keeps the
+   bundled fallback; a custom engine must have a valid local cache when the
+   server is offline.
 
 ## Safety behavior
 

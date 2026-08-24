@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { apiClient, ApiError, jsonBody } from "../api/client";
+import { apiClient, ApiError, jsonBody, uploadEngine } from "../api/client";
 import type {
   Page,
   Profile,
@@ -84,6 +84,13 @@ export function ScriptsPage({ user }: { user: User }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
+  const [engineVersion, setEngineVersion] = useState("");
+  const [engineId, setEngineId] = useState("default");
+  const [engineName, setEngineName] = useState("默认自动化引擎");
+  const [engineDescription, setEngineDescription] = useState("");
+  const [publishedEngines, setPublishedEngines] = useState<Array<{ engine_id: string; name: string; description?: string; version: string; enabled?: boolean }>>([]);
+  const [engineMessage, setEngineMessage] = useState("");
+  const engineInput = useRef<HTMLInputElement>(null);
   const [data, setData] = useState<Page<Script> | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -98,6 +105,12 @@ export function ScriptsPage({ user }: { user: User }) {
       .then(setData)
       .catch((exc) => setError(messageOf(exc)));
   }, [page, q, status]);
+  useEffect(() => {
+    if (user.role !== "ADMIN") return;
+    apiClient<{ items: Array<{ engine_id: string; name: string; description?: string; version: string; enabled?: boolean }> }>("/admin/engines")
+      .then((value) => setPublishedEngines(value.items || []))
+      .catch(() => setPublishedEngines([]));
+  }, [user.role, engineMessage]);
   return (
     <>
       <div className="page-title">
@@ -105,12 +118,34 @@ export function ScriptsPage({ user }: { user: User }) {
           <h1>脚本中心</h1>
           <p className="muted">管理已登记的JavaScript脚本及不可变版本</p>
         </div>
+        {user.role === "ADMIN" && <>
+          <input ref={engineInput} type="file" accept=".py,text/x-python" hidden onChange={async (event) => {
+            const file = event.target.files?.[0]; event.target.value = "";
+            if (!file || !engineVersion.trim()) { setEngineMessage("请先填写自动化脚本版本号"); return; }
+            setEngineMessage("正在上传自动化脚本…");
+            try { const result = await uploadEngine(file, engineVersion.trim(), engineId.trim() || "default", engineName.trim(), engineDescription.trim()); setEngineMessage(`发布成功：${result.name}（${result.engine_id}）版本 ${result.version}，控制中心重新打开自动化配置即可选择`); setEngineVersion(""); }
+            catch (exc) { setEngineMessage(exc instanceof Error ? exc.message : "脚本发布失败"); }
+          }} />
+          <input value={engineId} onChange={(event) => setEngineId(event.target.value)} placeholder="引擎ID，例如 new-account" />
+          <input value={engineName} onChange={(event) => setEngineName(event.target.value)} placeholder="显示名称，例如 新号" />
+          <input value={engineDescription} onChange={(event) => setEngineDescription(event.target.value)} placeholder="方案说明（可选）" />
+          <input value={engineVersion} onChange={(event) => setEngineVersion(event.target.value)} placeholder="自动化脚本版本" />
+          <button className="button-link" onClick={() => engineInput.current?.click()}>发布 Python 自动化脚本</button>
+        </>}
         {user.role !== "MEMBER" && (
           <Link className="button-link primary" to="/scripts/new">
             新建脚本
           </Link>
         )}
       </div>
+      {engineMessage && <div className="alert">{engineMessage}</div>}
+      {user.role === "ADMIN" && <div className="panel">
+        <h2>Python 自动化方案</h2>
+        <p className="muted">控制中心会显示这些方案名称，用户无需接触脚本源码。</p>
+        <div className="table-wrap"><table><thead><tr><th>方案名称</th><th>引擎 ID</th><th>版本</th><th>状态</th><th>说明</th></tr></thead><tbody>
+          {publishedEngines.map((engine) => <tr key={engine.engine_id}><td>{engine.name}</td><td className="mono">{engine.engine_id}</td><td>{engine.version}</td><td>{engine.enabled === false ? "已禁用" : "可用"}</td><td>{engine.description || "-"}</td></tr>)}
+        </tbody></table></div>
+      </div>}
       <div className="toolbar">
         <input
           value={q}

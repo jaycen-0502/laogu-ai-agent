@@ -22,6 +22,7 @@ logger = logging.getLogger("laogu-ai-agent.updater")
 MAX_ENGINE_BYTES = 2 * 1024 * 1024
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_ENGINE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 
 
 class EngineUpdateError(RuntimeError):
@@ -118,8 +119,18 @@ def _load_module(path: Path, digest: str):
         raise
 
 
-def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: str | os.PathLike[str]) -> bool:
+def _engine_root(cache_dir: str | os.PathLike[str], engine_id: str = "default") -> Path:
+    engine_id = str(engine_id or "default").strip() or "default"
+    if not _ENGINE_ID.fullmatch(engine_id):
+        raise EngineUpdateError("Engine ID is invalid")
+    root = Path(cache_dir)
+    return root if engine_id == "default" else root / engine_id
+
+
+def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: str | os.PathLike[str], engine_id: str = "default") -> bool:
     """Validate, cache and activate an authenticated server engine bundle."""
+    if not isinstance(source, bytes):
+        raise EngineUpdateError("Engine source must be bytes")
     version = str(manifest.get("version") or "").strip()
     digest = str(manifest.get("sha256") or "").strip().lower()
     declared_size = manifest.get("size")
@@ -127,17 +138,26 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
         raise EngineUpdateError("Engine manifest is invalid")
     if manifest.get("read_only") is not True:
         raise EngineUpdateError("Engine manifest is not marked read-only")
-    if declared_size is not None and int(declared_size) != len(source):
-        raise EngineUpdateError("Engine source size does not match its manifest")
+    if declared_size is not None:
+        try:
+            manifest_size = int(declared_size)
+        except (TypeError, ValueError) as exc:
+            raise EngineUpdateError("Engine manifest size is invalid") from exc
+        if manifest_size != len(source):
+            raise EngineUpdateError("Engine source size does not match its manifest")
     if hashlib.sha256(source).hexdigest() != digest:
         raise EngineUpdateError("Engine SHA-256 verification failed")
     _validate_code(source)
 
-    root = Path(cache_dir)
+    root = _engine_root(cache_dir, engine_id)
     engine_path = root / "versions" / f"{version}-{digest[:12]}" / "x_automation_engine.py"
     state_path = root / "active.json"
     state = read_engine_state(root)
-    if state.get("active_sha256") == digest and engine_path.is_file():
+    if (
+        state.get("active_sha256") == digest
+        and engine_path.is_file()
+        and get_file_sha256(engine_path) == digest
+    ):
         return False
 
     _atomic_write(engine_path, source)
@@ -152,6 +172,9 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
     _atomic_json(
         state_path,
         {
+            "engine_id": str(manifest.get("engine_id") or engine_id),
+            "name": str(manifest.get("name") or manifest.get("engine_id") or engine_id),
+            "description": str(manifest.get("description") or ""),
             "active_version": version,
             "active_sha256": digest,
             "active_path": str(engine_path.relative_to(root)),
@@ -162,8 +185,30 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
     return True
 
 
-def read_engine_state(cache_dir: str | os.PathLike[str]) -> dict[str, Any]:
-    path = Path(cache_dir) / "active.json"
+def list_cached_engine_metadata(cache_dir: str | os.PathLike[str]) -> list[dict[str, Any]]:
+    """List locally activated engine choices for offline control-center use."""
+    root = Path(cache_dir)
+    candidates = [root] + [path for path in root.iterdir() if path.is_dir()] if root.is_dir() else []
+    items: list[dict[str, Any]] = []
+    for candidate in candidates:
+        state = read_engine_state(candidate)
+        if not state or not state.get("active_path"):
+            continue
+        engine_id = str(state.get("engine_id") or ("default" if candidate == root else candidate.name))
+        items.append({
+            "engine_id": engine_id,
+            "name": str(state.get("name") or engine_id),
+            "description": str(state.get("description") or ""),
+            "version": str(state.get("active_version") or "cached"),
+            "enabled": True,
+            "read_only": True,
+            "source": "LOCAL_CACHE",
+        })
+    return items
+
+
+def read_engine_state(cache_dir: str | os.PathLike[str], engine_id: str = "default") -> dict[str, Any]:
+    path = _engine_root(cache_dir, engine_id) / "active.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -182,9 +227,9 @@ def _safe_cached_path(root: Path, relative: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str]):
+def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str], engine_id: str = "default"):
     """Load the active engine, rolling state back if that engine is damaged."""
-    root = Path(cache_dir)
+    root = _engine_root(cache_dir, engine_id)
     state = read_engine_state(root)
     candidates = (
         ("active", str(state.get("active_path") or ""), str(state.get("active_sha256") or "")),
@@ -207,6 +252,9 @@ def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str]):
             _atomic_json(
                 root / "active.json",
                 {
+                    "engine_id": str(state.get("engine_id") or engine_id),
+                    "name": str(state.get("name") or engine_id),
+                    "description": str(state.get("description") or ""),
                     "active_version": "rollback",
                     "active_sha256": expected,
                     "active_path": relative,
@@ -221,17 +269,20 @@ def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str]):
     return None
 
 
-def sync_engine_from_server(server_client, cache_dir: str | os.PathLike[str]) -> bool:
+def sync_engine_from_server(server_client, cache_dir: str | os.PathLike[str], engine_id: str = "default") -> bool:
     """Fetch the authenticated manifest and source, then activate atomically."""
-    manifest = server_client.fetch_engine_manifest()
+    manifest = server_client.fetch_engine_manifest_by_id(engine_id) if hasattr(server_client, "fetch_engine_manifest_by_id") else server_client.fetch_engine_manifest()
     if not isinstance(manifest, dict):
         raise EngineUpdateError("Server returned an invalid engine manifest")
     digest = str(manifest.get("sha256") or "").lower()
-    state = read_engine_state(cache_dir)
+    state = read_engine_state(cache_dir, engine_id)
     if state.get("active_sha256") == digest:
-        return False
+        root = _engine_root(cache_dir, engine_id)
+        active = _safe_cached_path(root, str(state.get("active_path") or ""))
+        if active is not None and get_file_sha256(active) == digest:
+            return False
     source = server_client.fetch_engine_source(str(manifest.get("source_url") or ""))
-    return install_engine_update(manifest, source, cache_dir)
+    return install_engine_update(manifest, source, cache_dir, engine_id)
 
 
 def check_and_update_engine(remote_url: str, local_path: str) -> bool:
@@ -255,10 +306,10 @@ def check_and_update_engine(remote_url: str, local_path: str) -> bool:
         return False
 
 
-def get_automation_engine_class(*, remote_url: str = "", local_path: str = "", cache_dir: str = ""):
+def get_automation_engine_class(*, remote_url: str = "", local_path: str = "", cache_dir: str = "", engine_id: str = "default"):
     """Return cached server engine when valid, otherwise the bundled engine."""
     if cache_dir:
-        cached = get_cached_automation_engine_class(cache_dir)
+        cached = get_cached_automation_engine_class(cache_dir, engine_id)
         if cached is not None:
             return cached
     if remote_url and local_path:

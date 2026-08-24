@@ -88,6 +88,20 @@ export async function apiBlob(path: string, timeoutMs = 30000): Promise<Blob> {
   return response.blob();
 }
 
+export async function uploadEngine(source: Blob, version: string, engineId = "default", name = "", description = ""): Promise<{ ok: boolean; engine_id: string; name: string; version: string; sha256: string; size: number }> {
+  const headers = new Headers({ Accept: "application/json", "Content-Type": "text/x-python" });
+  const token = authStore.get();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const params = new URLSearchParams({ version, engine_id: engineId, name, description });
+  const response = await fetch(`/api/admin/engine/publish?${params.toString()}`, {
+    method: "POST", headers, body: source, signal: AbortSignal.timeout(30000),
+  });
+  let payload: any = null;
+  try { payload = await response.json(); } catch { /* ignore */ }
+  if (!response.ok) throw new ApiError(response.status, String(payload?.detail || "脚本发布失败"));
+  return payload;
+}
+
 export const jsonBody = (value: unknown): RequestInit => ({
   method: "POST",
   body: JSON.stringify(value),

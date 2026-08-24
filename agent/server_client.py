@@ -113,14 +113,25 @@ class ServerClient:
     def agent_id(self) -> str:
         return self.credentials.get("agent_id", "")
 
+    @property
+    def workspace_id(self) -> str:
+        return self.credentials.get("workspace_id", "")
+
     def register(self, *, agent_name: str, machine_name: str, client_version: str, user_token: str) -> dict[str, Any]:
         result = self._request("POST", "/api/agents/register", {"agent_name": agent_name, "machine_name": machine_name, "client_version": client_version, "device_id": self.device_id}, token=user_token)
-        self.credentials = {"agent_id": str(result["agent_id"]), "agent_token": str(result["agent_token"]), "server_url": self.server_url, "device_id": self.device_id}
+        self.credentials = {"agent_id": str(result["agent_id"]), "agent_token": str(result["agent_token"]), "workspace_id": str(result.get("workspace_id") or ""), "server_url": self.server_url, "device_id": self.device_id}
         self.credential_store.save(self.credentials)
         return {key: value for key, value in result.items() if key != "agent_token"}
 
     def replace_agent_token(self, agent_id: str, agent_token: str) -> None:
-        self.credentials = {"agent_id": str(agent_id), "agent_token": str(agent_token), "server_url": self.server_url, "device_id": self.device_id}
+        self.credentials = {"agent_id": str(agent_id), "agent_token": str(agent_token), "workspace_id": self.workspace_id, "server_url": self.server_url, "device_id": self.device_id}
+        self.credential_store.save(self.credentials)
+
+    def remember_workspace_id(self, workspace_id: str) -> None:
+        workspace_id = str(workspace_id or "").strip()
+        if not workspace_id or workspace_id == self.workspace_id:
+            return
+        self.credentials = {**self.credentials, "workspace_id": workspace_id, "device_id": self.device_id}
         self.credential_store.save(self.credentials)
 
     def heartbeat(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -136,6 +147,13 @@ class ServerClient:
     def send_result(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._agent_request("POST", "/api/tasks/result", payload)
 
+    def send_automation_metric(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._agent_request(
+            "POST",
+            "/api/agent/automation-metrics",
+            {"agent_id": self.agent_id, **payload},
+        )
+
     def fetch_task_script(self, task_id: str) -> dict[str, Any]:
         return self._agent_request("GET", f"/api/agent/tasks/{task_id}/script", None)
 
@@ -146,10 +164,21 @@ class ServerClient:
     def fetch_engine_manifest(self) -> dict[str, Any]:
         return self._agent_request("GET", "/api/agent/engine/manifest", None)
 
+    def list_engines(self) -> list[dict[str, Any]]:
+        response = self._agent_request("GET", "/api/agent/engines", None)
+        items = response.get("items", [])
+        return items if isinstance(items, list) else []
+
+    def fetch_engine_manifest_by_id(self, engine_id: str) -> dict[str, Any]:
+        engine_id = str(engine_id or "default").strip() or "default"
+        if engine_id == "default":
+            return self.fetch_engine_manifest()
+        return self._agent_request("GET", f"/api/agent/engines/{engine_id}/manifest", None)
+
     def fetch_engine_source(self, source_url: str = "/api/agent/engine/source") -> bytes:
         # Do not follow a server-provided arbitrary URL with Agent credentials.
         # The manifest may name only this same-origin, fixed endpoint.
-        if source_url != "/api/agent/engine/source":
+        if not (source_url == "/api/agent/engine/source" or source_url.startswith("/api/agent/engines/") and source_url.endswith("/source")):
             raise ServerClientError("Server returned an invalid engine source URL")
         if self.transport is not None:
             result = self.transport("GET_RAW", source_url, None, self.credentials.get("agent_token", ""))

@@ -6,6 +6,30 @@
 - `restore.sh`：从 age 加密恢复包重建故障服务器
 - `verify.sh`：生产环境验收
 - `install-backup.sh`：安装 Telegram 加密备份和每周检查
+
+## 已部署服务器一键升级
+
+现有服务器安装过 `/usr/local/sbin/laogu-upgrade-from-github` 时，执行：
+
+```bash
+sudo env \
+  GITHUB_REPOSITORY=jaycen-0502/laogu-ai-agent \
+  GITHUB_REF=main \
+  GITHUB_TOKEN='你的 GitHub 私有仓库读取 Token' \
+  /usr/local/sbin/laogu-upgrade-from-github
+```
+
+升级脚本会自动备份数据库和应用、同步代码、执行 `alembic upgrade head`、构建 Web 前端、重启服务并检查健康状态。Token 只在当前命令进程中使用，不写入服务器配置。
+
+升级后，管理员在「脚本中心」上传 Python 引擎时可填写引擎 ID 和显示名称，例如：
+
+```text
+引擎 ID：new-account
+显示名称：新号
+版本：1.0.0
+```
+
+Windows 控制中心重新打开自动化配置窗口后，会显示“默认自动化引擎”“新号”等可选方案。
 - `laogu-server.service`：systemd 服务模板
 - `nginx-laogu.conf`：HTTPS Nginx 最终配置模板
 

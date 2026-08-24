@@ -111,6 +111,33 @@ def test_workspace_isolation_and_member_read_only_permissions():
     ).status_code == 404
 
 
+def test_admin_can_configure_and_filter_each_workspace_provider_catalog():
+    env = make_env()
+    provider_a = create_provider(env, name="Studio A relay", is_default=True)
+    response_b = env["client"].post(
+        "/api/ai/providers",
+        headers=auth(env["admin"]),
+        json={
+            "workspace_id": env["workspace_b"],
+            "name": "Studio B relay",
+            "provider_type": "OPENAI_COMPATIBLE",
+            "base_url": "https://relay.example/v1",
+            "api_key": API_KEY,
+            "default_model": "workspace-b-model",
+            "models": ["workspace-b-model", "workspace-b-fast"],
+            "status": "ENABLED",
+            "is_default": True,
+        },
+    )
+    assert response_b.status_code == 200, response_b.text
+    provider_b = response_b.json()
+    selected = env["client"].get(f"/api/ai/providers?workspace_id={env['workspace_b']}", headers=auth(env["admin"])).json()
+    assert [item["provider_id"] for item in selected] == [provider_b["provider_id"]]
+    assert selected[0]["default_model"] == "workspace-b-model"
+    all_items = env["client"].get("/api/ai/providers", headers=auth(env["admin"])).json()
+    assert {item["provider_id"] for item in all_items} == {provider_a["provider_id"], provider_b["provider_id"]}
+
+
 def test_update_without_key_preserves_ciphertext_and_default_is_unique():
     env = make_env()
     first = create_provider(env, name="First", is_default=True)

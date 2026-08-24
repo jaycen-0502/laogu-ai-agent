@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { apiClient, authStore, ApiError, jsonBody } from "../api/client";
 import type {
   Account,
@@ -295,6 +296,7 @@ export function DashboardPage() {
 }
 
 function WorkspacesPage({ user }: { user: User }) {
+  const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
   const [name, setName] = useState("");
@@ -390,9 +392,10 @@ function WorkspacesPage({ user }: { user: User }) {
             <Card label="任务" value={selected.task_count ?? 0} />
           </div>
           {user.role === "ADMIN" && (
-            <button onClick={toggle}>
-              {selected.status === "ACTIVE" ? "禁用工作区" : "启用工作区"}
-            </button>
+            <div className="toolbar compact">
+              <button className="primary" onClick={() => navigate(`/ai-providers?workspace_id=${encodeURIComponent(selected.workspace_id)}`)}>配置该工作区 AI</button>
+              <button onClick={toggle}>{selected.status === "ACTIVE" ? "禁用工作区" : "启用工作区"}</button>
+            </div>
           )}
         </section>
       )}

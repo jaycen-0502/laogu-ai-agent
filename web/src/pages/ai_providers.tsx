@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { apiClient, ApiError } from "../api/client";
 import type { AIProvider, Page, User, Workspace } from "../types";
 
@@ -117,9 +118,11 @@ function ModelCombobox({
 }
 
 export function AIProvidersPage({ user }: { user: User }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const canManage = user.role !== "MEMBER";
   const [data, setData] = useState<Page<AIProvider> | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(user.role === "ADMIN" ? searchParams.get("workspace_id") || user.workspace_id || "" : user.workspace_id || "");
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [page, setPage] = useState(1);
@@ -142,13 +145,14 @@ export function AIProvidersPage({ user }: { user: User }) {
       q,
       status: statusFilter,
     });
+    if (user.role === "ADMIN" && selectedWorkspaceId) query.set("workspace_id", selectedWorkspaceId);
     setError("");
     try {
       setData(await apiClient<Page<AIProvider>>(`/ai/providers?${query}`));
     } catch (exc) {
       setError(messageOf(exc));
     }
-  }, [page, q, statusFilter]);
+  }, [page, q, selectedWorkspaceId, statusFilter, user.role]);
 
   useEffect(() => {
     void load();
@@ -157,13 +161,16 @@ export function AIProvidersPage({ user }: { user: User }) {
   useEffect(() => {
     if (user.role !== "ADMIN") return;
     apiClient<Page<Workspace>>("/workspaces?paged=true&page=1&page_size=100")
-      .then((result) => setWorkspaces(result.items))
+      .then((result) => {
+        setWorkspaces(result.items);
+        setSelectedWorkspaceId((current) => current || user.workspace_id || result.items[0]?.workspace_id || "");
+      })
       .catch(() => setWorkspaces([]));
-  }, [user.role]);
+  }, [user.role, user.workspace_id]);
 
   const startCreate = () => {
     setEditingId("");
-    setForm(emptyForm(user.workspace_id || workspaces[0]?.workspace_id || ""));
+    setForm(emptyForm(selectedWorkspaceId || user.workspace_id || workspaces[0]?.workspace_id || ""));
     setMessage("");
     setError("");
     setShowForm(true);
@@ -289,6 +296,19 @@ export function AIProvidersPage({ user }: { user: User }) {
       </div>
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert">{message}</div>}
+
+      {user.role === "ADMIN" && (
+        <div className="toolbar workspace-provider-toolbar">
+          <label>
+            当前配置工作区
+            <select value={selectedWorkspaceId} onChange={(event) => { const workspaceId = event.target.value; setSelectedWorkspaceId(workspaceId); setSearchParams(workspaceId ? { workspace_id: workspaceId } : {}); setPage(1); }} required>
+              <option value="">请选择工作区</option>
+              {workspaces.map((item) => <option key={item.workspace_id} value={item.workspace_id}>{item.name}</option>)}
+            </select>
+          </label>
+          <span className="muted">每个工作区独立保存 Provider、模型和默认设置。</span>
+        </div>
+      )}
 
       {showForm && canManage && (
         <form className="panel" onSubmit={save}>

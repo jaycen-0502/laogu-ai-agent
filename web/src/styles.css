@@ -719,6 +719,12 @@ label {
 .provider-form-grid {
   grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
+.workspace-provider-toolbar {
+  align-items: end;
+}
+.workspace-provider-toolbar label {
+  min-width: 220px;
+}
 .provider-default-check {
   align-self: end;
   min-height: 36px;

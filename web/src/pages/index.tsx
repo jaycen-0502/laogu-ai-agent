@@ -1124,6 +1124,7 @@ function StatisticsPage() {
 }
 
 function UsersPage({ current }: { current: User }) {
+  const navigate = useNavigate();
   const workspaceKey = (workspace: Workspace) => workspace.workspace_id || workspace.id || "";
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
@@ -1475,6 +1476,11 @@ function UsersPage({ current }: { current: User }) {
         <div className="modal-backdrop" onClick={() => setPolicyUser(null)}>
           <section className="modal-panel ai-policy-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><h2>AI 功能权限与模型</h2><span className="muted">为 {policyUser.username} 分配允许使用的 AI 功能、服务商和模型</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
+            <div className="policy-workspace-summary">
+              <div><span className="muted">所属工作区</span><strong>{policyUser.workspace_name || policyUser.workspace_id || "未分配"}</strong></div>
+              {current.role === "ADMIN" && policyUser.workspace_id && <button className="primary" onClick={() => { setPolicyUser(null); navigate(`/ai-providers?workspace_id=${encodeURIComponent(policyUser.workspace_id || "")}`); }}>配置该工作区 Provider 与模型</button>}
+            </div>
+            {!policyProviders.length && <div className="alert error">该工作区还没有已启用的 AI Provider。请先配置 API Key、模型列表并设置一个工作区默认 Provider，然后再为用户分配。</div>}
             <div className="policy-header"><span>功能权限</span><span>使用的 AI 服务商</span><span>使用的模型</span></div>
             {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES", "TRANSLATE"] as const).map((feature) => {
               const featureMeta = {
@@ -1486,12 +1492,12 @@ function UsersPage({ current }: { current: User }) {
                 TRANSLATE: ["AI 翻译", "在指定语言之间翻译文本"],
               }[feature];
               const assignment = policy.models[feature] || {};
-              const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id);
+              const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id) || policyProviders.find((item) => item.is_default);
               const models = provider ? Array.from(new Set([...(provider.models || []), provider.default_model].filter(Boolean))) : [];
               return <div className="policy-row" key={feature}>
                 <label className="check-row policy-feature"><input type="checkbox" checked={Boolean(policy.features[feature])} onChange={(event) => void savePolicy(feature, event.target.checked, assignment.provider_id || "", assignment.model || "")} /><span><strong>{featureMeta[0]}</strong><small>{featureMeta[1]}</small></span></label>
                 <select value={assignment.provider_id || ""} disabled={!policy.features[feature]} onChange={(event) => void savePolicy(feature, true, event.target.value, "")}><option value="">自动使用工作区默认</option>{policyProviders.map((item) => <option key={item.provider_id} value={item.provider_id}>{item.name}</option>)}</select>
-                <select value={assignment.model || ""} disabled={!policy.features[feature] || !provider} onChange={(event) => void savePolicy(feature, true, assignment.provider_id || "", event.target.value)}><option value="">默认模型</option>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
+                <select value={assignment.model || ""} disabled={!policy.features[feature] || !provider} onChange={(event) => void savePolicy(feature, true, assignment.provider_id || "", event.target.value)}><option value="">使用 Provider 默认模型{provider?.default_model ? `（${provider.default_model}）` : ""}</option>{models.map((item) => <option key={item} value={item}>{item}</option>)}</select>
               </div>;
             })}
           </section>

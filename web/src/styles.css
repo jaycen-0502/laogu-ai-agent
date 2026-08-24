@@ -725,6 +725,21 @@ label {
 .workspace-provider-toolbar label {
   min-width: 220px;
 }
+.policy-workspace-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #dbe4ea;
+  border-radius: 10px;
+  background: #f8fafb;
+}
+.policy-workspace-summary div {
+  display: grid;
+  gap: 3px;
+}
 .provider-default-check {
   align-self: end;
   min-height: 36px;

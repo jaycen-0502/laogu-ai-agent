@@ -367,11 +367,11 @@ def test_rate_limit_uses_shared_task_bucket_and_request_size_limit():
     boot = bootstrap(client)
     login = {"username": "admin", "password": "password123"}
     assert client.post("/api/auth/login", json=login).status_code == 200
-    assert client.post("/api/auth/login", json=login).status_code == 200
+    latest_token = client.post("/api/auth/login", json=login).json()["access_token"]
     assert client.post("/api/auth/login", json=login).status_code == 429
 
-    assert client.get("/api/tasks", headers=auth(boot["access_token"])).status_code == 200
-    second_task_path = client.get("/api/tasks/nonexistent", headers=auth(boot["access_token"]))
+    assert client.get("/api/tasks", headers=auth(latest_token)).status_code == 200
+    second_task_path = client.get("/api/tasks/nonexistent", headers=auth(latest_token))
     assert second_task_path.status_code == 429
     assert second_task_path.headers["x-content-type-options"] == "nosniff"
 

@@ -34,6 +34,8 @@ class User(Base):
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
+    # Incremented on every Web login so only the newest browser session remains valid.
+    web_session_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class UserAIPolicy(Base):

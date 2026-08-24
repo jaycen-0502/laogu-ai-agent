@@ -55,6 +55,16 @@ def web_env():
 def test_web_login_success(web_env):
     response = web_env["client"].post("/api/auth/login", json={"username": "admin", "password": "password123"})
     assert response.status_code == 200 and response.json()["access_token"]
+    web_env["admin"] = response.json()["access_token"]
+
+
+def test_web_login_is_single_session(web_env):
+    first = web_env["client"].post("/api/auth/login", json={"username": "admin", "password": "password123"}).json()["access_token"]
+    second = web_env["client"].post("/api/auth/login", json={"username": "admin", "password": "password123"}).json()["access_token"]
+    assert web_env["client"].get("/api/auth/me", headers=auth(first)).status_code == 401
+    assert web_env["client"].get("/api/auth/me", headers=auth(second)).status_code == 200
+    assert web_env["client"].get("/api/auth/me", headers=auth(second)).status_code == 200
+    web_env["admin"] = second
 
 
 def test_web_login_failure_is_uniform(web_env):

@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from agent.task_manager import ALLOWED_TASK_TYPES
@@ -432,7 +432,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         except Exception:
             audit(db, request, action="AUTH_USER", result="DENIED", message="Invalid user authentication")
             raise HTTPException(status_code=401, detail="Unauthorized")
-        if not user or user.status != "ACTIVE" or payload.get("auth_version") != password_auth_version(user.password_hash):
+        if (
+            not user
+            or user.status != "ACTIVE"
+            or payload.get("auth_version") != password_auth_version(user.password_hash)
+            or payload.get("session_version") != user.web_session_version
+        ):
             audit(db, request, action="AUTH_USER", result="DENIED", message="Inactive or missing user")
             raise HTTPException(status_code=401, detail="Unauthorized")
         return user
@@ -567,6 +572,16 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if not user or not password_valid or user.status != "ACTIVE":
             audit(db, request, action="LOGIN", result="DENIED", user_id=user.id if user else None, workspace_id=user.workspace_id if user else None, message="Invalid credentials")
             raise HTTPException(status_code=401, detail="Unauthorized")
+        # Atomically advance the Web session version. This invalidates every
+        # previously issued browser token while leaving Agent Tokens untouched.
+        session_version = db.scalar(
+            update(User)
+            .where(User.id == user.id)
+            .values(web_session_version=User.web_session_version + 1)
+            .returning(User.web_session_version)
+        )
+        db.commit()
+        user.web_session_version = int(session_version)
         audit(db, request, action="LOGIN", result="SUCCESS", user_id=user.id, workspace_id=user.workspace_id)
         return {"access_token": create_jwt(user, settings), "token_type": "bearer", "role": user.role, "workspace_id": user.workspace_id}
 
@@ -634,6 +649,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if verify_login_password(body.new_password, user.password_hash):
             raise HTTPException(status_code=422, detail="New password must be different")
         user.password_hash = hash_password(body.new_password)
+        user.web_session_version += 1
         db.commit()
         audit(db, request, action="PASSWORD_CHANGE", result="SUCCESS", user_id=user.id, workspace_id=user.workspace_id, resource_type="user", resource_id=user.id)
         return {"ok": True, "access_token": create_jwt(user, settings)}
@@ -1267,4 +1283,3 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
 
 
 app = create_app()
-

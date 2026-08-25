@@ -73,6 +73,9 @@ export function AIChatPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newTitle, setNewTitle] = useState("新聊天");
+  const [newSystemPrompt, setNewSystemPrompt] = useState("");
   const controllerRef = useRef<AbortController | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -121,7 +124,13 @@ export function AIChatPage() {
     setBusy(true);
     setError("");
     try {
-      const created = await apiClient<ChatSessionDetail>("/ai/chat/sessions", jsonBody({}));
+      const created = await apiClient<ChatSessionDetail>("/ai/chat/sessions", jsonBody({
+        title: newTitle.trim() || "新聊天",
+        system_prompt: newSystemPrompt.trim() || undefined,
+      }));
+      setCreateOpen(false);
+      setNewTitle("新聊天");
+      setNewSystemPrompt("");
       await loadSessions(created.session_id);
     } catch (exc) {
       setError(errorMessage(exc));
@@ -200,10 +209,13 @@ export function AIChatPage() {
   const stop = async () => {
     if (!detail) return;
     setError("");
+    const sessionId = detail.session_id;
+    controllerRef.current?.abort();
+    setBusy(false);
+    setDetail((current) => current && current.session_id === sessionId ? { ...current, is_running: false } : current);
     try {
-      await apiClient(`/ai/chat/sessions/${detail.session_id}/stop`, { method: "POST" });
-      controllerRef.current?.abort();
-      window.setTimeout(() => void loadSessions(detail.session_id), 250);
+      await apiClient(`/ai/chat/sessions/${sessionId}/stop`, { method: "POST" });
+      window.setTimeout(() => void loadSessions(sessionId), 120);
     } catch (exc) {
       setError(errorMessage(exc));
     }
@@ -218,7 +230,7 @@ export function AIChatPage() {
           <h1>AI聊天中心</h1>
           <p className="muted">通过工作区已启用的AI Provider进行安全的多轮聊天</p>
         </div>
-        <button className="primary" disabled={busy} onClick={() => void createSession()}>新建会话</button>
+        <button className="primary" disabled={busy} onClick={() => setCreateOpen(true)}>新建会话</button>
       </div>
       {error && <div className="alert error">{error}</div>}
 
@@ -230,7 +242,6 @@ export function AIChatPage() {
             <div key={item.session_id} className={`chat-session-item ${detail?.session_id === item.session_id ? "active" : ""}`}>
               <button className="chat-session-open" onClick={() => void openSession(item.session_id)}>
                 <strong>{item.title}</strong>
-                <span className="internal-only">{item.model}</span>
                 <span>{formatTime(item.updated_at)}</span>
               </button>
               <button className="chat-delete" title="删除会话" disabled={item.is_running} onClick={() => void removeSession(item)}>×</button>
@@ -249,10 +260,7 @@ export function AIChatPage() {
               <header className="chat-header">
                 <div>
                   <h2>{detail.title}</h2>
-                  <span className="muted">管理员已配置</span>
-                </div>
-                <div className="chat-usage internal-only">
-                  输入 {detail.usage.prompt_tokens} · 输出 {detail.usage.completion_tokens} · 总计 {detail.usage.total_tokens} Token
+                  <span className="muted">本会话独立记忆</span>
                 </div>
               </header>
               <div className="chat-messages">
@@ -264,9 +272,6 @@ export function AIChatPage() {
                     </div>
                     <div className="chat-message-content">{message.content || (message.status === "STREAMING" ? "正在生成…" : "")}</div>
                     {message.error && <div className="chat-message-error">{message.error}</div>}
-                    {message.role === "assistant" && message.usage.total_tokens > 0 && (
-                      <div className="muted internal-only">{message.usage.total_tokens} Token · {message.usage.latency_ms} ms</div>
-                    )}
                   </article>
                 ))}
                 <div ref={messageEndRef} />
@@ -275,12 +280,17 @@ export function AIChatPage() {
                 <textarea
                   value={input}
                   disabled={busy}
-                  placeholder="输入消息，Ctrl + Enter发送"
+                  placeholder="输入消息，按 Enter 发送，Shift + Enter 换行"
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={(event) => {
-                    if (event.ctrlKey && event.key === "Enter") event.currentTarget.form?.requestSubmit();
+                    if (event.nativeEvent.isComposing) return;
+                    if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
                   }}
                 />
+                <small className="chat-composer-hint">Enter 发送 · Shift + Enter 换行</small>
                 <div>
                   {busy || detail.is_running
                     ? <button type="button" className="chat-stop" onClick={() => void stop()}>停止生成</button>
@@ -291,6 +301,34 @@ export function AIChatPage() {
           )}
         </section>
       </div>
+      {createOpen && (
+        <div className="modal-backdrop" onClick={() => setCreateOpen(false)}>
+          <section className="modal-panel chat-create-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>新建独立会话</h2>
+                <p className="muted">本会话只记住自己的聊天内容，不会读取其他会话。</p>
+              </div>
+              <button type="button" onClick={() => setCreateOpen(false)}>关闭</button>
+            </div>
+            <label>会话名称<input value={newTitle} maxLength={120} onChange={(event) => setNewTitle(event.target.value)} /></label>
+            <label>本会话人物设定（可选）
+              <textarea
+                rows={6}
+                maxLength={20000}
+                value={newSystemPrompt}
+                onChange={(event) => setNewSystemPrompt(event.target.value)}
+                placeholder="例如：使用自然的关东标准日语，女性自称“私”，不使用敬语。此设定只属于当前会话。"
+              />
+            </label>
+            <div className="chat-memory-note">会话记忆：独立保存 · 不跨会话共享</div>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setCreateOpen(false)}>取消</button>
+              <button type="button" className="primary" disabled={busy} onClick={() => void createSession()}>{busy ? "创建中…" : "创建会话"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </>
   );
 }

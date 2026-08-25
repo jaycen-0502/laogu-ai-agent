@@ -50,6 +50,7 @@ def _provider_dict(item: AIProvider) -> dict:
         "has_api_key": bool(item.api_key_encrypted),
         "default_model": item.default_model,
         "models": _clean_models(item.available_models),
+        "last_actual_model": item.last_actual_model,
         "status": item.status,
         "is_default": item.is_default,
         "last_test_status": item.last_test_status,
@@ -138,17 +139,16 @@ def register_ai_provider_routes(
                     api_key,
                     default_model=item.default_model,
                     configured_models=item.available_models or [],
+                    probe_actual=True,
                 )
             except TypeError as exc:
                 # Keep compatibility with injected/legacy tester adapters that
                 # predate the optional configured_models argument.
+                if "probe_actual" in str(exc):
+                    return app.state.ai_provider_tester.test(item.base_url, api_key, default_model=item.default_model, configured_models=item.available_models or [])
                 if "configured_models" not in str(exc):
                     raise
-                return app.state.ai_provider_tester.test(
-                    item.base_url,
-                    api_key,
-                    default_model=item.default_model,
-                )
+                return app.state.ai_provider_tester.test(item.base_url, api_key, default_model=item.default_model)
         except CredentialError:
             return {"status": "FAILED", "models": [], "error": "AI credential cannot be decrypted"}
         except ProviderConnectionError as exc:
@@ -269,6 +269,7 @@ def register_ai_provider_routes(
             item.last_test_status = "UNKNOWN"
             item.last_tested_at = None
             item.last_error = ""
+            item.last_actual_model = ""
             item.available_models = []
         if "default_model" in updates:
             item.default_model = str(updates["default_model"] or "").strip()
@@ -301,6 +302,7 @@ def register_ai_provider_routes(
         item.last_test_status = result["status"]
         item.last_tested_at = now()
         item.last_error = str(result.get("error") or "")[:200]
+        item.last_actual_model = str(result.get("actual_model") or "")[:160]
         if result["status"] == "SUCCESS":
             item.available_models = _clean_models([
                 item.default_model,
@@ -326,6 +328,7 @@ def register_ai_provider_routes(
         item.last_test_status = result["status"]
         item.last_tested_at = now()
         item.last_error = str(result.get("error") or "")[:200]
+        item.last_actual_model = str(result.get("actual_model") or "")[:160]
         if result["status"] == "SUCCESS":
             item.available_models = _clean_models([
                 item.default_model,

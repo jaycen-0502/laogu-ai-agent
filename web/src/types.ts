@@ -7,6 +7,10 @@ export type User = {
   workspace_name?: string | null;
   status: string;
   created_at?: string;
+  ai_total_tokens?: number;
+  storage_bytes?: number;
+  last_seen_at?: string | null;
+  online?: boolean;
   permissions?: Record<string, boolean>;
 };
 export type Invitation = {
@@ -325,6 +329,7 @@ export type AIProvider = {
   has_api_key: boolean;
   default_model: string;
   models: string[];
+  last_actual_model: string;
   status: "ENABLED" | "DISABLED";
   is_default: boolean;
   last_test_status: "UNKNOWN" | "SUCCESS" | "FAILED";

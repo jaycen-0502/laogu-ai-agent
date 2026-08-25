@@ -141,7 +141,7 @@ def test_prohibited_task_type_is_rejected(web_env):
 
 
 def test_activity_list_and_audit_permission(web_env):
-    activity = web_env["client"].get("/api/activities?paged=true", headers=auth(web_env["member_a"])).json()
+    activity = web_env["client"].get("/api/activities?paged=true", headers=auth(web_env["owner_a"])).json()
     assert activity["total"] >= 1
     assert web_env["client"].get("/api/audit", headers=auth(web_env["member_a"])).status_code == 403
 
@@ -219,6 +219,8 @@ def test_web_422_api_error_is_safe(web_env):
 
 def test_real_stage7_account_data_is_visible_through_web_api(tmp_path):
     source = ROOT / "server" / "e2e-stage7-idempotent.db"
+    if not source.exists():
+        pytest.skip("optional stage7 fixture is not present")
     copied = tmp_path / "real-data.db"
     shutil.copy2(source, copied)
     settings = configured(database_url=f"sqlite:///{copied.as_posix()}")

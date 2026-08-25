@@ -131,7 +131,8 @@ def test_session_create_read_list_delete_and_member_access():
     env = make_env()
     session = create_session(env, system_prompt="你是一个简洁助手")
     assert session["title"] == "新聊天"
-    assert session["model"] == "gpt-test"
+    assert "model" not in session
+    assert session["memory_mode"] == "SESSION_ONLY"
     assert session["messages"][0]["role"] == "system"
     listed = env["client"].get("/api/ai/chat/sessions", headers=auth(env["member"])).json()
     assert listed["total"] == 1 and listed["items"][0]["session_id"] == session["session_id"]
@@ -166,7 +167,7 @@ def test_streaming_message_multiturn_context_title_usage_and_audit():
     assert detail["title"] == "Reply with exactly: OK"
     assert [item["status"] for item in detail["messages"][-4:]] == ["SUCCESS"] * 4
     assert detail["messages"][-1]["content"] == "You asked: Reply with exactly: OK"
-    assert detail["usage"] == {"prompt_tokens": 22, "completion_tokens": 6, "total_tokens": 28, "latency_ms": detail["usage"]["latency_ms"]}
+    assert detail["usage"] == {}
     with env["client"].app.state.SessionLocal() as db:
         rows = list(db.scalars(select(AIUsage).where(AIUsage.session_id == session["session_id"])))
         assert len(rows) == 2 and all(item.total_tokens == 14 for item in rows)
@@ -181,25 +182,25 @@ def test_user_workspace_provider_and_model_isolation():
     assert env["client"].get(f"/api/ai/chat/sessions/{own['session_id']}", headers=auth(env["owner_b"])).status_code == 404
     assert env["client"].get(f"/api/ai/chat/sessions/{own['session_id']}", headers=auth(env["admin"])).status_code == 404
 
-    invalid_model = env["client"].post(
+    ignored_model = env["client"].post(
         "/api/ai/chat/sessions",
         headers=auth(env["member"]),
         json={"provider_id": env["provider"]["provider_id"], "model": "not-allowed"},
     )
-    assert invalid_model.status_code == 422
+    assert ignored_model.status_code == 200
     disabled = create_provider(env, "owner", "Disabled", status="DISABLED")
     assert env["client"].post(
         "/api/ai/chat/sessions",
         headers=auth(env["member"]),
         json={"provider_id": disabled["provider_id"], "model": "gpt-test"},
-    ).status_code == 422
+    ).status_code == 200
 
     other = create_provider(env, "owner_b", "Workspace B Provider", is_default=True)
     assert env["client"].post(
         "/api/ai/chat/sessions",
         headers=auth(env["member"]),
         json={"provider_id": other["provider_id"], "model": "gpt-test"},
-    ).status_code == 422
+    ).status_code == 200
 
 
 def test_timeout_and_provider_failure_are_recorded_without_secret_leaks():

@@ -181,6 +181,9 @@ nav a {
   padding: 10px 12px;
   border-radius: 7px;
 }
+.nav-group-toggle { display: flex; width: 100%; justify-content: space-between; align-items: center; color: #d9f0ed; border: 0; background: transparent; text-align: left; }
+.nav-group-toggle:hover, .nav-group-toggle.active { color: #fff; background: #173b3a; border-color: transparent; }
+.nav-group-items { padding-left: 9px; border-left: 1px solid rgba(167, 220, 215, 0.22); }
 nav a:hover,
 nav a.active {
   color: white;
@@ -796,6 +799,24 @@ label {
   margin-top: 5px;
   color: #9c2c25;
 }
+.provider-actual-model {
+  margin-top: 4px;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+}
+.online-dot::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #94a3b8;
+  content: "";
+}
+.online-dot.online { color: #0f766e; }
+.online-dot.online::before { background: #14b8a6; }
+.online-dot.offline { color: #718096; }
 .chat-create-controls {
   display: flex;
   gap: 8px;

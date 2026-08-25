@@ -127,6 +127,7 @@ def _session_dict(item: ChatSession, provider_name: str = "", *, running: bool =
         "provider_id": item.provider_id,
         "provider_name": provider_name,
         "model": item.model,
+        "memory_mode": "SESSION_ONLY",
         "is_running": running,
         "created_at": _dt(item.created_at),
         "updated_at": _dt(item.updated_at),
@@ -183,6 +184,8 @@ def register_chat_routes(
             running=registry.is_running(item.id),
         ) | {
             "messages": [_message_dict(message, usage_by_message.get(message.id)) for message in messages],
+            "system_prompt": next((message.content for message in messages if message.role == "system" and message.status == "SUCCESS"), ""),
+            "context_message_count": sum(1 for message in messages if message.role != "system"),
             "usage": totals,
         }
 

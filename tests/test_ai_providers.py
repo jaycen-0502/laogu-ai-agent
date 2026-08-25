@@ -99,7 +99,7 @@ def test_api_key_is_encrypted_at_rest_and_never_returned():
 def test_workspace_isolation_and_member_read_only_permissions():
     env = make_env()
     item = create_provider(env)
-    assert env["client"].get("/api/ai/providers", headers=auth(env["member"])).json()[0]["provider_id"] == item["provider_id"]
+    assert env["client"].get("/api/ai/providers", headers=auth(env["member"])).status_code == 403
     assert env["client"].patch(
         f"/api/ai/providers/{item['provider_id']}",
         headers=auth(env["member"]),
@@ -170,9 +170,9 @@ def test_connection_test_uses_decrypted_key_saves_models_and_audits():
     calls = []
 
     class FakeTester:
-        def test(self, base_url, api_key, *, default_model=""):
+        def test(self, base_url, api_key, *, default_model="", configured_models=None, probe_actual=False):
             calls.append((base_url, api_key, default_model))
-            return {"status": "SUCCESS", "models": ["gpt-a", "gpt-b"], "latency_ms": 12}
+            return {"status": "SUCCESS", "models": ["gpt-a", "gpt-b", "upstream-model"], "actual_model": "upstream-model", "latency_ms": 12}
 
     env["client"].app.state.ai_provider_tester = FakeTester()
     response = env["client"].post(
@@ -181,10 +181,13 @@ def test_connection_test_uses_decrypted_key_saves_models_and_audits():
     )
     assert response.status_code == 200
     assert response.json()["status"] == "SUCCESS"
-    assert response.json()["models"] == ["gpt-a", "gpt-b"]
+    assert response.json()["models"] == ["gpt-a", "gpt-b", "upstream-model"]
+    assert response.json()["actual_model"] == "upstream-model"
     assert calls == [("https://api.openai.com/v1", API_KEY, "gpt-test")]
-    detail = env["client"].get(f"/api/ai/providers/{item['provider_id']}", headers=auth(env["member"])).json()
-    assert detail["last_test_status"] == "SUCCESS" and detail["models"] == ["gpt-a", "gpt-b"]
+    detail = env["client"].get(f"/api/ai/providers/{item['provider_id']}", headers=auth(env["owner"])).json()
+    assert detail["last_test_status"] == "SUCCESS"
+    assert detail["last_actual_model"] == "upstream-model"
+    assert detail["models"] == ["gpt-test", "gpt-a", "gpt-b", "upstream-model"]
     actions = {row["action"] for row in env["client"].get("/api/audit", headers=auth(env["owner"])).json()}
     assert {"AI_PROVIDER_CREATED", "AI_PROVIDER_TESTED"}.issubset(actions)
 
@@ -227,7 +230,7 @@ def test_fetch_models_refreshes_catalog_without_returning_api_key():
     assert API_KEY not in response.text
     assert calls == [("https://api.openai.com/v1", API_KEY, "gpt-test")]
     detail = env["client"].get(f"/api/ai/providers/{item['provider_id']}", headers=auth(env["owner"])).json()
-    assert detail["models"] == ["relay-model-b", "relay-model-a"]
+    assert detail["models"] == ["gpt-test", "relay-model-b", "relay-model-a"]
     actions = {row["action"] for row in env["client"].get("/api/audit", headers=auth(env["owner"])).json()}
     assert "AI_PROVIDER_MODELS_FETCHED" in actions
 
@@ -325,3 +328,61 @@ def test_provider_tester_falls_back_to_authenticated_responses_probe(monkeypatch
         "https://relay.example.com/responses",
     ]
     assert calls[1][1]["headers"]["Authorization"] == f"Bearer {API_KEY}"
+
+
+def test_provider_tester_records_model_returned_by_real_request(monkeypatch):
+    post_calls = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.status_code = 200
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    monkeypatch.setattr("server.ai_provider.socket.getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("8.8.8.8", 443))])
+    monkeypatch.setattr("server.ai_provider.httpx.get", lambda *args, **kwargs: FakeResponse({"data": [{"id": "configured-alias"}]}))
+
+    def fake_post(url, **kwargs):
+        post_calls.append((url, kwargs))
+        return FakeResponse({"model": "upstream-real-model"})
+
+    monkeypatch.setattr("server.ai_provider.httpx.post", fake_post)
+    result = AIProviderTester(5, production=True).test(
+        "https://relay.example.com/v1",
+        API_KEY,
+        default_model="configured-alias",
+        probe_actual=True,
+    )
+
+    assert result["requested_model"] == "configured-alias"
+    assert result["actual_model"] == "upstream-real-model"
+    assert "upstream-real-model" in result["models"]
+    assert post_calls[0][0] == "https://relay.example.com/v1/responses"
+    assert post_calls[0][1]["json"]["input"] == "Reply with OK."
+
+
+def test_real_probe_can_validate_relay_when_models_endpoint_is_unavailable(monkeypatch):
+    class FakeResponse:
+        def __init__(self, status_code, payload):
+            self.status_code = status_code
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    monkeypatch.setattr("server.ai_provider.socket.getaddrinfo", lambda *args, **kwargs: [(None, None, None, None, ("8.8.8.8", 443))])
+    monkeypatch.setattr("server.ai_provider.httpx.get", lambda *args, **kwargs: FakeResponse(403, {"detail": "catalog disabled"}))
+    monkeypatch.setattr("server.ai_provider.httpx.post", lambda *args, **kwargs: FakeResponse(200, {"model": "relay-real-model"}))
+
+    result = AIProviderTester(5, production=True).test(
+        "https://relay.example.com/v1",
+        API_KEY,
+        default_model="configured-alias",
+        probe_actual=True,
+    )
+
+    assert result["status"] == "SUCCESS"
+    assert result["actual_model"] == "relay-real-model"
+    assert result["models"] == ["configured-alias", "relay-real-model"]

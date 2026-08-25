@@ -34,6 +34,7 @@ class User(Base):
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     # Incremented on every Web login so only the newest browser session remains valid.
     web_session_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
@@ -298,6 +299,7 @@ class AIProvider(Base):
     api_key_last4: Mapped[str] = mapped_column(String(4), default="")
     default_model: Mapped[str] = mapped_column(String(160), default="")
     available_models: Mapped[list] = mapped_column("models", JSON, default=list)
+    last_actual_model: Mapped[str] = mapped_column(String(160), default="")
     status: Mapped[str] = mapped_column(String(20), default="DISABLED", index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     last_test_status: Mapped[str] = mapped_column(String(20), default="UNKNOWN")

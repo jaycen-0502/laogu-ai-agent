@@ -63,6 +63,8 @@ const roleNames: Record<string, string> = {
 function Layout({ user }: { user: User }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const aiMenuPaths = new Set(["/ai/chat", "/ai/translation", "/ai/images", "/ai/analysis", "/ai/writing", "/ai/tasks"]);
+  const [aiExpanded, setAiExpanded] = useState(() => location.pathname.startsWith("/ai/"));
   const isPlatformAdmin = user.role === "ADMIN";
   const logout = () => {
     authStore.clear();
@@ -90,8 +92,16 @@ function Layout({ user }: { user: User }) {
           工作区：{user.workspace_id || "全局"}
         </div>
         <nav>
+          <button type="button" className={`nav-group-toggle ${location.pathname.startsWith("/ai/") ? "active" : ""}`} onClick={() => setAiExpanded((value) => !value)}>
+            <span>AI 功能</span><span>{aiExpanded ? "−" : "+"}</span>
+          </button>
+          {aiExpanded && <div className="nav-group-items">
+            {menu.filter(([path, , roles]) => aiMenuPaths.has(path) && canSee(path, roles)).map(([path, label]) => (
+              <Link key={path} className={location.pathname === path || location.pathname.startsWith(`${path}/`) ? "active" : ""} to={path}>{label}</Link>
+            ))}
+          </div>}
           {menu
-            .filter(([path, , roles]) => canSee(path, roles))
+            .filter(([path, , roles]) => !aiMenuPaths.has(path) && canSee(path, roles))
             .map(([path, label]) => (
               <Link
                 key={path}

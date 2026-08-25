@@ -18,6 +18,12 @@ import type {
 
 const fmt = (value?: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN") : "-";
+const formatBytes = (value = 0) => {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+};
 const taskTypeNames: Record<string, string> = {
   "browser.open_url": "打开网页",
   "x.check_login": "检查X登录状态",
@@ -1200,6 +1206,26 @@ function UsersPage({ current }: { current: User }) {
       setMessage(errorText(exc));
     }
   };
+  const clearUserCache = async (item: User) => {
+    if (!window.confirm(`确定清理用户“${item.username}”的 AI 生成文件缓存吗？聊天记录和账号不会删除。`)) return;
+    try {
+      const response = await apiClient<{ released_bytes: number }>(`/users/${item.user_id}/clear-cache`, { method: "POST" });
+      setMessage(`已清理 ${formatBytes(response.released_bytes)} 缓存`);
+      result.reload();
+    } catch (exc) {
+      setMessage(errorText(exc));
+    }
+  };
+  const purgeUser = async (item: User) => {
+    if (!window.confirm(`将永久删除用户“${item.username}”及其聊天、AI 记录、生成文件和用量数据。此操作不可恢复，继续吗？`)) return;
+    try {
+      await apiClient(`/users/${item.user_id}`, { method: "DELETE" });
+      setMessage(`用户“${item.username}”及其数据已永久删除`);
+      result.reload();
+    } catch (exc) {
+      setMessage(errorText(exc));
+    }
+  };
   const openEdit = (item: User) => {
     setMessage("");
     setEditUser(item);
@@ -1380,6 +1406,7 @@ function UsersPage({ current }: { current: User }) {
             <th>角色</th>
             <th>工作区</th>
             <th>状态</th>
+            {current.role === "ADMIN" && <><th>在线</th><th>AI Token</th><th>占用</th></>}
             <th>创建时间</th>
             <th>操作</th>
           </tr>
@@ -1408,10 +1435,16 @@ function UsersPage({ current }: { current: User }) {
               <td>
                 <State value={item.status} />
               </td>
+              {current.role === "ADMIN" && <>
+                <td><span className={`online-dot ${item.online ? "online" : "offline"}`}>{item.online ? "在线" : "离线"}</span></td>
+                <td>{(item.ai_total_tokens || 0).toLocaleString()}</td>
+                <td>{formatBytes(item.storage_bytes || 0)}</td>
+              </>}
               <td>{fmt(item.created_at)}</td>
               <td className="user-actions">
                 <button onClick={() => openEdit(item)}>编辑用户</button>
                 <button onClick={() => void openPolicy(item)}>AI 权限</button>
+                {current.role === "ADMIN" && <button onClick={() => void clearUserCache(item)}>清理缓存</button>}
                 <button
                   disabled={item.user_id === current.user_id || (item.status === "DELETED" && current.role !== "ADMIN")}
                   onClick={() =>
@@ -1422,6 +1455,7 @@ function UsersPage({ current }: { current: User }) {
                 >
                   {item.status === "DELETED" ? "恢复" : current.role === "ADMIN" ? "删除" : item.status === "ACTIVE" ? "停用" : "启用"}
                 </button>
+                {current.role === "ADMIN" && item.user_id !== current.user_id && <button className="danger-button" onClick={() => void purgeUser(item)}>彻底删除</button>}
               </td>
             </tr>
           ))}

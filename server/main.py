@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, or_, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from agent.task_manager import ALLOWED_TASK_TYPES
@@ -40,7 +40,7 @@ from .telegram_translation_api import register_telegram_translation_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
-from .models import AIProvider, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, User, UserAIPolicy, Workspace, now
+from .models import AIAnalysis, AIImage, AIProvider, AITaskProposal, AIUsage, AIWritingRecord, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, ChatMessage, ChatSession, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
 from .schemas import AccountSync, AgentRegister, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
@@ -105,6 +105,19 @@ def _user_dict(item: User, workspace_name: str | None = None) -> dict:
         "workspace_name": workspace_name,
         "status": item.status,
         "created_at": _dt(item.created_at),
+    }
+
+
+def _user_usage(db: Session, item: User) -> dict:
+    token_models = (AIUsage, AIImage, AIAnalysis, AIWritingRecord, AITaskProposal)
+    total_tokens = sum(int(db.scalar(select(func.coalesce(func.sum(model.total_tokens), 0)).where(model.user_id == item.id)) or 0) for model in token_models)
+    storage_bytes = int(db.scalar(select(func.coalesce(func.sum(AIImage.byte_size), 0)).where(AIImage.user_id == item.id)) or 0)
+    last_seen = _aware(item.last_seen_at) if item.last_seen_at else None
+    return {
+        "ai_total_tokens": total_tokens,
+        "storage_bytes": storage_bytes,
+        "last_seen_at": _dt(item.last_seen_at),
+        "online": bool(last_seen and datetime.now(timezone.utc) - last_seen <= timedelta(minutes=5)),
     }
 
 
@@ -440,6 +453,10 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         ):
             audit(db, request, action="AUTH_USER", result="DENIED", message="Inactive or missing user")
             raise HTTPException(status_code=401, detail="Unauthorized")
+        current_time = now()
+        if not user.last_seen_at or current_time - _aware(user.last_seen_at) >= timedelta(seconds=60):
+            user.last_seen_at = current_time
+            db.commit()
         return user
 
     def current_agent(request: Request, authorization: Annotated[str | None, Header()] = None, db: Session = Depends(get_db)) -> Agent:
@@ -754,7 +771,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if q.strip(): query = query.where(User.username.ilike(f"%{q.strip()}%"))
         query = query.order_by(User.created_at.desc())
         workspace_names = {item.id: item.name for item in db.scalars(select(Workspace))}
-        serialize = lambda item: _user_dict(item, workspace_names.get(item.workspace_id))
+        serialize = lambda item: _user_dict(item, workspace_names.get(item.workspace_id)) | (_user_usage(db, item) if user.role == "ADMIN" else {})
         if paged_response: return paged(db, query, serialize, page=page, page_size=page_size)
         return [serialize(item) for item in db.scalars(query)]
 
@@ -833,6 +850,65 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         action = "USER_DELETE" if body.status and body.status.upper() == "DELETED" else "USER_RESTORE" if previous_status == "DELETED" and body.status and body.status.upper() == "ACTIVE" else "USER_UPDATE"
         audit(db, request, action=action, result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, resource_type="user", resource_id=item.id)
         return _user_dict(item)
+
+    @app.post("/api/users/{user_id}/clear-cache")
+    def clear_user_cache(user_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "ADMIN":
+            deny(request, db, action="USER_CACHE_CLEAR", user=user)
+        target = db.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        images = list(db.scalars(select(AIImage).where(AIImage.user_id == target.id)))
+        released_bytes = sum(int(item.byte_size or 0) for item in images)
+        storage_root = Path(app.state.ai_image_storage_root).resolve()
+        for item in images:
+            if not item.file_name:
+                continue
+            candidate = (storage_root / item.workspace_id / item.user_id / item.file_name).resolve()
+            try:
+                candidate.relative_to(storage_root)
+                candidate.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                LOGGER.warning("Failed to remove user cache file", extra={"user_id": target.id, "image_id": item.id})
+        db.execute(delete(AIImage).where(AIImage.user_id == target.id))
+        db.commit()
+        audit(db, request, action="USER_CACHE_CLEAR", result="SUCCESS", user_id=user.id, workspace_id=target.workspace_id, resource_type="user", resource_id=target.id, message=f"released_bytes={released_bytes}")
+        return {"ok": True, "released_bytes": released_bytes}
+
+    @app.delete("/api/users/{user_id}")
+    def permanently_delete_user(user_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "ADMIN":
+            deny(request, db, action="USER_PURGE", user=user)
+        target = db.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == user.id:
+            raise HTTPException(status_code=422, detail="Cannot delete current user")
+        target_id, workspace_id, username = target.id, target.workspace_id, target.username
+        clear_user_cache(user_id, request, user, db)
+        session_ids = list(db.scalars(select(ChatSession.id).where(ChatSession.user_id == target_id)))
+        for session_id in session_ids:
+            app.state.chat_runs.stop(session_id)
+        for model in (UserAIPolicy, Invitation, License, Script, ScriptVersion, AIProvider, TelegramBotBinding):
+            owner_column = getattr(model, "updated_by", None) if model is UserAIPolicy else getattr(model, "created_by", None)
+            if owner_column is not None:
+                db.execute(update(model).where(owner_column == target_id).values({owner_column.key: user.id}))
+        db.execute(update(LicenseRevocation).where(LicenseRevocation.revoked_by == target_id).values(revoked_by=user.id))
+        db.execute(update(Agent).where(Agent.registered_by_user_id == target_id).values(registered_by_user_id=user.id))
+        db.execute(delete(UserAIPolicy).where(UserAIPolicy.user_id == target_id))
+        db.execute(delete(AIUsage).where(AIUsage.user_id == target_id))
+        db.execute(delete(AIAnalysis).where(AIAnalysis.user_id == target_id))
+        db.execute(delete(AIWritingRecord).where(AIWritingRecord.user_id == target_id))
+        db.execute(delete(AITaskProposal).where(AITaskProposal.user_id == target_id))
+        if session_ids:
+            db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
+        db.execute(delete(ChatSession).where(ChatSession.user_id == target_id))
+        db.execute(delete(Invitation).where(Invitation.accepted_user_id == target_id))
+        db.execute(update(AuditLog).where(AuditLog.user_id == target_id).values(user_id=None, message="deleted user activity"))
+        db.execute(delete(User).where(User.id == target_id))
+        db.commit()
+        audit(db, request, action="USER_PURGE", result="SUCCESS", user_id=user.id, workspace_id=workspace_id, resource_type="user", resource_id=target_id, message=f"username={username}")
+        return {"ok": True, "user_id": target_id}
 
     @app.post("/api/agents/register")
     def register_agent(request: Request, body: AgentRegister, user: User = Depends(current_user), db: Session = Depends(get_db)):

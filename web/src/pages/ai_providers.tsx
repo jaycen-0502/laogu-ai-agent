@@ -227,16 +227,17 @@ export function AIProvidersPage({ user }: { user: User }) {
   };
 
   const testConnection = async (item: AIProvider) => {
+    // The probe response may include the model identifier reported by the upstream.
     setBusy(`test:${item.provider_id}`);
     setError("");
     setMessage("");
     try {
-      const result = await apiClient<{ status: string; models: string[]; error?: string }>(
+      const result = await apiClient<{ status: string; models: string[]; error?: string; actual_model?: string }>(
         `/ai/providers/${item.provider_id}/test`,
         { method: "POST" },
       );
       setMessage(result.status === "SUCCESS"
-        ? `连接成功，发现 ${result.models.length} 个模型`
+        ? `连接成功，发现 ${result.models.length} 个模型${result.actual_model ? `；实际返回模型：${result.actual_model}` : ""}`
         : `连接失败：${result.error || "未知错误"}`);
       await load();
     } catch (exc) {
@@ -251,12 +252,12 @@ export function AIProvidersPage({ user }: { user: User }) {
     setError("");
     setMessage("");
     try {
-      const result = await apiClient<{ status: string; models: string[]; error?: string }>(
+      const result = await apiClient<{ status: string; models: string[]; error?: string; actual_model?: string }>(
         `/ai/providers/${item.provider_id}/models`,
         { method: "POST" },
       );
       setMessage(result.status === "SUCCESS"
-        ? `获取成功，发现 ${result.models.length} 个模型`
+        ? `获取成功，发现 ${result.models.length} 个模型${result.actual_model ? `；实际返回模型：${result.actual_model}` : ""}`
         : `获取失败：${result.error || "未知错误"}`);
       await load();
     } catch (exc) {
@@ -292,7 +293,7 @@ export function AIProvidersPage({ user }: { user: User }) {
       </div>
 
       <div className="alert">
-        API Key只在服务端加密保存，页面不会显示或返回完整密钥。连接测试优先读取模型列表；兼容站不支持列表时会检查Responses接口，不发送聊天内容。
+        API Key只在服务端加密保存，页面不会显示或返回完整密钥。测试会先读取模型列表，再使用默认模型发送固定的最小探测请求“Reply with OK.”，读取上游实际返回的模型名称；不会发送任何聊天内容。
       </div>
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert">{message}</div>}
@@ -426,7 +427,11 @@ export function AIProvidersPage({ user }: { user: User }) {
                   <State value={item.last_test_status} />
                   {item.last_error && <div className="muted provider-error">{item.last_error}</div>}
                 </td>
-                <td>{fmt(item.last_tested_at)}<div className="muted">{item.models.length} 个模型</div></td>
+                <td>
+                  {fmt(item.last_tested_at)}
+                  <div className="muted">{item.models.length} 个模型</div>
+                  {item.last_actual_model && <div className="provider-actual-model">实际返回：{item.last_actual_model}</div>}
+                </td>
                 {canManage && (
                   <td>
                     <div className="provider-actions">

@@ -461,34 +461,6 @@ class DesktopController:
         except Exception as exc:
             self.logger.info("Automation statistics sync deferred: %s", exc)
 
-        # The automation engine reports actions performed against target
-        # accounts; it does not itself guarantee a fresh snapshot of the
-        # current account's own followers/following counters. Refresh that
-        # read-only profile after the run so the desktop asset card updates
-        # without requiring the user to click "读取档案" manually.
-        if str(result.get("status") or "").upper() in {"SUCCESS", "COMPLETED"}:
-            try:
-                profile_task = self.task_service.run(
-                    profile_id,
-                    "x.read_profile",
-                    {"readOnly": True, "source": "automation_finished"},
-                )
-                profile_status = getattr(profile_task, "status", None)
-                if str(getattr(profile_status, "value", profile_status) or "").upper() != "SUCCESS":
-                    self.logger.info(
-                        "Profile asset refresh returned %s for profile=%s",
-                        profile_status,
-                        profile_id,
-                    )
-            except Exception as exc:
-                # Asset refresh is supplementary; never turn a completed
-                # automation run into a failed run because X was still loading.
-                self.logger.info(
-                    "Profile asset refresh deferred for profile=%s: %s",
-                    profile_id,
-                    exc,
-                )
-
     @staticmethod
     def _extract_cdp_url(payload: Any) -> str:
         if isinstance(payload, dict):
@@ -626,9 +598,6 @@ class DesktopController:
         mode = str(status.get("authorization_mode") or ("ONLINE" if online else "RESTRICTED"))
         capabilities = {str(item) for item in status.get("capabilities") or [] if str(item)}
 
-        # Backward compatibility for an older embedded Agent/FakeAgentService that
-        # predates capability reporting: an authenticated online Agent receives the
-        # normal online capability set.
         if online:
             capabilities.update(online_capabilities)
             mode = "ONLINE"

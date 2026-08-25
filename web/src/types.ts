@@ -7,6 +7,10 @@ export type User = {
   workspace_name?: string | null;
   status: string;
   created_at?: string;
+  ai_total_tokens?: number;
+  storage_bytes?: number;
+  last_activity_at?: string | null;
+  online?: boolean;
   permissions?: Record<string, boolean>;
 };
 export type Invitation = {
@@ -172,6 +176,34 @@ export type ControlSummary = {
   writing_count: number;
   image_count: number;
   chat_session_count: number;
+  today_automation_runs: number;
+  today_processed_count: number;
+  today_likes: number;
+  today_follows: number;
+  today_comments: number;
+  today_scanned_posts: number;
+};
+
+export type AutomationMetrics = {
+  automation_runs: number;
+  processed_count: number;
+  likes: number;
+  follows: number;
+  comments: number;
+  scanned_posts: number;
+};
+
+export type AutomationMetricRun = Omit<AutomationMetrics, "automation_runs"> & {
+  run_id: string;
+  profile_id: string;
+  x_account_id: string;
+  account_tag: string;
+  metric_date: string;
+  started_at: string;
+  finished_at: string;
+  status: string;
+  own_followers: number | null;
+  own_following: number | null;
 };
 
 export type ControlAgent = Agent & {
@@ -185,6 +217,7 @@ export type ControlProfile = Profile & {
   agent_name: string;
   current_task: Task | null;
   task_count: number;
+  today_metrics: AutomationMetrics;
 };
 
 export type ControlAudit = Audit;
@@ -206,6 +239,8 @@ export type ControlProfileDetail = {
   account: Account | null;
   tasks: (Task & { script_name?: string; script_version?: number | null })[];
   activities: Activity[];
+  today_metrics: AutomationMetrics;
+  automation_metrics: AutomationMetricRun[];
 };
 
 export type OpsMetrics = {
@@ -294,6 +329,7 @@ export type AIProvider = {
   has_api_key: boolean;
   default_model: string;
   models: string[];
+  last_actual_model: string;
   status: "ENABLED" | "DISABLED";
   is_default: boolean;
   last_test_status: "UNKNOWN" | "SUCCESS" | "FAILED";
@@ -330,6 +366,7 @@ export type ChatSession = {
   provider_id: string;
   provider_name: string;
   model: string;
+  memory_mode: "SESSION_ONLY" | string;
   is_running: boolean;
   created_at: string;
   updated_at: string;
@@ -337,6 +374,8 @@ export type ChatSession = {
 
 export type ChatSessionDetail = ChatSession & {
   messages: ChatMessage[];
+  system_prompt?: string;
+  context_message_count?: number;
   usage: ChatUsage;
 };
 
@@ -346,7 +385,7 @@ export type AIImage = {
   user_id: string;
   provider_id: string;
   provider_name: string;
-  model: "gpt-image-2";
+  model: string;
   prompt: string;
   resolution: "1K" | "2K";
   size: string;

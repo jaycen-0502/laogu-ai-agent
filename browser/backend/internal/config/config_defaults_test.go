@@ -7,8 +7,8 @@ func TestDefaultFingerprintArgsIncludeEffectiveRuntimeArgs(t *testing.T) {
 	assertStringSliceContains(t, args, "--fingerprint-brand=Chrome")
 	assertStringSliceContains(t, args, "--fingerprint-platform=windows")
 	assertStringSliceContains(t, args, "--disable-non-proxied-udp")
-	assertStringSliceContains(t, args, "--fingerprinting-canvas-image-data-noise")
-	assertStringSliceContains(t, args, "--fingerprinting-client-rects-noise")
+	assertStringSliceContains(t, args, "--fingerprinting-canvas-image-data-noise=0")
+	assertStringSliceContains(t, args, "--fingerprinting-client-rects-noise=0")
 }
 
 func TestNormalizeConfigUpgradesLegacyMinimalDefaultFingerprintArgs(t *testing.T) {
@@ -20,8 +20,8 @@ func TestNormalizeConfigUpgradesLegacyMinimalDefaultFingerprintArgs(t *testing.T
 	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprint-brand=Chrome")
 	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprint-platform=windows")
 	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--disable-non-proxied-udp")
-	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprinting-canvas-image-data-noise")
-	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprinting-client-rects-noise")
+	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprinting-canvas-image-data-noise=0")
+	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprinting-client-rects-noise=0")
 }
 
 func TestNormalizeConfigDoesNotOverrideCustomDefaultFingerprintArgs(t *testing.T) {

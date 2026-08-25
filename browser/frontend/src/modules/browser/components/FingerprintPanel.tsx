@@ -229,6 +229,23 @@ function EditableOptionInput({ value, onChange, options, placeholder }: Editable
   )
 }
 
+function PrivacyCompatibilityNotice() {
+  return (
+    <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-3 text-sky-900 dark:border-sky-900/60 dark:bg-sky-950/30 dark:text-sky-100">
+      <div className="flex items-start gap-2">
+        <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-sky-700 dark:text-sky-300" />
+        <div className="space-y-1.5 text-xs leading-5">
+          <div className="font-medium text-sm">隐私与兼容性说明</div>
+          <p>WebRTC 策略控制本地网络接口是否参与连接；更严格的策略可能影响视频会议、局域网访问和部分实时通信功能。</p>
+          <p>Canvas / ClientRects 噪声属于隐私保护选项，可能导致依赖像素或尺寸精确值的网页出现兼容性差异。建议按业务需要选择，并通过“指纹自测”确认实际效果。</p>
+          <p>选择“不设置”表示沿用当前内核和系统默认策略。启动流程会补充平台要求的基础保护参数；此处不会修改代理、CDP、Launch API 或 Agent 生命周期。</p>
+          <p className="text-sky-800/80 dark:text-sky-200/80">本面板只提供可见、可审计的配置，不包含隐藏自动化控制或规避第三方平台检测的功能。</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function FingerprintPanel({ value, onChange }: FingerprintPanelProps) {
   const [config, setConfig] = useState<FingerprintConfig>(() => deserialize(value))
   const [advancedOpen, setAdvancedOpen] = useState(false)
@@ -308,6 +325,8 @@ export function FingerprintPanel({ value, onChange }: FingerprintPanelProps) {
           </ul>
         )}
       </div>
+
+      <PrivacyCompatibilityNotice />
 
       <div className="p-3 rounded-lg bg-[var(--color-bg-hover)] border border-[var(--color-border)] space-y-2">
         <div className="flex items-center justify-between gap-3">
@@ -445,7 +464,7 @@ export function FingerprintPanel({ value, onChange }: FingerprintPanelProps) {
         </div>
       </FingerprintSection>
 
-      <FingerprintSection title="兼容伪装">
+      <FingerprintSection title="隐私与兼容性">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormItem label="Canvas 噪声">
             <Select value={config.canvasNoise ?? ''} onChange={e => update({ canvasNoise: e.target.value || undefined })} options={NOISE_OPTIONS} />
@@ -457,8 +476,8 @@ export function FingerprintPanel({ value, onChange }: FingerprintPanelProps) {
 
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-3 space-y-3">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-sm font-medium text-[var(--color-text-primary)]">禁用某项伪装</div>
-            <div className="text-xs text-[var(--color-text-muted)]">关闭开关 = 保持伪装</div>
+            <div className="text-sm font-medium text-[var(--color-text-primary)]">按能力停用伪装</div>
+            <div className="text-xs text-[var(--color-text-muted)]">打开后恢复该能力的原生表现，可能提升兼容性但会减少隐私保护</div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
             {SPOOFING_OPTIONS.map(option => (

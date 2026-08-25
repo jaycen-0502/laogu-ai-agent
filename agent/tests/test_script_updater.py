@@ -3,6 +3,8 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
+
 from agent import script_updater
 
 
@@ -77,3 +79,48 @@ def test_install_and_load_versioned_engine_cache(tmp_path: Path):
     assert rolled_back is not None
     recovered = json.loads((tmp_path / "active.json").read_text(encoding="utf-8"))
     assert recovered["active_sha256"] == hashlib.sha256(first).hexdigest()
+
+
+def test_sync_redownloads_a_damaged_only_cached_version(tmp_path: Path):
+    source = b"class XAutomationEngine:\n    async def run(self, custom_config=None):\n        return {'ok': True}\n"
+    digest = hashlib.sha256(source).hexdigest()
+    manifest = {
+        "version": "0.21.7",
+        "sha256": digest,
+        "size": len(source),
+        "read_only": True,
+        "source_url": "/api/agent/engine/source",
+    }
+
+    class Client:
+        downloads = 0
+
+        def fetch_engine_manifest(self):
+            return manifest
+
+        def fetch_engine_source(self, source_url):
+            assert source_url == "/api/agent/engine/source"
+            self.downloads += 1
+            return source
+
+    client = Client()
+    assert script_updater.sync_engine_from_server(client, tmp_path) is True
+    state = script_updater.read_engine_state(tmp_path)
+    active = tmp_path / state["active_path"]
+    active.write_bytes(b"damaged")
+
+    assert script_updater.sync_engine_from_server(client, tmp_path) is True
+    assert active.read_bytes() == source
+    assert client.downloads == 2
+
+
+def test_install_rejects_invalid_manifest_size(tmp_path: Path):
+    source = b"class XAutomationEngine:\n    async def run(self):\n        return {}\n"
+    manifest = {
+        "version": "0.21.7",
+        "sha256": hashlib.sha256(source).hexdigest(),
+        "size": "not-a-number",
+        "read_only": True,
+    }
+    with pytest.raises(script_updater.EngineUpdateError, match="manifest size"):
+        script_updater.install_engine_update(manifest, source, tmp_path)

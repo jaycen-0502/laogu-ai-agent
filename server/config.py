@@ -24,6 +24,7 @@ class ServerSettings:
     rate_limit_heartbeat: int = 120
     rate_limit_tasks: int = 60
     agent_token_ttl_days: int = 365
+    agent_offline_grace_hours: int = 72
     ai_credential_key: str = ""
     ai_provider_timeout_seconds: int = 10
     rate_limit_ai_test: int = 10
@@ -39,6 +40,7 @@ class ServerSettings:
     rate_limit_ai_analysis: int = 10
     rate_limit_ai_writing: int = 10
     rate_limit_ai_task_proposal: int = 10
+    rate_limit_ai_translate: int = 20
     license_issuer_public_key: str = ""
     license_issuer_private_key_file: str = ""
     license_issuer_key_password_file: str = ""
@@ -67,6 +69,7 @@ def load_server_settings() -> ServerSettings:
         rate_limit_heartbeat=int(os.getenv("LAOGU_RATE_LIMIT_HEARTBEAT", "120")),
         rate_limit_tasks=int(os.getenv("LAOGU_RATE_LIMIT_TASKS", "60")),
         agent_token_ttl_days=int(os.getenv("LAOGU_AGENT_TOKEN_TTL_DAYS", "365")),
+        agent_offline_grace_hours=max(1, int(os.getenv("LAOGU_AGENT_OFFLINE_GRACE_HOURS", "72"))),
         ai_credential_key=os.getenv("LAOGU_AI_CREDENTIAL_KEY", "").strip(),
         ai_provider_timeout_seconds=int(os.getenv("LAOGU_AI_PROVIDER_TIMEOUT_SECONDS", "10")),
         rate_limit_ai_test=int(os.getenv("LAOGU_RATE_LIMIT_AI_TEST", "10")),
@@ -82,6 +85,7 @@ def load_server_settings() -> ServerSettings:
         rate_limit_ai_analysis=int(os.getenv("LAOGU_RATE_LIMIT_AI_ANALYSIS", "10")),
         rate_limit_ai_writing=int(os.getenv("LAOGU_RATE_LIMIT_AI_WRITING", "10")),
         rate_limit_ai_task_proposal=int(os.getenv("LAOGU_RATE_LIMIT_AI_TASK_PROPOSAL", "10")),
+        rate_limit_ai_translate=int(os.getenv("LAOGU_RATE_LIMIT_AI_TRANSLATE", "20")),
         license_issuer_public_key=os.getenv("LAOGU_LICENSE_ISSUER_PUBLIC_KEY", "").strip(),
         license_issuer_private_key_file=os.getenv("LAOGU_LICENSE_ISSUER_PRIVATE_KEY_FILE", "").strip(),
         license_issuer_key_password_file=os.getenv("LAOGU_LICENSE_ISSUER_KEY_PASSWORD_FILE", "").strip(),

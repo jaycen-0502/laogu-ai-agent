@@ -3,9 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ChevronDown, ChevronUp, FolderOpen, HelpCircle, Layers, ShieldCheck } from 'lucide-react'
 import { Button, Card, ConfirmModal, FormItem, Input, Modal, Select, Textarea, toast } from '../../../shared/components'
 import type { BrowserCore, BrowserFingerprintCapabilityReport, BrowserFingerprintCapabilityRow, BrowserFingerprintCheckResult, BrowserProfileInput, BrowserProxy, BrowserGroup, ProxyLocationResolveResult } from '../types'
-import { browserProxyResolveLocation, checkBrowserProfileFingerprint, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfileFingerprintMatrix, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserSettings, fetchGroups, openBrowserFingerprintCheck, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
+import type { LaunchServerInfo } from '../api/launch'
+import { browserProxyResolveLocation, checkBrowserProfileFingerprint, createBrowserProfile, fetchAllTags, fetchBrowserCores, fetchBrowserProfileFingerprintMatrix, fetchBrowserProfiles, fetchBrowserProxies, fetchBrowserSettings, fetchGroups, fetchLaunchServerInfo, openBrowserFingerprintCheck, openUserDataDir, updateBrowserProfile, validateProxyConfig } from '../api'
 import { FingerprintPanel } from '../components/FingerprintPanel'
+import { ProfileConsistencyDiagnostics } from '../components/ProfileConsistencyDiagnostics'
 import { applyLocaleToFingerprintArgs, validateFingerprintArgs, withAdaptiveDefaultWindowSize } from '../utils/fingerprintSerializer'
+import { buildProfileConsistencyDiagnostics, detectHostPlatform } from '../utils/profileConsistencyDiagnostics'
 import { TagInput } from '../components/TagInput'
 import { GroupSelector } from '../components/GroupSelector'
 import { ProxyPickerModal } from '../components/ProxyPickerModal'
@@ -260,6 +263,10 @@ export function BrowserEditPage() {
   const [saveError, setSaveError] = useState('')
   const [locationResolving, setLocationResolving] = useState(false)
   const [locationResult, setLocationResult] = useState<ProxyLocationResolveResult | null>(null)
+  const [diagnosticLocationResult, setDiagnosticLocationResult] = useState<ProxyLocationResolveResult | null>(null)
+  const [diagnosticLaunchServer, setDiagnosticLaunchServer] = useState<LaunchServerInfo | null>(null)
+  const [diagnosticRunning, setDiagnosticRunning] = useState(false)
+  const [diagnosticCheckedAt, setDiagnosticCheckedAt] = useState('')
   const [fingerprintChecking, setFingerprintChecking] = useState(false)
   const [fingerprintPageOpening, setFingerprintPageOpening] = useState(false)
   const [fingerprintCheckResult, setFingerprintCheckResult] = useState<BrowserFingerprintCheckResult | null>(null)
@@ -433,6 +440,7 @@ export function BrowserEditPage() {
     try {
       const result = await browserProxyResolveLocation(formData.proxyId)
       setLocationResult(result)
+      setDiagnosticLocationResult(result)
       if (!result.ok || !result.lang || !result.timezone) {
         toast.error(result.error || '无法根据代理 IP 匹配定位')
         return
@@ -493,6 +501,49 @@ export function BrowserEditPage() {
 
   const defaultCore = cores.find(c => c.isDefault)
   const selectedPoolProxy = proxies.find((proxy) => proxy.proxyId === formData.proxyId)
+  const consistencyDiagnostics = buildProfileConsistencyDiagnostics({
+    fingerprintArgs: formData.fingerprintArgs,
+    launchArgs: normalizeLaunchArgs(launchArgsText.split('\n')),
+    proxyMode,
+    proxyId: formData.proxyId,
+    proxyName: selectedPoolProxy?.proxyName,
+    proxyLocation: diagnosticLocationResult,
+    cores,
+    selectedCoreId: formData.coreId,
+    fingerprintMatrix,
+    launchServer: diagnosticLaunchServer,
+    hostPlatform: detectHostPlatform(),
+  })
+
+  const handleRunConsistencyDiagnostics = async () => {
+    setDiagnosticRunning(true)
+    try {
+      const shouldResolveProxy = proxyMode === 'pool' && !!formData.proxyId && formData.proxyId !== directProxyID
+      const [launchServer, proxyLocation] = await Promise.all([
+        fetchLaunchServerInfo().catch(() => null),
+        shouldResolveProxy ? browserProxyResolveLocation(formData.proxyId).catch((error: unknown) => ({
+          proxyId: formData.proxyId,
+          ok: false,
+          auto: false,
+          source: 'diagnostic',
+          error: (error as Error)?.message || '代理出口定位检查失败',
+          ip: '',
+          country: '',
+          region: '',
+          city: '',
+          timezone: '',
+          lang: '',
+          resolvedAt: new Date().toISOString(),
+        } satisfies ProxyLocationResolveResult)) : Promise.resolve(null),
+      ])
+      setDiagnosticLaunchServer(launchServer)
+      setDiagnosticLocationResult(proxyLocation)
+      setDiagnosticCheckedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+      toast.success('一致性诊断已完成，结果仅供提醒')
+    } finally {
+      setDiagnosticRunning(false)
+    }
+  }
 
   const handleOpenUserDataDir = async () => {
     if (!formData.userDataDir.trim()) {
@@ -606,7 +657,7 @@ export function BrowserEditPage() {
               <div className="flex flex-col sm:flex-row gap-2">
                 <Select
                   value={formData.proxyId}
-                  onChange={e => { handleChange('proxyId', e.target.value); setLocationResult(null) }}
+                  onChange={e => { handleChange('proxyId', e.target.value); setLocationResult(null); setDiagnosticLocationResult(null) }}
                   options={
                     proxies.length > 0
                       ? proxies.map(p => ({ value: p.proxyId, label: p.proxyName || p.proxyId }))
@@ -656,10 +707,17 @@ export function BrowserEditPage() {
       <ProxyPickerModal
         open={proxyPickerOpen}
         currentProxyId={formData.proxyId}
-        onSelect={proxy => { handleChange('proxyId', proxy.proxyId); setLocationResult(null) }}
+        onSelect={proxy => { handleChange('proxyId', proxy.proxyId); setLocationResult(null); setDiagnosticLocationResult(null) }}
         onProxyListUpdated={handleProxyListUpdated}
         onProxyDeleted={handleProxyDeleted}
         onClose={() => setProxyPickerOpen(false)}
+      />
+
+      <ProfileConsistencyDiagnostics
+        items={consistencyDiagnostics}
+        running={diagnosticRunning}
+        checkedAt={diagnosticCheckedAt}
+        onRun={handleRunConsistencyDiagnostics}
       />
 
       <Card

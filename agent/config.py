@@ -72,6 +72,7 @@ class Settings:
     server_agent_token: str
     agent_credentials_file: Path
     agent_state_file: Path
+    offline_access_file: Path
     agent_heartbeat_seconds: int
     engine_update_url: str
     engine_cache_dir: Path
@@ -130,6 +131,7 @@ def load_settings() -> Settings:
         server_agent_token=os.getenv("LAOGU_AGENT_TOKEN", "").strip(),
         agent_credentials_file=PROJECT_ROOT / "agent_data" / "credentials.json",
         agent_state_file=PROJECT_ROOT / "agent_data" / "agent_state.db",
+        offline_access_file=PROJECT_ROOT / "agent_data" / "offline_access.json",
         agent_heartbeat_seconds=max(5, _env_int("LAOGU_AGENT_HEARTBEAT_SECONDS", 30)),
         engine_update_url=os.getenv("LAOGU_ENGINE_UPDATE_URL", "").strip(),
         engine_cache_dir=PROJECT_ROOT / "agent_data" / "engine_cache",

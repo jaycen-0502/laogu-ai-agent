@@ -12,7 +12,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.orm import Session
 
 from agent.task_manager import ALLOWED_TASK_TYPES
@@ -34,12 +34,16 @@ from .engine_update_api import register_engine_update_routes
 from .writing_api import register_writing_routes
 from .writing_service import AIWritingService
 from .task_proposal_api import register_task_proposal_routes
+from .translation_api import register_translation_routes
+from .telegram_bot_service import TelegramBotManager
+from .telegram_translation_api import register_telegram_translation_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
-from .models import AIProvider, Account, Activity, Agent, AgentToken, AuditLog, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, User, UserAIPolicy, Workspace, now
+from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
-from .schemas import AccountSync, AgentRegister, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
+from .offline_access import issue_agent_offline_access
+from .schemas import AccountSync, AgentRegister, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
 from .security_diagnostics import configuration_diagnostics, database_diagnostic
 from .script_api import register_script_routes
@@ -103,6 +107,21 @@ def _user_dict(item: User, workspace_name: str | None = None) -> dict:
         "status": item.status,
         "created_at": _dt(item.created_at),
     }
+
+
+def _user_usage(db: Session, item: User) -> dict:
+    from .models import AIAnalysis, AITaskProposal, AIWritingRecord
+    token_models = (AIUsage, AIImage, AIAnalysis, AIWritingRecord, AITaskProposal)
+    tokens = sum(
+        int(db.scalar(select(func.coalesce(func.sum(model.total_tokens), 0)).where(model.user_id == item.id)) or 0)
+        for model in token_models
+    )
+    storage = int(db.scalar(select(func.coalesce(func.sum(AIImage.byte_size), 0)).where(AIImage.user_id == item.id)) or 0)
+    last_activity = db.scalar(select(func.max(AuditLog.timestamp)).where(AuditLog.user_id == item.id))
+    if last_activity is not None and last_activity.tzinfo is None:
+        last_activity = last_activity.replace(tzinfo=timezone.utc)
+    online = bool(last_activity and datetime.now(timezone.utc) - last_activity.astimezone(timezone.utc) <= timedelta(minutes=5))
+    return {"ai_total_tokens": tokens, "storage_bytes": storage, "last_activity_at": _dt(last_activity), "online": online}
 
 
 def _workspace_dict(item: Workspace) -> dict:
@@ -234,6 +253,20 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         settings.ai_chat_max_output_tokens,
         production=settings.environment == "production",
     )
+    telegram_manager = TelegramBotManager(
+        SessionLocal,
+        credential_cipher,
+        ai_service,
+    )
+    app.state.telegram_manager = telegram_manager
+
+    @app.on_event("startup")
+    async def start_telegram_manager() -> None:
+        telegram_manager.start()
+
+    @app.on_event("shutdown")
+    async def stop_telegram_manager() -> None:
+        telegram_manager.stop()
     analysis_service = AIAnalysisService(ai_service)
     writing_service = AIWritingService(analysis_service)
     task_proposal_service = AITaskProposalService(analysis_service)
@@ -295,6 +328,9 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if request.url.path == "/api/ai/task-proposals":
             limit = settings.rate_limit_ai_task_proposal
             rate_bucket = "/api/ai/task-proposals"
+        if request.url.path == "/api/ai/translate":
+            limit = settings.rate_limit_ai_translate
+            rate_bucket = "/api/ai/translate"
         if request.url.path == "/api/license/issue" and request.method == "POST":
             limit = settings.rate_limit_license_issue
             rate_bucket = "/api/license/issue"
@@ -319,11 +355,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
                         member = None
                     if member and member.status == "ACTIVE" and member.role == "MEMBER":
                         path = request.url.path
-                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/ai/chat", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
+                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/ai/chat", "/api/ai/translate", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
                         if not path.startswith(allowed):
                             return secure_response(403, "该账号无权访问此功能")
                         feature_by_prefix = {
                             "/api/ai/chat": "CHAT",
+                            "/api/ai/translate": "TRANSLATE",
                             "/api/ai/writing": "WRITING",
                             "/api/ai/analysis": "ANALYSIS",
                             "/api/ai/task-proposals": "TASKS",
@@ -721,7 +758,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if q.strip(): query = query.where(User.username.ilike(f"%{q.strip()}%"))
         query = query.order_by(User.created_at.desc())
         workspace_names = {item.id: item.name for item in db.scalars(select(Workspace))}
-        serialize = lambda item: _user_dict(item, workspace_names.get(item.workspace_id))
+        serialize = lambda item: _user_dict(item, workspace_names.get(item.workspace_id)) | (_user_usage(db, item) if user.role == "ADMIN" else {})
         if paged_response: return paged(db, query, serialize, page=page, page_size=page_size)
         return [serialize(item) for item in db.scalars(query)]
 
@@ -801,6 +838,70 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         audit(db, request, action=action, result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, resource_type="user", resource_id=item.id)
         return _user_dict(item)
 
+    @app.post("/api/users/{user_id}/clear-cache")
+    def clear_user_cache(user_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "ADMIN":
+            deny(request, db, action="USER_CACHE_CLEAR", user=user)
+        target = db.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        images = list(db.scalars(select(AIImage).where(AIImage.user_id == target.id)))
+        released_bytes = sum(int(item.byte_size or 0) for item in images)
+        storage_root = Path(app.state.ai_image_storage_root)
+        for item in images:
+            if not item.file_name:
+                continue
+            candidate = (storage_root / item.workspace_id / item.user_id / item.file_name).resolve()
+            try:
+                candidate.relative_to(storage_root.resolve())
+                candidate.unlink(missing_ok=True)
+            except (OSError, ValueError):
+                LOGGER.warning("Failed to remove user cache file", extra={"user_id": target.id, "image_id": item.id})
+        db.execute(delete(AIImage).where(AIImage.user_id == target.id))
+        db.commit()
+        audit(db, request, action="USER_CACHE_CLEAR", result="SUCCESS", user_id=user.id, workspace_id=target.workspace_id, resource_type="user", resource_id=target.id, message=f"released_bytes={released_bytes}")
+        return {"ok": True, "released_bytes": released_bytes}
+
+    @app.delete("/api/users/{user_id}")
+    def permanently_delete_user(user_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "ADMIN":
+            deny(request, db, action="USER_PURGE", user=user)
+        target = db.get(User, user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.id == user.id:
+            raise HTTPException(status_code=422, detail="Cannot delete current user")
+        target_id = target.id
+        target_workspace_id = target.workspace_id
+        target_username = target.username
+        clear_user_cache(user_id, request, user, db)
+        from .models import AIAnalysis, AITaskProposal, AIWritingRecord, ChatMessage, ChatSession
+        session_ids = list(db.scalars(select(ChatSession.id).where(ChatSession.user_id == target_id)))
+        for session_id in session_ids:
+            app.state.chat_runs.stop(session_id)
+        db.execute(update(UserAIPolicy).where(UserAIPolicy.updated_by == target_id).values(updated_by=user.id))
+        db.execute(update(Invitation).where(Invitation.created_by == target_id).values(created_by=user.id))
+        db.execute(update(License).where(License.created_by == target_id).values(created_by=user.id))
+        db.execute(update(Agent).where(Agent.registered_by_user_id == target_id).values(registered_by_user_id=user.id))
+        db.execute(update(Script).where(Script.created_by == target_id).values(created_by=user.id))
+        db.execute(update(ScriptVersion).where(ScriptVersion.created_by == target_id).values(created_by=user.id))
+        db.execute(update(AIProvider).where(AIProvider.created_by == target_id).values(created_by=user.id))
+        db.execute(update(TelegramBotBinding).where(TelegramBotBinding.created_by == target_id).values(created_by=user.id))
+        db.execute(delete(UserAIPolicy).where(UserAIPolicy.user_id == target_id))
+        db.execute(delete(AIUsage).where(AIUsage.user_id == target_id))
+        db.execute(delete(AIAnalysis).where(AIAnalysis.user_id == target_id))
+        db.execute(delete(AIWritingRecord).where(AIWritingRecord.user_id == target_id))
+        db.execute(delete(AITaskProposal).where(AITaskProposal.user_id == target_id))
+        if session_ids:
+            db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
+        db.execute(delete(ChatSession).where(ChatSession.user_id == target_id))
+        db.execute(delete(Invitation).where(Invitation.accepted_user_id == target_id))
+        db.execute(update(AuditLog).where(AuditLog.user_id == target_id).values(user_id=None, message="deleted user activity"))
+        db.execute(delete(User).where(User.id == target_id))
+        db.commit()
+        audit(db, request, action="USER_PURGE", result="SUCCESS", user_id=user.id, workspace_id=target_workspace_id, resource_type="user", resource_id=target_id, message=f"username={target_username}")
+        return {"ok": True, "user_id": target_id}
+
     @app.post("/api/agents/register")
     def register_agent(request: Request, body: AgentRegister, user: User = Depends(current_user), db: Session = Depends(get_db)):
         if user.role not in {"ADMIN", "OWNER"}: deny(request, db, action="AGENT_REGISTER", user=user)
@@ -852,6 +953,30 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         audit(db, request, action="AGENT_DELETE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message=f"revoked_tokens={revoked}")
         return {"agent_id": agent.id, "status": "DELETED", "revoked": revoked}
 
+    @app.post("/api/agents/{agent_id}/recover")
+    def recover_agent(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        """Recover a deleted runtime with a fresh token and device binding."""
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        require_agent_manager(request, db, user, agent)
+        if agent.status != "DELETED":
+            raise HTTPException(status_code=409, detail="Agent is not deleted")
+        issued = now()
+        for old in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
+            old.status = TOKEN_REVOKED
+            old.revoked_at = issued
+        agent.status = "OFFLINE"
+        agent.bound_device_id = None
+        agent.bound_ip = None
+        agent.bound_at = None
+        agent.last_heartbeat = None
+        agent.last_ip = None
+        raw_token, token = create_token(db, agent.id)
+        db.commit()
+        audit(db, request, action="AGENT_RECOVER", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message="new token issued; device binding reset")
+        return {"agent_id": agent.id, "token_id": token.token_id, "agent_token": raw_token, "workspace_id": agent.workspace_id, "status": agent.status}
+
     @app.post("/api/agents/heartbeat")
     def heartbeat(request: Request, body: Heartbeat, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         if body.agent_id != agent.id: deny(request, db, action="AGENT_HEARTBEAT", agent=agent)
@@ -875,7 +1000,11 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if body.client_version:
             agent.client_version = body.client_version
         db.commit()
-        return _agent_dict(agent, settings)
+        response = _agent_dict(agent, settings)
+        offline_access = issue_agent_offline_access(settings, agent, device_id=device_id)
+        if offline_access:
+            response["offline_access"] = offline_access
+        return response
 
     @app.get("/api/agents")
     def agents(q: str = "", status: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), paged_response: bool = Query(False, alias="paged"), user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -915,6 +1044,56 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             for key, value in incoming.model_dump().items(): setattr(account, key, value)
         agent.profile_count = len(body.items); db.commit()
         return {"ok": True, "synced": len(body.items)}
+
+    @app.post("/api/agent/automation-metrics")
+    def sync_automation_metric(
+        request: Request,
+        body: AutomationMetricSync,
+        agent: Agent = Depends(current_agent),
+        db: Session = Depends(get_db),
+    ):
+        if body.agent_id != agent.id:
+            deny(request, db, action="AUTOMATION_METRIC_SYNC", agent=agent)
+
+        existing = db.scalar(select(AutomationMetric).where(AutomationMetric.run_id == body.run_id))
+        if existing is not None:
+            if existing.agent_id != agent.id:
+                raise HTTPException(status_code=409, detail="Automation run ID already belongs to another Agent")
+            return {"ok": True, "idempotent": True, "run_id": existing.run_id}
+
+        profile = db.scalar(
+            select(Profile).where(Profile.agent_id == agent.id, Profile.profile_id == body.profile_id)
+        )
+        account = db.scalar(
+            select(Account).where(Account.agent_id == agent.id, Account.profile_id == body.profile_id)
+        )
+        if profile is None or account is None:
+            raise HTTPException(status_code=409, detail="Profile/account must be synchronized before metrics")
+        if body.x_account_id and account.x_account_id and body.x_account_id != account.x_account_id:
+            raise HTTPException(status_code=409, detail="X account does not match the synchronized Profile")
+
+        metric = AutomationMetric(
+            run_id=body.run_id,
+            workspace_id=agent.workspace_id,
+            agent_id=agent.id,
+            profile_id=body.profile_id,
+            x_account_id=account.x_account_id or body.x_account_id,
+            account_tag=body.account_tag,
+            metric_date=body.metric_date,
+            started_at=body.started_at,
+            finished_at=body.finished_at,
+            status=body.status,
+            processed_count=body.processed_count,
+            likes=body.likes,
+            follows=body.follows,
+            comments=body.comments,
+            scanned_posts=body.scanned_posts,
+            own_followers=body.own_followers,
+            own_following=body.own_following,
+        )
+        db.add(metric)
+        db.commit()
+        return {"ok": True, "idempotent": False, "run_id": metric.run_id}
 
     @app.get("/api/profiles")
     def profiles(q: str = "", status: str = "", page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100), paged_response: bool = Query(False, alias="paged"), user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -1078,6 +1257,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     )
     register_engine_update_routes(
         app,
+        current_user=current_user,
         current_agent=current_agent,
     )
     register_ai_provider_routes(
@@ -1131,6 +1311,19 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         cipher=credential_cipher,
         proposal_service=task_proposal_service,
         task_serializer=_task_dict,
+    )
+    register_translation_routes(
+        app,
+        get_db=get_db,
+        current_user=current_user,
+        cipher=credential_cipher,
+        ai_service=ai_service,
+    )
+    register_telegram_translation_routes(
+        app,
+        get_db=get_db,
+        current_user=current_user,
+        cipher=credential_cipher,
     )
     register_control_routes(
         app,

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
-from sqlalchemy import Boolean, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -127,6 +127,34 @@ class Account(Base):
     last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mapping_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint("agent_id", "profile_id", name="uq_account_agent_profile"),)
+
+
+class AutomationMetric(Base):
+    """Whitelisted counters reported by the desktop automation result adapter."""
+
+    __tablename__ = "automation_metrics"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    run_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
+    profile_id: Mapped[str] = mapped_column(String(100), index=True)
+    x_account_id: Mapped[str] = mapped_column(String(40), default="", index=True)
+    account_tag: Mapped[str] = mapped_column(String(120), default="")
+    metric_date: Mapped[date] = mapped_column(Date, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(20), default="ERROR")
+    processed_count: Mapped[int] = mapped_column(Integer, default=0)
+    likes: Mapped[int] = mapped_column(Integer, default=0)
+    follows: Mapped[int] = mapped_column(Integer, default=0)
+    comments: Mapped[int] = mapped_column(Integer, default=0)
+    scanned_posts: Mapped[int] = mapped_column(Integer, default=0)
+    own_followers: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    own_following: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (
+        Index("ix_automation_metrics_agent_profile_date", "agent_id", "profile_id", "metric_date"),
+    )
 
 
 class Task(Base):
@@ -268,6 +296,7 @@ class AIProvider(Base):
     api_key_last4: Mapped[str] = mapped_column(String(4), default="")
     default_model: Mapped[str] = mapped_column(String(160), default="")
     available_models: Mapped[list] = mapped_column("models", JSON, default=list)
+    last_actual_model: Mapped[str] = mapped_column(String(160), default="")
     status: Mapped[str] = mapped_column(String(20), default="DISABLED", index=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     last_test_status: Mapped[str] = mapped_column(String(20), default="UNKNOWN")
@@ -286,6 +315,39 @@ class AIProvider(Base):
             postgresql_where=text("is_default"),
         ),
     )
+
+
+class TelegramBotBinding(Base):
+    """Encrypted Telegram bot binding managed by a platform administrator."""
+
+    __tablename__ = "telegram_bot_bindings"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), unique=True, index=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    bot_token_encrypted: Mapped[str] = mapped_column(Text)
+    bot_token_last4: Mapped[str] = mapped_column(String(4), default="")
+    admin_telegram_user_id: Mapped[str] = mapped_column(String(32), index=True)
+    default_target_language: Mapped[str] = mapped_column(String(20), default="zh-CN")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    last_error: Mapped[str] = mapped_column(String(200), default="")
+    last_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class TelegramAllowedUser(Base):
+    """Telegram identities allowed to use a binding for translation."""
+
+    __tablename__ = "telegram_allowed_users"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    binding_id: Mapped[str] = mapped_column(ForeignKey("telegram_bot_bindings.id", ondelete="CASCADE"), index=True)
+    telegram_user_id: Mapped[str] = mapped_column(String(32), index=True)
+    username: Mapped[str] = mapped_column(String(120), default="")
+    display_name: Mapped[str] = mapped_column(String(160), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("binding_id", "telegram_user_id", name="uq_telegram_allowed_binding_user"),)
 
 
 class ChatSession(Base):

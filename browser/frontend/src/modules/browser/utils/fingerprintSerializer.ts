@@ -436,14 +436,14 @@ export function buildFingerprintConfigFromPersona(persona: FingerprintPersona): 
     resolution: persona.resolution,
     hardwareConcurrency: persona.hardwareConcurrency,
     webrtcPolicy: 'disable_non_proxied_udp',
-    canvasNoise: '1',
-    clientRectsNoise: '1',
+    canvasNoise: '0',
+    clientRectsNoise: '0',
   }
 }
 
 const EFFECTIVE_RUNTIME_NOISE_CONFIG: Pick<FingerprintConfig, 'canvasNoise' | 'clientRectsNoise'> = {
-  canvasNoise: '1',
-  clientRectsNoise: '1',
+  canvasNoise: '0',
+  clientRectsNoise: '0',
 }
 
 // ─── 预设指纹配置 ────────────────────────────────────────────────────────────

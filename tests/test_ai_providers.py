@@ -10,7 +10,8 @@ from server.ai_provider import AIProviderTester, ProviderConnectionError, normal
 from server.config import ServerSettings
 from server.config_check import ProductionConfigError, check_server_config
 from server.main import create_app
-from server.models import AIProvider
+from server.ai_service import AIService, AIUsageResult
+from server.models import AIProvider, User
 
 
 API_KEY = "sk-stage9a-plain-secret-1234"
@@ -212,6 +213,53 @@ def test_fetch_models_requires_provider_manager_permissions():
         f"/api/ai/providers/{item['provider_id']}/models",
         headers=auth(env["member"]),
     ).status_code == 403
+
+
+def test_translation_uses_assigned_user_model_and_does_not_log_source(monkeypatch):
+    env = make_env()
+    item = create_provider(env, name="Translation Provider", is_default=True)
+    with env["client"].app.state.SessionLocal() as db:
+        member_id = db.scalar(select(User.id).where(User.username == "member-a"))
+    assert member_id
+    policy = env["client"].put(
+        f"/api/users/{member_id}/ai-policy",
+        headers=auth(env["owner"]),
+        json={"feature": "TRANSLATE", "enabled": True, "provider_id": item["provider_id"], "model": "gpt-test"},
+    )
+    assert policy.status_code == 200, policy.text
+    calls = []
+
+    def fake_stream(self, **kwargs):
+        calls.append(kwargs)
+        yield {"type": "delta", "delta": "你好，世界"}
+        yield {"type": "completed", "usage": AIUsageResult(3, 4, 7)}
+
+    monkeypatch.setattr(AIService, "stream", fake_stream)
+    response = env["client"].post(
+        "/api/ai/translate",
+        headers=auth(env["member"]),
+        json={"text": "Hello, world", "source_language": "en", "target_language": "zh-CN", "model": "not-allowed"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["translated_text"] == "你好，世界"
+    assert "model" not in response.json()
+    assert calls and calls[0]["model"] == "gpt-test"
+    assert "Hello, world" not in {row["message"] for row in env["client"].get("/api/audit", headers=auth(env["owner"])).json()}
+
+
+def test_translation_is_disabled_for_members_until_assigned(monkeypatch):
+    env = make_env()
+
+    def fake_stream(self, **kwargs):
+        yield {"type": "delta", "delta": "should not run"}
+
+    monkeypatch.setattr(AIService, "stream", fake_stream)
+    response = env["client"].post(
+        "/api/ai/translate",
+        headers=auth(env["member"]),
+        json={"text": "Hello", "source_language": "en", "target_language": "zh-CN"},
+    )
+    assert response.status_code == 403
 
 
 def test_disabled_provider_can_be_deleted_but_enabled_provider_cannot():

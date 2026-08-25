@@ -17,6 +17,12 @@ import type {
 
 const fmt = (value?: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN") : "-";
+const formatBytes = (value = 0) => {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+};
 const taskTypeNames: Record<string, string> = {
   "browser.open_url": "打开网页",
   "x.check_login": "检查X登录状态",
@@ -467,6 +473,17 @@ function AgentsPage({ current }: { current: User }) {
       setRegisterMessage(errorText(exc));
     }
   };
+  const recoverAgent = async (item: Agent) => {
+    if (!window.confirm(`确认恢复“${item.agent_name}”的授权吗？旧 Token 会保持失效，并清除旧设备绑定。`)) return;
+    try {
+      const recovered = await apiClient<{ agent_id: string; agent_token: string; workspace_id: string }>(`/agents/${item.agent_id}/recover`, { method: "POST" });
+      setRegisterResult(recovered);
+      setRegisterMessage("运行端授权已恢复。请只在新的 Windows 运行端保存这次 Token；首次心跳会重新绑定当前设备。 ");
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
   const downloadSetupScript = () => {
     if (!registerResult) return;
     const quote = (value: string) => `'${value.replace(/'/g, "''")}'`;
@@ -592,8 +609,8 @@ if ($setupSucceeded) {
             {selected.recent_tasks?.length || 0}
           </p>
           <p className="form-help">如果 Windows Agent 的 Token 遗失或泄露，可以重新生成；旧 Token 会立即失效。</p>
-          <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>
-          <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>
+          {selected.status === "DELETED" ? <button onClick={() => void recoverAgent(selected)}>恢复授权</button> : <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>}
+          {selected.status !== "DELETED" && <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>}
           <button onClick={() => setSelected(null)}>关闭</button>
         </div>
       )}
@@ -1184,6 +1201,22 @@ function UsersPage({ current }: { current: User }) {
       setMessage(errorText(exc));
     }
   };
+  const clearUserCache = async (item: User) => {
+    if (!window.confirm(`确定清理用户“${item.username}”的 AI 缓存和生成文件吗？聊天文本与账号不会删除。`)) return;
+    try {
+      const response = await apiClient<{ released_bytes: number }>(`/users/${item.user_id}/clear-cache`, { method: "POST" });
+      setMessage(`已清理 ${formatBytes(response.released_bytes)} 缓存`);
+      result.reload();
+    } catch (exc) { setMessage(errorText(exc)); }
+  };
+  const purgeUser = async (item: User) => {
+    if (!window.confirm(`将永久删除用户“${item.username}”及其聊天、AI记录、生成文件和用量数据，此操作不可恢复。继续吗？`)) return;
+    try {
+      await apiClient(`/users/${item.user_id}`, { method: "DELETE" });
+      setMessage(`用户“${item.username}”及其数据已永久删除`);
+      result.reload();
+    } catch (exc) { setMessage(errorText(exc)); }
+  };
   const openEdit = (item: User) => {
     setMessage("");
     setEditUser(item);
@@ -1364,6 +1397,7 @@ function UsersPage({ current }: { current: User }) {
             <th>角色</th>
             <th>工作区</th>
             <th>状态</th>
+            {current.role === "ADMIN" && <><th>在线</th><th>AI Token</th><th>占用</th></>}
             <th>创建时间</th>
             <th>操作</th>
           </tr>
@@ -1392,10 +1426,16 @@ function UsersPage({ current }: { current: User }) {
               <td>
                 <State value={item.status} />
               </td>
+              {current.role === "ADMIN" && <>
+                <td><span className={`online-dot ${item.online ? "online" : "offline"}`}>{item.online ? "在线" : "离线"}</span></td>
+                <td>{(item.ai_total_tokens || 0).toLocaleString()}</td>
+                <td>{formatBytes(item.storage_bytes || 0)}</td>
+              </>}
               <td>{fmt(item.created_at)}</td>
               <td className="user-actions">
                 <button onClick={() => openEdit(item)}>编辑用户</button>
                 <button onClick={() => void openPolicy(item)}>AI 权限</button>
+                {current.role === "ADMIN" && <button onClick={() => void clearUserCache(item)}>清理缓存</button>}
                 <button
                   disabled={item.user_id === current.user_id || (item.status === "DELETED" && current.role !== "ADMIN")}
                   onClick={() =>
@@ -1406,6 +1446,7 @@ function UsersPage({ current }: { current: User }) {
                 >
                   {item.status === "DELETED" ? "恢复" : current.role === "ADMIN" ? "删除" : item.status === "ACTIVE" ? "停用" : "启用"}
                 </button>
+                {current.role === "ADMIN" && item.user_id !== current.user_id && <button className="danger-button" onClick={() => void purgeUser(item)}>彻底删除</button>}
               </td>
             </tr>
           ))}
@@ -1461,13 +1502,14 @@ function UsersPage({ current }: { current: User }) {
           <section className="modal-panel ai-policy-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header"><div><h2>AI 功能权限与模型</h2><span className="muted">为 {policyUser.username} 分配允许使用的 AI 功能、服务商和模型</span></div><button onClick={() => setPolicyUser(null)}>关闭</button></div>
             <div className="policy-header"><span>功能权限</span><span>使用的 AI 服务商</span><span>使用的模型</span></div>
-            {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"] as const).map((feature) => {
+            {(["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES", "TRANSLATE"] as const).map((feature) => {
               const featureMeta = {
                 CHAT: ["AI 聊天", "与 AI 进行日常问答和连续对话"],
                 WRITING: ["AI 话术", "生成文案、回复内容和沟通话术"],
                 ANALYSIS: ["AI 分析", "分析账号、内容和业务数据"],
                 TASKS: ["AI 任务", "让 AI 生成并规划自动化任务"],
                 IMAGES: ["AI 生图", "使用文字描述生成图片"],
+                TRANSLATE: ["AI 翻译", "在指定语言之间翻译文本"],
               }[feature];
               const assignment = policy.models[feature] || {};
               const provider = policyProviders.find((item) => item.provider_id === assignment.provider_id);

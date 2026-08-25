@@ -11,8 +11,8 @@ func TestCreateAppliesDefaultFingerprintArgsWhenInputIsEmpty(t *testing.T) {
 		"--fingerprint-brand=Chrome",
 		"--fingerprint-platform=windows",
 		"--disable-non-proxied-udp",
-		"--fingerprinting-canvas-image-data-noise",
-		"--fingerprinting-client-rects-noise",
+		"--fingerprinting-canvas-image-data-noise=0",
+		"--fingerprinting-client-rects-noise=0",
 	}
 
 	profile, err := manager.Create(ProfileInput{ProfileName: "test"})
@@ -21,8 +21,8 @@ func TestCreateAppliesDefaultFingerprintArgsWhenInputIsEmpty(t *testing.T) {
 	}
 
 	assertStringSliceContains(t, profile.FingerprintArgs, "--disable-non-proxied-udp")
-	assertStringSliceContains(t, profile.FingerprintArgs, "--fingerprinting-canvas-image-data-noise")
-	assertStringSliceContains(t, profile.FingerprintArgs, "--fingerprinting-client-rects-noise")
+	assertStringSliceContains(t, profile.FingerprintArgs, "--fingerprinting-canvas-image-data-noise=0")
+	assertStringSliceContains(t, profile.FingerprintArgs, "--fingerprinting-client-rects-noise=0")
 }
 
 func TestCreateKeepsExplicitFingerprintArgs(t *testing.T) {

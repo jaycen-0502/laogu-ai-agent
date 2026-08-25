@@ -101,6 +101,40 @@ def test_four_read_only_task_types_return_expected_structures():
         assert Path(temp_dir, "profile_snapshot.json").exists()
 
 
+def test_partial_profile_snapshot_keeps_last_known_asset_counts():
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = ProfileSnapshotStore(Path(temp_dir) / "profile_snapshot.json")
+        store.update("p1", {
+            "x_username": "@example",
+            "followers_count": 123,
+            "following_count": 45,
+            "profile_data_status": "COMPLETE",
+        })
+        store.update("p1", {
+            "x_username": "@example",
+            "followers_count": None,
+            "following_count": None,
+            "profile_data_status": "PARTIAL",
+            "profile_data_warnings": ["profile header still loading"],
+        })
+        snapshot = store.get("p1")
+        assert snapshot is not None
+        assert snapshot["followers_count"] == 123
+        assert snapshot["following_count"] == 45
+        assert snapshot["profile_data_status"] == "PARTIAL"
+
+
+def test_profile_result_normalizes_browser_counter_aliases():
+    normalized = ReadOnlyTaskExecutor._normalize_result({
+        "followersCount": "1,234",
+        "following": "5.0",
+        "xUsername": "@example",
+    })
+    assert normalized["followers_count"] == 1234
+    assert normalized["following_count"] == 5
+    assert normalized["x_username"] == "@example"
+
+
 def test_task_failure_and_timeout_are_distinct_and_profile_isolated():
     failed_manager = TaskManager(FakeBrowserManager(), logger(), max_workers=2, task_executor=RaisingExecutor(RuntimeError("failure")))
     failed = make_task(failed_manager, "x.check_login", profile_id="bad")

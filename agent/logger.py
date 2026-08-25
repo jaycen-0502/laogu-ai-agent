@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 import re
+import sys
 import threading
 from typing import Any
 
@@ -33,12 +34,20 @@ def build_logger(log_file: Path) -> logging.Logger:
             "[%(asctime)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        console = logging.StreamHandler()
-        console.setFormatter(formatter)
         file_handler = logging.FileHandler(log_file, encoding="utf-8")
         file_handler.setFormatter(formatter)
-        logger.addHandler(console)
         logger.addHandler(file_handler)
+
+        # PyInstaller's windowed bootloader intentionally starts with
+        # sys.stderr=None.  A StreamHandler created in that state keeps a
+        # None stream forever and later raises "NoneType has no attribute
+        # write" from worker threads.  Keep the durable file handler in all
+        # modes and add console output only when a writable stream exists.
+        stream = getattr(sys, "stderr", None)
+        if stream is not None and callable(getattr(stream, "write", None)):
+            console = logging.StreamHandler(stream)
+            console.setFormatter(formatter)
+            logger.addHandler(console)
         return logger
 
 

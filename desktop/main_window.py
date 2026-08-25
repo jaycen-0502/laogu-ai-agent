@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime
 import json
 import os
@@ -11,6 +12,7 @@ from PySide6.QtCore import QObject, Qt, QThread, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -20,12 +22,11 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QComboBox,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QProgressDialog,
+    QPushButton,
     QSizePolicy,
     QSpinBox,
     QSplitter,
@@ -72,7 +73,7 @@ def probe_cdp_alive(cdp_url: str, timeout: float = 0.2) -> bool:
 
 
 class TaskConfigDialog(QDialog):
-    """配置单账号或多账号自动化任务的参数对话框"""
+    """配置单账号或多账号自动化任务的参数对话框 - 已融入批次间隔时间控制"""
 
     def __init__(self, initial: dict[str, Any] | None = None, parent: QWidget | None = None, engines: list[dict[str, Any]] | None = None):
         super().__init__(parent)
@@ -87,29 +88,28 @@ class TaskConfigDialog(QDialog):
         form.setVerticalSpacing(12)
 
         self.engine_input = QComboBox()
-        choices = engines or [{"engine_id": "default", "name": "默认自动化引擎", "description": "内置 x_automation_engine.py"}]
         selected_engine = str(active.get("engine_id") or "default")
-        for engine in choices:
-            engine_id = str(engine.get("engine_id") or "default")
-            name = str(engine.get("name") or engine_id)
-            version = str(engine.get("version") or "")
-            label = f"{name}（{version}）" if version else name
-            self.engine_input.addItem(label, {"engine_id": engine_id, "engine_name": name, "engine_version": version})
-        for index in range(self.engine_input.count()):
-            if str(self.engine_input.itemData(index).get("engine_id")) == selected_engine:
-                self.engine_input.setCurrentIndex(index)
-                break
+        self.set_engines(engines, selected_engine)
         form.addRow("自动化方案", self.engine_input)
 
-        self.keyword_input = QLineEdit(str(active.get("keyword") or active.get("keywords") or ""))
+        raw_kw = str(active.get("keyword") or active.get("keywords") or "")
+        # 保留原样包含括号的输入
+        self.keyword_input = QLineEdit(raw_kw)
         self.keyword_input.setMaxLength(500)
-        self.keyword_input.setPlaceholderText("例如：Python、AI 或高级检索表达式")
+        self.keyword_input.setPlaceholderText("例如：(#やっぱり乃木坂だな) lang:ja 或高级检索表达式")
         form.addRow("检索关键词", self.keyword_input)
 
         self.daily_limit_input = self._spin(active.get("daily_task_limit"), 50, 1, 10_000)
         form.addRow("单日任务上限", self.daily_limit_input)
+
+        # 保留原配置并新增：批次间隔时间输入框（支持设置 1~1440 分钟）
+        self.batch_interval_input = self._spin(active.get("batch_interval_minutes"), 15, 1, 1440)
+        self.batch_interval_input.setSuffix(" 分钟")
+        form.addRow("批次间隔时间", self.batch_interval_input)
+
         self.follower_limit_input = self._spin(active.get("max_follower_threshold"), 150, 0, 100_000_000)
         form.addRow("粉丝指标门槛", self.follower_limit_input)
+
         self.engagement_limit_input = self._spin(active.get("max_engagement_threshold"), 10_000, 0, 100_000_000)
         form.addRow("互动/帖子门槛", self.engagement_limit_input)
 
@@ -123,6 +123,43 @@ class TaskConfigDialog(QDialog):
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
 
+    def set_engines(self, engines: list[dict[str, Any]] | None, selected_engine: str | None = None) -> None:
+        current = self.engine_input.currentData() or {}
+        target_id = str(selected_engine or current.get("engine_id") or "default")
+        choices = engines or [{"engine_id": "default", "name": "默认自动化引擎", "description": "内置 x_automation_engine.py"}]
+        if target_id and not any(str(item.get("engine_id") or "") == target_id for item in choices):
+            choices = [{"engine_id": target_id, "name": str(current.get("engine_name") or target_id)}] + list(choices)
+        self.engine_input.blockSignals(True)
+        self.engine_input.clear()
+        for engine in choices:
+            engine_id = str(engine.get("engine_id") or "default")
+            name = str(engine.get("name") or engine_id)
+            version = str(engine.get("version") or "")
+            label = f"{name}（{version}）" if version else name
+            self.engine_input.addItem(label, {"engine_id": engine_id, "engine_name": name, "engine_version": version})
+        for index in range(self.engine_input.count()):
+            if str(self.engine_input.itemData(index).get("engine_id")) == target_id:
+                self.engine_input.setCurrentIndex(index)
+                break
+        self.engine_input.blockSignals(False)
+
+    def apply_initial(self, initial: dict[str, Any] | None) -> None:
+        initial = initial or {}
+        active = initial.get("active") if isinstance(initial.get("active"), dict) else initial
+        raw_kw = str(active.get("keyword") or active.get("keywords") or "")
+        self.keyword_input.setText(raw_kw)
+        for widget, key, default in (
+            (self.daily_limit_input, "daily_task_limit", 50),
+            (self.batch_interval_input, "batch_interval_minutes", 15), # 保持默认15分钟回显
+            (self.follower_limit_input, "max_follower_threshold", 150),
+            (self.engagement_limit_input, "max_engagement_threshold", 10_000),
+        ):
+            try:
+                widget.setValue(default if active.get(key) is None else int(active.get(key)))
+            except (TypeError, ValueError):
+                widget.setValue(default)
+        self.set_engines(None, str(active.get("engine_id") or "default"))
+
     @staticmethod
     def _spin(value: Any, default: int, minimum: int, maximum: int) -> QSpinBox:
         widget = QSpinBox()
@@ -135,11 +172,14 @@ class TaskConfigDialog(QDialog):
 
     def config(self) -> dict[str, Any]:
         engine = self.engine_input.currentData() or {"engine_id": "default", "engine_name": "默认自动化引擎"}
+        raw_kw = self.keyword_input.text().strip()[:500]
+
         return {
             "engine_id": str(engine.get("engine_id") or "default"),
             "engine_name": str(engine.get("engine_name") or "默认自动化引擎"),
-            "keyword": self.keyword_input.text().strip()[:500],
+            "keyword": raw_kw,  # 原样保留括号提交
             "daily_task_limit": self.daily_limit_input.value(),
+            "batch_interval_minutes": self.batch_interval_input.value(), # 传递批次间隔分钟数
             "max_follower_threshold": self.follower_limit_input.value(),
             "max_engagement_threshold": self.engagement_limit_input.value(),
             "sleep_on_rate_limit": True,
@@ -287,7 +327,6 @@ class AccountCardWidget(QFrame):
 
 class MainWindow(QMainWindow):
     engine_progress_signal = Signal(int, str)
-    """老谷自动化控制中心 - 2026 现代化 SaaS 桌面客户端"""
 
     HEADERS = ("账号卡片", "档案 ID", "浏览器", "登录", "用户名", "账号 ID", "状态", "最后检查")
 
@@ -311,29 +350,40 @@ class MainWindow(QMainWindow):
         self._needs_reauth = False
         self._capabilities: set[str] = {"local.view", "local.browser.stop"}
         self._last_snapshot_mtime: float = 0.0
+        self._background_workers: set[FunctionWorker] = set()
+        self._status_refresh_in_flight = False
+        self._dashboard_refresh_in_flight = False
+        self._config_load_in_flight: set[str] = set()
+        self._config_dialogs: dict[str, TaskConfigDialog] = {}
+        self._automation_engines_cache: list[dict[str, Any]] | None = None
+        self._account_view_signature: tuple[Any, ...] | None = None
+        self._pending_log_lines: deque[str] = deque(maxlen=200)
+        self._log_flush_scheduled = False
 
         self._build_ui()
         self._setup_stdout_redirect()
         self._wire_events()
         self._load_registry()
         self._load_local_statistics()
-
-        self._run_job("检查 API 连接", self.controller.health, self._health_finished)
+        try:
+            self._apply_agent_status(self.controller.server_agent_status())
+        except Exception:
+            self._apply_agent_status({})
 
         self._agent_status_timer = QTimer(self)
         self._agent_status_timer.timeout.connect(self._refresh_agent_status)
         self._agent_status_timer.start(5000)
-        self._refresh_agent_status()
 
         self._statistics_timer = QTimer(self)
         self._statistics_timer.timeout.connect(self._refresh_local_statistics)
         self._statistics_timer.start(10000)
 
-        # ---------------- 🚀 静默数据更新比对定时器 (零 CPU 开销) ----------------
         self.auto_refresh_timer = QTimer(self)
         self.auto_refresh_timer.setInterval(3000)
         self.auto_refresh_timer.timeout.connect(self._auto_refresh_profile_snapshots)
         self.auto_refresh_timer.start()
+
+        QTimer.singleShot(100, lambda: self._run_job("检查 API 连接", self.controller.health, self._health_finished))
 
     def _auto_refresh_profile_snapshots(self) -> None:
         """底层数据改变时无感自动更新控制中心列表"""
@@ -347,7 +397,14 @@ class MainWindow(QMainWindow):
                 return
             self._last_snapshot_mtime = mtime
 
-            self._load_registry()
+            if self._dashboard_refresh_in_flight:
+                return
+            self._dashboard_refresh_in_flight = True
+            self._run_background(
+                self.controller.list_accounts,
+                self._background_accounts_finished,
+                lambda: setattr(self, "_dashboard_refresh_in_flight", False),
+            )
         except Exception:
             pass
 
@@ -360,7 +417,22 @@ class MainWindow(QMainWindow):
     def _append_raw_log(self, text: str) -> None:
         text = text.rstrip("\r\n")
         if text:
-            self.log_output.appendPlainText(text)
+            self._queue_log(text)
+
+    def _queue_log(self, text: str) -> None:
+        self._pending_log_lines.append(str(text))
+        if self._log_flush_scheduled:
+            return
+        self._log_flush_scheduled = True
+        QTimer.singleShot(80, self._flush_log_buffer)
+
+    def _flush_log_buffer(self) -> None:
+        self._log_flush_scheduled = False
+        if not self._pending_log_lines or self._closing:
+            return
+        lines = list(self._pending_log_lines)
+        self._pending_log_lines.clear()
+        self.log_output.appendPlainText("\n".join(lines))
 
     def _build_ui(self) -> None:
         self.setWindowTitle("老谷自动化控制中心 - 2026 SaaS 版")
@@ -447,12 +519,14 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setShowGrid(False)
         self.table.setMouseTracking(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.verticalHeader().setDefaultSectionSize(78)
+        self.table.verticalScrollBar().setSingleStep(18)
         for column in range(1, len(self.HEADERS)):
             self.table.setColumnHidden(column, True)
         left.addWidget(self.table, 1)
@@ -530,6 +604,7 @@ class MainWindow(QMainWindow):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumBlockCount(1000)
+        self.log_output.verticalScrollBar().setSingleStep(18)
         self.log_output.setPlaceholderText("系统控制台日志将在这里实时显示…")
         tabs.addTab(self.log_output, "系统控制台日志")
 
@@ -537,6 +612,8 @@ class MainWindow(QMainWindow):
         self.activity_table.setHorizontalHeaderLabels(("时间", "任务", "状态", "耗时", "摘要"))
         self.activity_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.activity_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.activity_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.activity_table.verticalScrollBar().setSingleStep(18)
         self.activity_table.verticalHeader().setVisible(False)
         self.activity_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.activity_table.horizontalHeader().setStretchLastSection(True)
@@ -552,7 +629,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("系统准备就绪")
 
     def _button(self, text: str, icon: QStyle.StandardPixmap) -> QPushButton:
-        button = QPushButton(text)
+        button = QPushButton(text, self)
         button.setIcon(self.style().standardIcon(icon))
         return button
 
@@ -584,10 +661,13 @@ class MainWindow(QMainWindow):
         try:
             summary = self.controller.task_statistics("today") or {}
             by_acc = summary.get("by_account", {}) if isinstance(summary, dict) else {}
+            # The controller/database is the source of truth.  Keep any
+            # in-memory entries that are not in the database, but never let
+            # an older cached value (often still 0) overwrite fresh counts.
             if "by_account" in self._statistics and isinstance(self._statistics["by_account"], dict):
                 for key, val in self._statistics["by_account"].items():
                     if key in by_acc and isinstance(by_acc[key], dict):
-                        by_acc[key].update(val)
+                        by_acc[key] = {**val, **by_acc[key]}
                     else:
                         by_acc[key] = val
             summary["by_account"] = by_acc
@@ -596,20 +676,73 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+    def _collect_dashboard_data(self) -> dict[str, Any]:
+        return {
+            "summary": self.controller.task_statistics("today") or {},
+            "activities": self.controller.recent_activities(20),
+            "accounts": self.controller.list_accounts(),
+        }
+
+    def _apply_dashboard_data(self, payload: Any) -> None:
+        if not isinstance(payload, dict):
+            return
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        by_acc = summary.get("by_account", {}) if isinstance(summary, dict) else {}
+        if "by_account" in self._statistics and isinstance(self._statistics["by_account"], dict):
+            # Fresh dashboard data wins over the previous UI snapshot.  The
+            # old order caused today's likes/follows from SQLite to be
+            # replaced by stale zeros on every refresh.
+            merged = dict(self._statistics["by_account"])
+            for key, val in self._statistics["by_account"].items():
+                if key not in merged:
+                    merged[key] = val
+            for key, val in by_acc.items():
+                if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+                    merged[key] = {**merged[key], **val}
+                else:
+                    merged[key] = val
+            summary["by_account"] = merged
+        self.set_statistics(summary)
+        self.set_activities(payload.get("activities") or [])
+        self.set_accounts(payload.get("accounts") or [])
+
+    def _background_accounts_finished(self, records: Any) -> None:
+        if not self._closing:
+            self.set_accounts(records if isinstance(records, list) else [])
+
+    def _dashboard_refresh_finished(self, payload: Any) -> None:
+        self._dashboard_refresh_in_flight = False
+        if not self._closing:
+            self._apply_dashboard_data(payload)
+
     def _refresh_local_statistics(self) -> None:
-        """Refresh completed automation counters without contacting the browser."""
-        self._load_local_statistics()
-        try:
-            self.set_accounts(self.controller.list_accounts())
-        except Exception:
-            pass
+        if self._dashboard_refresh_in_flight or self._closing:
+            return
+        self._dashboard_refresh_in_flight = True
+        self._run_background(
+            self._collect_dashboard_data,
+            self._dashboard_refresh_finished,
+            lambda: setattr(self, "_dashboard_refresh_in_flight", False),
+        )
 
     def _refresh_agent_status(self) -> None:
+        if self._status_refresh_in_flight or self._closing:
+            return
+        self._status_refresh_in_flight = True
+        self._run_background(
+            self.controller.server_agent_status,
+            self._apply_agent_status,
+            lambda: setattr(self, "_status_refresh_in_flight", False),
+        )
+
+    def _apply_agent_status(self, status: Any) -> None:
+        if self._closing:
+            return
+        status = status if isinstance(status, dict) else {}
         try:
-            status = self.controller.server_agent_status() or {}
+            status = status or {}
         except Exception:
             status = {}
-
         server = status.get("server", "OFFLINE")
         agent = status.get("agent", "OFFLINE")
         authorization_mode = str(status.get("authorization_mode") or "RESTRICTED")
@@ -773,40 +906,62 @@ class MainWindow(QMainWindow):
     def set_accounts(self, records: list[AccountRow]) -> None:
         records = records or []
         self._account_rows_by_id = {record.profile_id: record for record in records}
-        self.table.setRowCount(len(records))
         by_account_stats = self._statistics.get("by_account", {}) if isinstance(self._statistics, dict) else {}
-
-        for row, record in enumerate(records):
-            values = (
-                record.profile_name or "-",
+        signature = tuple(
+            (
                 record.profile_id,
+                record.profile_name,
                 record.browser_status,
                 record.login_status,
-                record.x_username or "-",
-                record.x_account_id or "-",
+                record.x_username,
+                record.x_account_id,
                 record.account_status,
-                record.last_checked or "-",
+                record.last_checked,
+                repr({key: by_account_stats.get(key) for key in (record.profile_id, record.x_account_id, record.x_username, record.profile_name)}),
             )
-            for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(str(value)))
+            for record in records
+        )
+        if signature == self._account_view_signature:
+            self.summary_label.setText(f"{len(records)} 个账号")
+            return
+        self._account_view_signature = signature
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        self.table.setRowCount(len(records))
+        try:
+            for row, record in enumerate(records):
+                values = (
+                    record.profile_name or "-",
+                    record.profile_id,
+                    record.browser_status,
+                    record.login_status,
+                    record.x_username or "-",
+                    record.x_account_id or "-",
+                    record.account_status,
+                    record.last_checked or "-",
+                )
+                for column, value in enumerate(values):
+                    self.table.setItem(row, column, QTableWidgetItem(str(value)))
 
-            acct_keys = [record.profile_id, record.x_account_id, record.x_username, record.profile_name]
-            account_stat = {}
-            for k in acct_keys:
-                if k and k in by_account_stats and isinstance(by_account_stats[k], dict):
-                    account_stat.update(by_account_stats[k])
+                acct_keys = [record.profile_id, record.x_account_id, record.x_username, record.profile_name]
+                account_stat = {}
+                for k in acct_keys:
+                    if k and k in by_account_stats and isinstance(by_account_stats[k], dict):
+                        account_stat.update(by_account_stats[k])
 
-            card = AccountCardWidget(
-                record,
-                account_stat,
-                on_select=self._select_profile,
-                on_run=lambda pid: self._run_profile_action("启动", self.controller.start_profile, [pid]),
-                on_stop=lambda pid: self._run_profile_action("停止", self.controller.stop_profile, [pid]),
-                on_config=self.configure_and_run_automation,
-            )
-            self.table.setCellWidget(row, 0, card)
-            self.table.setRowHeight(row, 78)
-
+                card = AccountCardWidget(
+                    record,
+                    account_stat,
+                    on_select=self._select_profile,
+                    on_run=lambda pid: self._run_profile_action("启动", self.controller.start_profile, [pid]),
+                    on_stop=lambda pid: self._run_profile_action("停止", self.controller.stop_profile, [pid]),
+                    on_config=self.configure_and_run_automation,
+                )
+                self.table.setCellWidget(row, 0, card)
+                self.table.setRowHeight(row, 78)
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
         self.summary_label.setText(f"{len(records)} 个账号")
         self._account_selection_changed()
 
@@ -837,6 +992,45 @@ class MainWindow(QMainWindow):
     def stop_all(self) -> None:
         self._run_profile_action("停止全部", self.controller.stop_profile, [row.profile_id for row in self.controller.list_accounts()])
 
+    def _open_automation_config_async(self, target_id: str, account_name: str) -> None:
+        if target_id in self._config_load_in_flight:
+            self.statusBar().showMessage("正在读取配置，请稍候…")
+            return
+        self._config_load_in_flight.add(target_id)
+        dialog = TaskConfigDialog({}, self, self._automation_engines_cache)
+        self._config_dialogs[target_id] = dialog
+        self.statusBar().showMessage("配置窗口已打开，正在后台刷新方案列表…")
+
+        if self._automation_engines_cache is None and hasattr(self.controller, "list_automation_engines"):
+            def apply_engines(value: Any) -> None:
+                engines = value if isinstance(value, list) else []
+                if engines:
+                    self._automation_engines_cache = list(engines)
+                    if dialog.isVisible():
+                        dialog.set_engines(engines)
+                self.statusBar().showMessage("自动化方案列表已刷新")
+
+            self._run_background(self.controller.list_automation_engines, apply_engines)
+
+        def apply_initial(value: Any) -> None:
+            if isinstance(value, dict) and dialog.isVisible():
+                dialog.apply_initial(value)
+
+        self._run_background(lambda: self.controller.get_profile_task_config(target_id), apply_initial)
+
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        self._config_dialogs.pop(target_id, None)
+        self._config_load_in_flight.discard(target_id)
+        if not accepted:
+            return
+        config = dialog.config()
+        config["account_tag"] = account_name
+        self._run_job(
+            f"启动自动化引擎：{account_name} ({target_id})",
+            lambda: self.controller.start_automation_task(target_id, config),
+            lambda result: self._automation_finished(target_id, result),
+        )
+
     def configure_and_run_automation(self, profile_id: str | None = None) -> None:
         if isinstance(profile_id, str) and profile_id:
             target_id = profile_id
@@ -846,38 +1040,19 @@ class MainWindow(QMainWindow):
                 return
             target_id = ids[0]
 
-        accounts = self.controller.list_accounts()
-        matching = next((acc for acc in accounts if acc.profile_id == target_id), None)
-        account_name = matching.profile_name if matching else target_id
-
-        try:
-            initial = self.controller.get_profile_task_config(target_id)
-        except Exception:
-            initial = {}
-
-        try:
-            engines = self.controller.list_automation_engines() if hasattr(self.controller, "list_automation_engines") else []
-        except Exception as exc:
-            self._log(f"读取自动化方案失败，使用默认引擎：{exc}")
-            engines = []
-        dialog = TaskConfigDialog(initial, self, engines)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if target_id in self._config_load_in_flight:
+            self.statusBar().showMessage("正在读取配置，请稍候…")
             return
-        config = dialog.config()
-        config["account_tag"] = account_name
-
-        self._run_job(
-            f"启动自动化引擎: {account_name} ({target_id})",
-            lambda: self.controller.start_automation_task(target_id, config),
-            lambda result: self._automation_finished(target_id, result),
-        )
+        record = self._account_rows_by_id.get(target_id)
+        account_name = (record.profile_name if record else "") or target_id
+        self._open_automation_config_async(target_id, account_name)
 
     def run_x_search(self) -> None:
-        query = self.search_input.text().strip()
-        if query:
-            self._run_read_only_task("x.search", "关键词搜索", {"query": query})
+        raw_query = self.search_input.text().strip()
+        if raw_query:
+            self._run_read_only_task("x.search", "关键词搜索", {"query": raw_query})
         else:
-            QMessageBox.information(self, "提示", "请输入搜索关键词。")
+            QMessageBox.information(self, "提示", "请输入有效的搜索关键词。")
 
     def _run_read_only_task(self, task_type: str, label: str, params: dict[str, Any] | None = None) -> None:
         ids = self._require_selection(single=True)
@@ -913,6 +1088,25 @@ class MainWindow(QMainWindow):
         worker.signals.error.connect(lambda msg: self._job_failed(label, msg))
         worker.signals.done.connect(lambda: self._job_done(worker))
         self.thread_pool.start(worker)
+
+    def _run_background(
+        self,
+        function: Callable[[], Any],
+        callback: Callable[[Any], None],
+        finished: Callable[[], None] | None = None,
+    ) -> None:
+        if self._closing:
+            return
+        worker = FunctionWorker(function)
+        self._background_workers.add(worker)
+        worker.signals.finished.connect(callback)
+        worker.signals.done.connect(lambda: self._background_worker_done(worker, finished))
+        self.thread_pool.start(worker)
+
+    def _background_worker_done(self, worker: FunctionWorker, finished: Callable[[], None] | None) -> None:
+        self._background_workers.discard(worker)
+        if finished:
+            finished()
 
     def _job_done(self, worker: FunctionWorker) -> None:
         self._workers.discard(worker)
@@ -1033,7 +1227,7 @@ class MainWindow(QMainWindow):
 
     def _log(self, message: str) -> None:
         t = datetime.now().strftime("%H:%M:%S")
-        self.log_output.appendPlainText(f"[{t}] {message}")
+        self._queue_log(f"[{t}] {message}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._closing = True
@@ -1048,5 +1242,12 @@ class MainWindow(QMainWindow):
                 except (RuntimeError, TypeError):
                     pass
         self._workers.clear()
+        for worker in tuple(self._background_workers):
+            for sig in (worker.signals.finished, worker.signals.error, worker.signals.done):
+                try:
+                    sig.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+        self._background_workers.clear()
         self.controller.stop_agent_service()
         event.accept()

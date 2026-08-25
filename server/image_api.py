@@ -82,8 +82,22 @@ def register_image_routes(
             raise HTTPException(status_code=500, detail="Internal server error")
         return candidate
 
-    def checked_provider(db: Session, user: User, provider_id: str | None) -> AIProvider:
-        return resolve_provider(db, user, "IMAGES", provider_id, None)[0]
+    def checked_provider(db: Session, user: User, provider_id: str | None, model: str | None) -> tuple[AIProvider, str]:
+        if model:
+            try:
+                return resolve_provider(db, user, "IMAGES", provider_id, model)
+            except HTTPException:
+                # Keep the historical default usable for existing providers
+                # created before image models became selectable. Other models
+                # must be explicitly discovered/configured for members.
+                if model != IMAGE_MODEL:
+                    raise
+                provider = resolve_provider(db, user, "IMAGES", provider_id, None)[0]
+                return provider, model
+        # Preserve the historical image endpoint default while allowing the
+        # UI to submit any explicitly configured image model.
+        provider = resolve_provider(db, user, "IMAGES", provider_id, None)[0]
+        return provider, IMAGE_MODEL
 
     @app.get("/api/ai/images")
     def list_images(
@@ -112,7 +126,7 @@ def register_image_routes(
     ):
         if not user.workspace_id:
             raise HTTPException(status_code=422, detail="User workspace is required")
-        provider = checked_provider(db, user, body.provider_id)
+        provider, model = checked_provider(db, user, body.provider_id, body.model)
         prompt = sanitize_chat_content(body.prompt)
         if not prompt:
             raise HTTPException(status_code=422, detail="Image prompt is required")
@@ -125,7 +139,7 @@ def register_image_routes(
             workspace_id=user.workspace_id,
             user_id=user.id,
             provider_id=provider.id,
-            model=IMAGE_MODEL,
+            model=model,
             prompt=prompt,
             resolution=body.resolution,
             size=IMAGE_SIZES[body.resolution],
@@ -146,7 +160,7 @@ def register_image_routes(
                 prompt=prompt,
                 size=item.size,
                 quality=item.quality,
-                model=IMAGE_MODEL,
+                model=model,
             )
             extension = IMAGE_EXTENSIONS[result.mime_type]
             item.file_name = f"{item.id}.{extension}"

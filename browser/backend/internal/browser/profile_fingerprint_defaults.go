@@ -2,20 +2,21 @@ package browser
 
 import "strings"
 
-// effectiveRuntimeFingerprintArgs 定义了内核层面的核心物理指纹隔离 Flag
+// effectiveRuntimeFingerprintArgs 定义了默认运行参数。噪声项使用显式 0，
+// 允许用户在 Profile 参数中明确选择开启时覆盖默认值。
 var effectiveRuntimeFingerprintArgs = []string{
-	"--disable-non-proxied-udp",                // 彻底防止 WebRTC 泄露真实局域网/公网 IP
-	"--fingerprinting-canvas-image-data-noise", // 内核级 Canvas 绘图微小噪音隔离
-	"--fingerprinting-client-rects-noise",      // 内核级 字体/元素的 ClientRects 尺寸噪音隔离
+	"--disable-non-proxied-udp",                  // 彻底防止 WebRTC 泄露真实局域网/公网 IP
+	"--fingerprinting-canvas-image-data-noise=0", // 默认关闭 Canvas 噪声
+	"--fingerprinting-client-rects-noise=0",      // 默认关闭 ClientRects 噪声
 }
 
-// EnsureRuntimeFingerprintArgs 确保无论传入什么参数，核心指纹隔离 Flag 都被强制注入
+// EnsureRuntimeFingerprintArgs 补齐默认参数，但尊重用户对噪声开关的明确选择。
 func EnsureRuntimeFingerprintArgs(args []string) []string {
 	out := append([]string{}, args...)
 
 	// 强制补充所有的核心指纹噪音与防泄露参数
 	for _, defaultArg := range effectiveRuntimeFingerprintArgs {
-		if !fingerprintArgContains(out, defaultArg) {
+		if !fingerprintArgPresent(out, defaultArg) {
 			out = append(out, defaultArg)
 		}
 	}
@@ -50,6 +51,17 @@ func isLegacyMinimalFingerprintArgs(args []string) bool {
 func fingerprintArgContains(args []string, expected string) bool {
 	for _, arg := range args {
 		if strings.TrimSpace(arg) == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func fingerprintArgPresent(args []string, expected string) bool {
+	key := strings.SplitN(strings.TrimSpace(expected), "=", 2)[0]
+	for _, arg := range args {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == key || strings.HasPrefix(trimmed, key+"=") {
 			return true
 		}
 	}

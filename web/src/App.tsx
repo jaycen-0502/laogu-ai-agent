@@ -18,6 +18,7 @@ const ScriptEditorPage = lazy(() => import("./pages/scripts").then((module) => (
 const ScriptRunsPage = lazy(() => import("./pages/scripts").then((module) => ({ default: module.ScriptRunsPage })));
 const AIProvidersPage = lazy(() => import("./pages/ai_providers").then((module) => ({ default: module.AIProvidersPage })));
 const AIChatPage = lazy(() => import("./pages/ai_chat").then((module) => ({ default: module.AIChatPage })));
+const AITranslationPage = lazy(() => import("./pages/ai_translation").then((module) => ({ default: module.AITranslationPage })));
 const AIImagesPage = lazy(() => import("./pages/ai_images").then((module) => ({ default: module.AIImagesPage })));
 const AIAnalysisPage = lazy(() => import("./pages/ai_analysis").then((module) => ({ default: module.AIAnalysisPage })));
 const AIWritingPage = lazy(() => import("./pages/ai_writing").then((module) => ({ default: module.AIWritingPage })));
@@ -25,9 +26,11 @@ const AITasksPage = lazy(() => import("./pages/ai_tasks").then((module) => ({ de
 const ControlCenterPage = lazy(() => import("./pages/control_center").then((module) => ({ default: module.ControlCenterPage })));
 const OpsMetricsPage = lazy(() => import("./pages/ops_metrics").then((module) => ({ default: module.OpsMetricsPage })));
 const LicensesPage = lazy(() => import("./pages/licenses").then((module) => ({ default: module.LicensesPage })));
+const TelegramTranslationPage = lazy(() => import("./pages/telegram_translation").then((module) => ({ default: module.TelegramTranslationPage })));
 
 const menu = [
   ["/ai/chat", "AI 聊天", ["ADMIN", "OWNER", "MEMBER"]],
+  ["/ai/translation", "AI 翻译", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/images", "AI 生图", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/analysis", "AI 分析", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/writing", "AI 话术", ["ADMIN", "OWNER", "MEMBER"]],
@@ -35,6 +38,7 @@ const menu = [
   ["/control-center", "统一控制中心", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ops", "运维监控", ["ADMIN"]],
   ["/licenses", "远程授权", ["ADMIN"]],
+  ["/telegram-translation", "Telegram 翻译", ["ADMIN"]],
   ["/ai-providers", "AI 服务商", ["ADMIN", "OWNER", "MEMBER"]],
   ["/dashboard", "控制台", ["ADMIN", "OWNER", "MEMBER"]],
   ["/workspaces", "工作区", ["ADMIN", "OWNER", "MEMBER"]],
@@ -59,17 +63,19 @@ const roleNames: Record<string, string> = {
 function Layout({ user }: { user: User }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const aiMenuPaths = new Set(["/ai/chat", "/ai/translation", "/ai/images", "/ai/analysis", "/ai/writing", "/ai/tasks"]);
+  const [aiExpanded, setAiExpanded] = useState(() => location.pathname.startsWith("/ai/"));
   const isPlatformAdmin = user.role === "ADMIN";
   const logout = () => {
     authStore.clear();
     navigate("/login");
   };
-  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
+  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/translation", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
   const canSee = (path: string, roles: readonly string[]) => {
     if (!roles.some((role) => role === user.role)) return false;
     if (user.role !== "MEMBER") return true;
     if (!memberPaths.has(path)) return false;
-    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
+    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/translation" ? "TRANSLATE" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
     return !feature || user.permissions?.[feature] !== false;
   };
   return (
@@ -86,9 +92,11 @@ function Layout({ user }: { user: User }) {
           工作区：{user.workspace_id || "全局"}
         </div>
         <nav>
-          {menu
-            .filter(([path, , roles]) => canSee(path, roles))
-            .map(([path, label]) => (
+          <button type="button" className={`nav-group-toggle ${location.pathname.startsWith("/ai/") ? "active" : ""}`} onClick={() => setAiExpanded((value) => !value)}>
+            <span>AI 功能</span><span>{aiExpanded ? "−" : "+"}</span>
+          </button>
+          {aiExpanded && <div className="nav-group-items">
+            {menu.filter(([path, , roles]) => aiMenuPaths.has(path) && canSee(path, roles)).map(([path, label]) => (
               <Link
                 key={path}
                 className={location.pathname === path || location.pathname.startsWith(`${path}/`) ? "active" : ""}
@@ -96,6 +104,12 @@ function Layout({ user }: { user: User }) {
               >
                 {label}
               </Link>
+            ))}
+          </div>}
+          {menu
+            .filter(([path, , roles]) => !aiMenuPaths.has(path) && canSee(path, roles))
+            .map(([path, label]) => (
+              <Link key={path} className={location.pathname === path || location.pathname.startsWith(`${path}/`) ? "active" : ""} to={path}>{label}</Link>
             ))}
         </nav>
         <div className="sidebar-bottom">
@@ -136,8 +150,8 @@ function Protected({ user }: { user: User | null }) {
   if (!user) return <Navigate to="/login" replace />;
   const location = useLocation();
   if (user.role === "MEMBER") {
-    const allowed = ["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/writing", "/ai/analysis", "/ai/tasks"];
-    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
+    const allowed = ["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/translation", "/ai/writing", "/ai/analysis", "/ai/tasks"];
+    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/translation") ? "TRANSLATE" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
     if (!allowed.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`)) || (feature && user.permissions?.[feature] === false)) {
       return <Navigate to="/dashboard" replace />;
     }
@@ -190,6 +204,7 @@ export default function App() {
       />
       <Route element={<Protected user={user} />}>
         <Route path="ai/chat" element={<Suspense fallback={<div className="loading">正在加载 AI 聊天…</div>}><AIChatPage /></Suspense>} />
+        <Route path="ai/translation" element={<Suspense fallback={<div className="loading">正在加载 AI 翻译…</div>}><AITranslationPage /></Suspense>} />
         <Route path="ai/images" element={<Suspense fallback={<div className="loading">正在加载 AI 生图…</div>}><AIImagesPage /></Suspense>} />
         <Route path="ai/analysis" element={<Suspense fallback={<div className="loading">正在加载 AI 分析…</div>}><AIAnalysisPage /></Suspense>} />
         <Route path="ai/writing" element={<Suspense fallback={<div className="loading">正在加载 AI 话术…</div>}><AIWritingPage /></Suspense>} />
@@ -197,6 +212,7 @@ export default function App() {
         <Route path="control-center" element={<Suspense fallback={<div className="loading">正在加载统一控制中心…</div>}><ControlCenterPage /></Suspense>} />
         <Route path="ops" element={<Suspense fallback={<div className="loading">正在加载运维监控…</div>}><OpsMetricsPage /></Suspense>} />
         <Route path="licenses" element={<Suspense fallback={<div className="loading">正在加载远程授权…</div>}><LicensesPage /></Suspense>} />
+        <Route path="telegram-translation" element={<Suspense fallback={<div className="loading">正在加载 Telegram 翻译…</div>}><TelegramTranslationPage /></Suspense>} />
         <Route path="ai-providers" element={<Suspense fallback={<div className="loading">正在加载 AI 服务商…</div>}><AIProvidersPage user={user!} /></Suspense>} />
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />

@@ -7,6 +7,8 @@ $Project = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $Spec = Join-Path $PSScriptRoot "laogu-desktop.spec"
 $Dist = Join-Path $Project "dist\Laogu-Desktop"
 $Work = Join-Path $Project "build\laogu-desktop"
+$Preserve = Join-Path $Project ("build\portable-state-" + [guid]::NewGuid().ToString("N"))
+$PortableState = @("config", "logs", "agent_data")
 
 foreach ($Path in @($Dist, $Work)) {
     $AbsolutePath = [System.IO.Path]::GetFullPath($Path)
@@ -17,22 +19,62 @@ foreach ($Path in @($Dist, $Work)) {
 }
 
 Set-Location $Project
-if ($Clean) {
-    Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $Dist -Recurse -Force -ErrorAction SilentlyContinue
+
+function Save-PortableState {
+    if (-not (Test-Path -LiteralPath $Dist)) { return }
+    New-Item -ItemType Directory -Force -Path $Preserve | Out-Null
+    foreach ($Name in $PortableState) {
+        $Source = Join-Path $Dist $Name
+        if (Test-Path -LiteralPath $Source) {
+            Copy-Item -LiteralPath $Source -Destination $Preserve -Recurse -Force
+        }
+    }
 }
 
-python -m PyInstaller --noconfirm --distpath (Join-Path $Project "dist") --workpath $Work $Spec
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
-
-New-Item -ItemType Directory -Force -Path (Join-Path $Dist "config"), (Join-Path $Dist "logs"), (Join-Path $Dist "agent_data") | Out-Null
-Copy-Item -LiteralPath (Join-Path $Project "packaging\windows\laogu.env.example") -Destination (Join-Path $Dist "config\laogu.env.example") -Force
-Copy-Item -LiteralPath (Join-Path $Project "packaging\windows\README.txt") -Destination (Join-Path $Dist "README.txt") -Force
-
-$Config = Join-Path $Dist "config\laogu.env"
-if (-not (Test-Path -LiteralPath $Config)) {
-    Copy-Item -LiteralPath (Join-Path $Dist "config\laogu.env.example") -Destination $Config
+function Restore-PortableState {
+    foreach ($Name in $PortableState) {
+        $Saved = Join-Path $Preserve $Name
+        $Target = Join-Path $Dist $Name
+        New-Item -ItemType Directory -Force -Path $Target | Out-Null
+        if (Test-Path -LiteralPath $Saved) {
+            Get-ChildItem -LiteralPath $Saved -Force | Copy-Item -Destination $Target -Recurse -Force
+        }
+    }
 }
 
-Write-Host "BUILD_OK=$Dist"
-Write-Host "EXE=$(Join-Path $Dist 'Laogu-Desktop.exe')"
+Save-PortableState
+try {
+    if ($Clean) {
+        Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $Dist -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    python -m PyInstaller --noconfirm --distpath (Join-Path $Project "dist") --workpath $Work $Spec
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
+
+    New-Item -ItemType Directory -Force -Path (Join-Path $Dist "config"), (Join-Path $Dist "logs"), (Join-Path $Dist "agent_data") | Out-Null
+    Copy-Item -LiteralPath (Join-Path $Project "packaging\windows\laogu.env.example") -Destination (Join-Path $Dist "config\laogu.env.example") -Force
+    Copy-Item -LiteralPath (Join-Path $Project "packaging\windows\README.txt") -Destination (Join-Path $Dist "README.txt") -Force
+
+    $Config = Join-Path $Dist "config\laogu.env"
+    if (-not (Test-Path -LiteralPath $Config)) {
+        Copy-Item -LiteralPath (Join-Path $Dist "config\laogu.env.example") -Destination $Config
+    }
+
+    Restore-PortableState
+
+    Write-Host "BUILD_OK=$Dist"
+    Write-Host "EXE=$(Join-Path $Dist 'Laogu-Desktop.exe')"
+}
+finally {
+    # If a build fails after cleaning dist, restore credentials and local state
+    # so the failure cannot erase the existing portable installation data.
+    if (Test-Path -LiteralPath $Preserve) {
+        Restore-PortableState
+        $ResolvedPreserve = [System.IO.Path]::GetFullPath($Preserve)
+        $ProjectPrefix = $Project.TrimEnd('\') + '\'
+        if ($ResolvedPreserve.StartsWith($ProjectPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $ResolvedPreserve -Recurse -Force
+        }
+    }
+}

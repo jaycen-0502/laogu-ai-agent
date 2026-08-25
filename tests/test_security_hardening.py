@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import sqlite3
@@ -102,7 +103,8 @@ def test_alembic_upgrade_downgrade_upgrade_and_legacy_token_migration(tmp_path, 
         migrated = db.execute("SELECT agent_id, token_hash, status FROM agent_tokens").fetchone()
         assert migrated == ("a1", legacy_hash, "ACTIVE")
         assert db.execute("SELECT token_hash FROM agents WHERE id='a1'").fetchone()[0] == ""
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0015_agent_device_bindings"
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0016_automation_metrics"
+        assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='automation_metrics'").fetchone() == ("automation_metrics",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scripts'").fetchone() == ("scripts",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_providers'").fetchone() == ("ai_providers",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'").fetchone() == ("chat_sessions",)
@@ -358,6 +360,18 @@ def test_audit_permissions_and_secret_redaction(tmp_path):
     contents = log_file.read_text(encoding="utf-8")
     assert "log-secret-value" not in contents
     assert "[REDACTED]" in contents
+
+
+def test_windowed_logger_does_not_create_a_none_stream_handler(tmp_path: Path, monkeypatch):
+    import sys
+
+    monkeypatch.setattr(sys, "stderr", None)
+    logger = build_logger(tmp_path / "windowed-agent.log")
+    logger.info("windowed logging remains available")
+    for handler in logger.handlers:
+        handler.flush()
+    assert (tmp_path / "windowed-agent.log").read_text(encoding="utf-8")
+    assert not any(type(handler) is logging.StreamHandler for handler in logger.handlers)
 
 
 def test_rate_limit_uses_shared_task_bucket_and_request_size_limit():

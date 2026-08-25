@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient, ApiError } from "../api/client";
 import type { AIProvider, Page, User, Workspace } from "../types";
 
 const MODEL_SUGGESTIONS = [
-  "gpt-5.4-2026-03-05", "gpt-5.4-mini", "gpt-5.5", "gpt-5.6",
-  "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-image-1",
-  "gpt-image-1.5", "gpt-image-2", "apt-imaae-2",
+  "codex-auto-review", "gpt-4o-audio-preview", "gpt-4o-realtime-preview",
+  "gpt-5.2", "gpt-5.2-2025-12-11", "gpt-5.2-chat-latest", "gpt-5.2-pro",
+  "gpt-5.2-pro-2025-12-11", "gpt-5.4", "gpt-5.4-2026-03-05", "gpt-5.4-mini",
+  "gpt-5.5", "gpt-5.6", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-image-1",
+  "gpt-image-1.5", "gpt-image-2",
 ];
 
 
@@ -52,6 +54,68 @@ const emptyForm = (workspaceId = ""): FormState => ({
   workspace_id: workspaceId,
 });
 
+function parseModels(value: string) {
+  return Array.from(new Set(value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)));
+}
+
+function ModelCombobox({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const normalizedValue = value.trim().toLowerCase();
+  const filtered = useMemo(
+    () => options.filter((model) => !normalizedValue || model.toLowerCase().includes(normalizedValue)).slice(0, 80),
+    [normalizedValue, options],
+  );
+
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  return (
+    <div className="model-combobox" ref={rootRef}>
+      <input
+        value={value}
+        placeholder="例如 gpt-5.4 或中转站自定义模型名"
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        onFocus={() => setOpen(true)}
+        onChange={(event) => { onChange(event.target.value); setOpen(true); }}
+        onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}
+      />
+      {open && filtered.length > 0 && (
+        <div className="model-combobox-menu" role="listbox">
+          {filtered.map((model) => (
+            <button
+              type="button"
+              className="model-combobox-option"
+              role="option"
+              aria-selected={model === value}
+              key={model}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { onChange(model); setOpen(false); }}
+            >
+              {model}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AIProvidersPage({ user }: { user: User }) {
   const canManage = user.role !== "MEMBER";
   const [data, setData] = useState<Page<AIProvider> | null>(null);
@@ -65,6 +129,10 @@ export function AIProvidersPage({ user }: { user: User }) {
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const modelOptions = useMemo(() => {
+    const configured = (data?.items || []).flatMap((item) => [...(item.models || []), item.default_model]);
+    return Array.from(new Set([...MODEL_SUGGESTIONS, ...configured].map((model) => model.trim()).filter(Boolean)));
+  }, [data]);
 
   const load = useCallback(async () => {
     const query = new URLSearchParams({
@@ -129,8 +197,8 @@ export function AIProvidersPage({ user }: { user: User }) {
         name: form.name,
         provider_type: form.provider_type,
         base_url: form.provider_type === "OPENAI" && !form.base_url.trim() ? "" : form.base_url,
-        default_model: form.default_model,
-        models: Array.from(new Set(form.models_text.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean))),
+        default_model: form.default_model.trim(),
+        models: Array.from(new Set([...parseModels(form.models_text), form.default_model.trim()].filter(Boolean))),
         status: form.status,
         is_default: form.is_default,
       };
@@ -156,12 +224,12 @@ export function AIProvidersPage({ user }: { user: User }) {
     setError("");
     setMessage("");
     try {
-      const result = await apiClient<{ status: string; models: string[]; error?: string }>(
+      const result = await apiClient<{ status: string; models: string[]; actual_model?: string; error?: string }>(
         `/ai/providers/${item.provider_id}/test`,
         { method: "POST" },
       );
       setMessage(result.status === "SUCCESS"
-        ? `连接成功，发现 ${result.models.length} 个模型`
+        ? `连接成功，发现 ${result.models.length} 个模型${result.actual_model ? `；实际返回模型：${result.actual_model}` : ""}`
         : `连接失败：${result.error || "未知错误"}`);
       await load();
     } catch (exc) {
@@ -176,12 +244,12 @@ export function AIProvidersPage({ user }: { user: User }) {
     setError("");
     setMessage("");
     try {
-      const result = await apiClient<{ status: string; models: string[]; error?: string }>(
+      const result = await apiClient<{ status: string; models: string[]; actual_model?: string; error?: string }>(
         `/ai/providers/${item.provider_id}/models`,
         { method: "POST" },
       );
       setMessage(result.status === "SUCCESS"
-        ? `获取成功，发现 ${result.models.length} 个模型`
+        ? `获取成功，发现 ${result.models.length} 个模型${result.actual_model ? `；实际返回模型：${result.actual_model}` : ""}`
         : `获取失败：${result.error || "未知错误"}`);
       await load();
     } catch (exc) {
@@ -217,7 +285,7 @@ export function AIProvidersPage({ user }: { user: User }) {
       </div>
 
       <div className="alert">
-        API Key只在服务端加密保存，页面不会显示或返回完整密钥。连接测试优先读取模型列表；兼容站不支持列表时会检查Responses接口，不发送聊天内容。
+        API Key只在服务端加密保存，页面不会显示或返回完整密钥。测试会先读取模型列表，再使用你填写的默认模型发送固定的最小探测请求“Reply with OK.”，读取上游实际返回的模型名称；不会发送任何聊天内容。
       </div>
       {error && <div className="alert error">{error}</div>}
       {message && <div className="alert">{message}</div>}
@@ -275,12 +343,12 @@ export function AIProvidersPage({ user }: { user: User }) {
             </label>
             <label>
               默认模型
-              <input
+              <ModelCombobox
                 value={form.default_model}
-                placeholder="例如 gpt-5.4"
-                list="provider-models"
-                onChange={(event) => setForm({ ...form, default_model: event.target.value })}
+                options={Array.from(new Set([...modelOptions, ...parseModels(form.models_text)]))}
+                onChange={(default_model) => setForm({ ...form, default_model })}
               />
+              <small className="muted">可搜索已有模型，也可以直接输入中转站提供的任意模型 ID。</small>
             </label>
             <label>
               支持的模型（每行一个，也可填写中转站自定义模型）
@@ -290,6 +358,11 @@ export function AIProvidersPage({ user }: { user: User }) {
                 placeholder={MODEL_SUGGESTIONS.join("\n")}
                 onChange={(event) => setForm({ ...form, models_text: event.target.value })}
               />
+              {form.default_model.trim() && (
+                <small className="provider-actual-model-note">
+                  保存后点击“测试连接”，系统会用该请求模型发送最小测试请求，并把上游实际返回的模型加入支持列表。
+                </small>
+              )}
             </label>
             <label className="check-row provider-default-check">
               <input
@@ -317,10 +390,6 @@ export function AIProvidersPage({ user }: { user: User }) {
         </select>
       </div>
 
-      <datalist id="provider-models">
-        {Array.from(new Set([...MODEL_SUGGESTIONS, ...(data?.items || []).flatMap((item) => item.models)])).map((model) => <option key={model} value={model} />)}
-      </datalist>
-
       <div className="table-wrap">
         <table>
           <thead>
@@ -342,7 +411,11 @@ export function AIProvidersPage({ user }: { user: User }) {
                   <State value={item.last_test_status} />
                   {item.last_error && <div className="muted provider-error">{item.last_error}</div>}
                 </td>
-                <td>{fmt(item.last_tested_at)}<div className="muted">{item.models.length} 个模型</div></td>
+                <td>
+                  {fmt(item.last_tested_at)}
+                  <div className="muted">{item.models.length} 个模型</div>
+                  {item.last_actual_model && <div className="provider-actual-model">实际返回：{item.last_actual_model}</div>}
+                </td>
                 {canManage && (
                   <td>
                     <div className="provider-actions">

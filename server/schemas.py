@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -90,7 +90,7 @@ class UserUpdate(BaseModel):
 
 
 class UserAIPolicyUpdate(BaseModel):
-    feature: Literal["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES"]
+    feature: Literal["CHAT", "WRITING", "ANALYSIS", "TASKS", "IMAGES", "TRANSLATE"]
     enabled: bool = True
     provider_id: str | None = None
     model: str | None = Field(default=None, max_length=160)
@@ -129,6 +129,25 @@ class AccountSyncItem(BaseModel):
 class AccountSync(BaseModel):
     agent_id: str
     items: list[AccountSyncItem]
+
+
+class AutomationMetricSync(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=32)
+    run_id: str = Field(min_length=1, max_length=64)
+    profile_id: str = Field(min_length=1, max_length=100)
+    x_account_id: str = Field(default="", max_length=40)
+    account_tag: str = Field(default="", max_length=120)
+    metric_date: date
+    started_at: datetime
+    finished_at: datetime
+    status: str = Field(default="ERROR", max_length=20)
+    processed_count: int = Field(default=0, ge=0, le=1_000_000)
+    likes: int = Field(default=0, ge=0, le=1_000_000)
+    follows: int = Field(default=0, ge=0, le=1_000_000)
+    comments: int = Field(default=0, ge=0, le=1_000_000)
+    scanned_posts: int = Field(default=0, ge=0, le=10_000_000)
+    own_followers: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    own_following: int | None = Field(default=None, ge=0, le=2_000_000_000)
 
 
 class TaskCreate(BaseModel):
@@ -223,6 +242,7 @@ class AIProviderCreate(BaseModel):
     base_url: str = Field(default="", max_length=500)
     api_key: str = Field(min_length=1, max_length=1000)
     default_model: str = Field(default="", max_length=160)
+    models: list[str] = Field(default_factory=list, max_length=500)
     status: str = "DISABLED"
     is_default: bool = False
     workspace_id: str | None = None
@@ -234,6 +254,7 @@ class AIProviderUpdate(BaseModel):
     base_url: str | None = Field(default=None, max_length=500)
     api_key: str | None = Field(default=None, min_length=1, max_length=1000)
     default_model: str | None = Field(default=None, max_length=160)
+    models: list[str] | None = Field(default=None, max_length=500)
     status: str | None = None
     is_default: bool | None = None
 
@@ -252,8 +273,40 @@ class ChatMessageCreate(BaseModel):
 class AIImageGenerate(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     provider_id: str | None = Field(default=None, max_length=32)
+    model: str | None = Field(default=None, max_length=160)
     resolution: Literal["1K", "2K"] = "1K"
     quality: Literal["low", "medium", "high"] = "medium"
+
+
+TRANSLATION_LANGUAGES = Literal[
+    "auto", "zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"
+]
+
+
+class AITranslateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    source_language: TRANSLATION_LANGUAGES = "auto"
+    target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"] = "zh-CN"
+    provider_id: str | None = Field(default=None, max_length=32)
+    model: str | None = Field(default=None, max_length=160)
+
+
+class TelegramBindingUpdate(BaseModel):
+    workspace_id: str = Field(min_length=1, max_length=32)
+    bot_token: str | None = Field(default=None, min_length=20, max_length=500)
+    admin_telegram_user_id: str = Field(min_length=1, max_length=32)
+    default_target_language: Literal["zh-CN", "zh-TW", "en", "ja", "ko", "fr", "de", "es", "ru", "pt-BR"] = "zh-CN"
+    enabled: bool = False
+
+
+class TelegramAllowedUserCreate(BaseModel):
+    telegram_user_id: str = Field(min_length=1, max_length=32)
+    username: str = Field(default="", max_length=120)
+    display_name: str = Field(default="", max_length=160)
+
+
+class TelegramBindingTest(BaseModel):
+    bot_token: str = Field(min_length=20, max_length=500)
 
 
 class AIAccountAnalysisCreate(BaseModel):

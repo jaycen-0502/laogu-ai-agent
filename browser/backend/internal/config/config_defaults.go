@@ -336,8 +336,8 @@ func defaultFingerprintArgsForOS(goos string) []string {
 		"--fingerprint-brand=Chrome",
 		"--fingerprint-platform=" + platform,
 		"--disable-non-proxied-udp",
-		"--fingerprinting-canvas-image-data-noise",
-		"--fingerprinting-client-rects-noise",
+		"--fingerprinting-canvas-image-data-noise=0",
+		"--fingerprinting-client-rects-noise=0",
 	}
 }
 
@@ -362,8 +362,8 @@ func isLegacyMinimalDefaultFingerprintArgs(args []string) bool {
 func appendEffectiveRuntimeFingerprintArgs(args []string) []string {
 	defaultRuntimeArgs := []string{
 		"--disable-non-proxied-udp",
-		"--fingerprinting-canvas-image-data-noise",
-		"--fingerprinting-client-rects-noise",
+		"--fingerprinting-canvas-image-data-noise=0",
+		"--fingerprinting-client-rects-noise=0",
 	}
 	out := append([]string{}, args...)
 	for _, defaultArg := range defaultRuntimeArgs {
@@ -375,8 +375,10 @@ func appendEffectiveRuntimeFingerprintArgs(args []string) []string {
 }
 
 func containsFingerprintArg(args []string, expected string) bool {
+	key := strings.SplitN(strings.TrimSpace(expected), "=", 2)[0]
 	for _, arg := range args {
-		if strings.TrimSpace(arg) == expected {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == key || strings.HasPrefix(trimmed, key+"=") {
 			return true
 		}
 	}

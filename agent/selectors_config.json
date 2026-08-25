@@ -1,0 +1,22 @@
+{
+  "domains_whitelist": [
+    "x.com",
+    "twitter.com",
+    "staging.example.com",
+    "localhost"
+  ],
+  "target_url": "https://x.com/home",
+  "search_url_template": "https://x.com/search?q={keyword}&f=live",
+  "allow_interactions": true,
+  "max_actions_per_task": 50,
+  "selectors": {
+    "article_card": "article",
+    "user_links": "div[data-testid=\"User-Name\"] a, a[role=\"link\"][href^=\"/\"]",
+    "hover_card": "div[data-testid=\"HoverCard\"]",
+    "like_button": "button[data-testid=\"like\"]"
+  },
+  "patterns": {
+    "follower_regex": "([\\d\\.,]+)\\s*([KMkm]?)\\s*(?:Followers|关注者|フォロワー)",
+    "ignored_hrefs": ["/status/", "/analytics", "/photo/", "/search", "/i/", "/lists/"]
+  }
+}

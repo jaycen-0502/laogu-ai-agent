@@ -16,9 +16,19 @@ from .runtime_config import RuntimeConfig
 from .server_client import ServerClient, ServerClientError
 from common.release import VERSION
 from .script_updater import sync_engine_from_server
+from .offline_access import ALWAYS_ALLOWED_CAPABILITIES, OfflineAccessStore
 
 
 LOGGER = logging.getLogger("laogu-ai-agent.service")
+ONLINE_CAPABILITIES = frozenset({
+    "local.view",
+    "local.browser.stop",
+    "local.browser.control",
+    "local.readonly.run",
+    "automation.run",
+    "server.task.receive",
+    "engine.update",
+})
 
 
 class AgentStateStore:
@@ -72,6 +82,8 @@ class AgentService:
         command_dispatcher=None,
         engine_cache_dir: Path | None = None,
         engine_auto_update: bool = False,
+        automation_statistics=None,
+        offline_access_store: OfflineAccessStore | None = None,
     ):
         self.server_client = server_client
         self.task_service = task_service
@@ -84,6 +96,8 @@ class AgentService:
         self.command_dispatcher = command_dispatcher
         self.engine_cache_dir = engine_cache_dir
         self.engine_auto_update = engine_auto_update
+        self.automation_statistics = automation_statistics
+        self.offline_access_store = offline_access_store
         self.server_status = "OFFLINE"
         self.agent_status = "UNREGISTERED" if not server_client.agent_id else "OFFLINE"
         self.last_heartbeat = ""
@@ -112,7 +126,19 @@ class AgentService:
             return False
         running = sum(1 for task in self.task_service.task_manager.list_tasks() if task.status is TaskStatus.RUNNING)
         timestamp = datetime.now().astimezone().isoformat()
-        self.server_client.heartbeat({"agent_id": self.server_client.agent_id, "device_id": getattr(self.server_client, "device_id", ""), "client_version": self.client_version, "status": "ONLINE", "profile_count": len(self.account_registry.list()), "running_task_count": running, "timestamp": timestamp})
+        response = self.server_client.heartbeat({"agent_id": self.server_client.agent_id, "device_id": getattr(self.server_client, "device_id", ""), "client_version": self.client_version, "status": "ONLINE", "profile_count": len(self.account_registry.list()), "running_task_count": running, "timestamp": timestamp})
+        workspace_id = str(response.get("workspace_id") or getattr(self.server_client, "workspace_id", "")) if isinstance(response, dict) else ""
+        remember_workspace = getattr(self.server_client, "remember_workspace_id", None)
+        if workspace_id and callable(remember_workspace):
+            remember_workspace(workspace_id)
+        offline_access = response.get("offline_access") if isinstance(response, dict) else None
+        if self.offline_access_store is not None and isinstance(offline_access, dict):
+            self.offline_access_store.accept(
+                offline_access,
+                agent_id=self.server_client.agent_id,
+                device_id=getattr(self.server_client, "device_id", ""),
+                workspace_id=workspace_id,
+            )
         self.server_status = "ONLINE"; self.agent_status = "ONLINE"; self.last_heartbeat = timestamp; self.last_error = ""
         return True
 
@@ -127,6 +153,23 @@ class AgentService:
         for payload in self.state_store.pending():
             self.server_client.send_result(payload)
             self.state_store.mark_uploaded(str(payload["task_id"]))
+            uploaded += 1
+        return uploaded
+
+    def flush_automation_metrics(self) -> int:
+        """Upload locally persisted counters; retain them when delivery fails."""
+        if self.automation_statistics is None:
+            return 0
+        uploaded = 0
+        for payload in self.automation_statistics.pending():
+            try:
+                self.server_client.send_automation_metric(payload)
+            except ServerClientError as exc:
+                if exc.status_code == 401:
+                    raise
+                LOGGER.info("Automation metric remains queued: %s", exc)
+                break
+            self.automation_statistics.mark_uploaded(str(payload["run_id"]))
             uploaded += 1
         return uploaded
 
@@ -272,17 +315,41 @@ class AgentService:
                     # healthy Agent appear offline or stop task processing.
                     LOGGER.info("Engine update unavailable; using local version: %s", exc)
             self.sync_accounts_once()
+            self.flush_automation_metrics()
             self.pull_and_execute_once()
             self.process_commands_once()
             return True
         except ServerClientError as exc:
-            self.server_status = "ONLINE" if exc.status_code == 401 else "OFFLINE"
-            self.agent_status = "REAUTH_REQUIRED" if exc.status_code == 401 else "OFFLINE"
+            denied = exc.status_code in {401, 403}
+            self.server_status = "ONLINE" if denied else "OFFLINE"
+            self.agent_status = "REAUTH_REQUIRED" if denied else "OFFLINE"
+            if denied and self.offline_access_store is not None:
+                self.offline_access_store.revoke()
             self.last_error = str(exc)
             return False
 
-    def status(self) -> dict[str, str]:
-        return {"server": self.server_status, "agent": self.agent_status, "lifecycle": self.lifecycle, "execution_mode": "EMBEDDED_DESKTOP", "command_channel": self.command_channel, "websocket_reconnects": str(self.websocket_reconnects), "last_channel_change": self.last_channel_change, "last_heartbeat": self.last_heartbeat, "last_error": self.last_error}
+    def authorization_status(self) -> dict[str, Any]:
+        denied = self.agent_status == "REAUTH_REQUIRED"
+        if self.server_status == "ONLINE" and self.agent_status == "ONLINE":
+            return {"mode": "ONLINE", "valid": True, "capabilities": sorted(ONLINE_CAPABILITIES), "expires_at": ""}
+        if denied:
+            return {"mode": "REAUTH_REQUIRED", "valid": False, "capabilities": sorted(ALWAYS_ALLOWED_CAPABILITIES), "expires_at": ""}
+        if self.offline_access_store is not None:
+            cached = self.offline_access_store.status(
+                agent_id=self.server_client.agent_id,
+                device_id=getattr(self.server_client, "device_id", ""),
+                workspace_id=getattr(self.server_client, "workspace_id", ""),
+            )
+            if cached.get("valid"):
+                return {"mode": "OFFLINE_GRACE", **cached}
+        return {"mode": "RESTRICTED", "valid": False, "capabilities": sorted(ALWAYS_ALLOWED_CAPABILITIES), "expires_at": ""}
+
+    def has_capability(self, capability: str) -> bool:
+        return str(capability) in set(self.authorization_status().get("capabilities") or [])
+
+    def status(self) -> dict[str, Any]:
+        authorization = self.authorization_status()
+        return {"server": self.server_status, "agent": self.agent_status, "lifecycle": self.lifecycle, "execution_mode": "EMBEDDED_DESKTOP", "command_channel": self.command_channel, "websocket_reconnects": str(self.websocket_reconnects), "last_channel_change": self.last_channel_change, "last_heartbeat": self.last_heartbeat, "last_error": self.last_error, "authorization_mode": authorization["mode"], "authorization_expires_at": authorization.get("expires_at", ""), "capabilities": authorization.get("capabilities", [])}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -333,7 +400,7 @@ class AgentService:
             self._stop.wait(self.heartbeat_interval)
 
 
-def build_agent_service(task_service, account_registry):
+def build_agent_service(task_service, account_registry, *, automation_statistics=None):
     from .config import load_settings
     from .server_client import CredentialStore
 
@@ -358,4 +425,6 @@ def build_agent_service(task_service, account_registry):
         ),
         engine_cache_dir=settings.engine_cache_dir,
         engine_auto_update=settings.engine_auto_update,
+        automation_statistics=automation_statistics,
+        offline_access_store=OfflineAccessStore(settings.offline_access_file),
     )

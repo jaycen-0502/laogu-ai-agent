@@ -60,30 +60,122 @@ async function identity(page, context, browserFetch, timeoutMs) {
   return { loginStatus: 'LOGGED_IN', xUsername, xAccountId, identityVerified: true };
 }
 
-function countValue(value) {
-  const text = String(value || '').replace(/,/g, '').trim();
-  const match = text.match(/([\d.]+)([KMB])?/i);
+function legacyCountValue(value) {
+  const text = String(value || '')
+    .replace(/[\s\u00a0]/g, '')
+    .replace(/[,，]/g, '')
+    .trim();
+  const match = text.match(/([\d]+(?:\.\d+)?)([KMB万萬亿億])?/i);
   if (!match) return null;
-  const factor = { K: 1000, M: 1000000, B: 1000000000 }[String(match[2] || '').toUpperCase()] || 1;
+  const suffix = String(match[2] || '').toUpperCase();
+  const factor = {
+    K: 1000,
+    M: 1000000,
+    B: 1000000000,
+    '万': 10000,
+    '萬': 10000,
+    '亿': 100000000,
+    '億': 100000000,
+  }[suffix] || 1;
   const number = Number(match[1]) * factor;
   return Number.isFinite(number) ? Math.round(number) : null;
 }
 
+// Robust counter parser for X's compact and localized labels. This later
+// declaration intentionally preserves compatibility with older callers.
+function countValue(value) {
+  const text = String(value || '')
+    .normalize('NFKC')
+    .replace(/[\s\u00a0,，、]/g, '')
+    .trim();
+  const match = text.match(/(\d+(?:\.\d+)?)(K|M|B|万|亿)?/i);
+  if (!match) return null;
+  const suffix = String(match[2] || '').toUpperCase();
+  const factor = { K: 1e3, M: 1e6, B: 1e9, '万': 1e4, '亿': 1e8 }[suffix] || 1;
+  const number = Number(match[1]) * factor;
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+}
+
 async function text(locator) { return locator ? (await locator.innerText().catch(() => '')).trim() : ''; }
 
-async function profileData(page, account) {
-  const display = await text(await visible(page.locator('[data-testid="UserName"]')));
+async function waitForProfileSurface(page, username, timeoutMs) {
+  const handle = String(username || '').replace(/^@/, '');
+  const surface = page.locator(
+    `[data-testid="UserName"], [data-testid="UserDescription"], `
+    + `a[href="/${handle}/following"], a[href="/${handle}/followers"], `
+    + `a[href="/${handle}/verified_followers"]`
+  );
+  await surface.first().waitFor({
+    state: 'visible',
+    timeout: Math.min(Math.max(timeoutMs, 1000), 15000),
+  }).catch(() => null);
+
+  // UserName often appears before the counters. Give the profile header a
+  // short bounded hydration window instead of reading React's empty shell.
+  const countLinks = page.locator(
+    `a[href*="/${handle}/following"], a[href*="/${handle}/followers"], `
+    + `a[href*="/${handle}/verified_followers"]`
+  );
+  await countLinks.first().waitFor({
+    state: 'visible',
+    timeout: Math.min(Math.max(Math.floor(timeoutMs / 3), 1000), 5000),
+  }).catch(() => null);
+}
+
+async function profileData(page, account, timeoutMs) {
+  await waitForProfileSurface(page, account.xUsername, timeoutMs);
+  const userName = await visible(page.locator('[data-testid="UserName"]'));
+  const displayLocator = userName
+    ? await visible(userName.locator('span'))
+    : null;
+  const display = await text(displayLocator || userName);
   const bio = await text(await visible(page.locator('[data-testid="UserDescription"]')));
-  const links = page.locator('a[href$="/followers"], a[href$="/following"]');
+  const links = page.locator(
+    'a[href*="/followers"], a[href*="/verified_followers"], a[href*="/following"]'
+  );
   const counts = { followers_count: null, following_count: null };
   const count = await links.count().catch(() => 0);
   for (let i = 0; i < count; i += 1) {
     const href = await links.nth(i).getAttribute('href').catch(() => '');
-    const value = countValue(await text(links.nth(i)));
-    if (String(href).endsWith('/followers')) counts.followers_count = value;
-    if (String(href).endsWith('/following')) counts.following_count = value;
+    const aria = await links.nth(i).getAttribute('aria-label').catch(() => '');
+    const value = countValue(`${await text(links.nth(i))} ${aria || ''}`);
+    let path = String(href || '');
+    try { path = new URL(path, 'https://x.com').pathname; } catch {}
+    if (/\/(followers|verified_followers)\/?$/i.test(path) && value !== null) {
+      counts.followers_count = value;
+    }
+    if (/\/following\/?$/i.test(path) && value !== null) {
+      counts.following_count = value;
+    }
   }
-  return { ...account, display_name: display || null, bio: bio || null, ...counts, profile_url: account.xUsername ? `https://x.com/${account.xUsername.slice(1)}` : null };
+
+  // Some X layouts expose the counter only through aria-labels.
+  if (counts.followers_count === null) {
+    const labels = page.locator('[aria-label*="Followers"], [aria-label*="followers"], [aria-label*="粉丝"]');
+    const n = await labels.count().catch(() => 0);
+    for (let i = 0; i < n && counts.followers_count === null; i += 1) {
+      counts.followers_count = countValue(await labels.nth(i).getAttribute('aria-label').catch(() => ''));
+    }
+  }
+  if (counts.following_count === null) {
+    const labels = page.locator('[aria-label*="Following"], [aria-label*="following"], [aria-label*="关注"]');
+    const n = await labels.count().catch(() => 0);
+    for (let i = 0; i < n && counts.following_count === null; i += 1) {
+      counts.following_count = countValue(await labels.nth(i).getAttribute('aria-label').catch(() => ''));
+    }
+  }
+  const warnings = [];
+  if (counts.followers_count === null) warnings.push('followers_count unavailable');
+  if (counts.following_count === null) warnings.push('following_count unavailable');
+  return {
+    ...account,
+    display_name: display || null,
+    bio: bio || null,
+    ...counts,
+    profile_data_status: warnings.length ? 'PARTIAL' : 'COMPLETE',
+    profile_data_warnings: warnings,
+    profile_url: account.xUsername ? `https://x.com/${account.xUsername.slice(1)}` : null,
+  };
 }
 
 async function posts(page, limit = 20) {
@@ -120,7 +212,7 @@ module.exports.run = async ({ useBrowser, browserFetch, selector = {}, params = 
   let result = { ...account };
   if (taskType === 'x.read_profile') {
     await page.goto(`https://x.com/${account.xUsername.slice(1)}`, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-    result = await profileData(page, account);
+    result = await profileData(page, account, timeoutMs);
   }
   if (taskType === 'x.read_timeline') result = { ...account, posts: await posts(page) };
   if (taskType === 'x.search') result = { ...account, query, posts: await posts(page) };
@@ -131,3 +223,5 @@ module.exports.run = async ({ useBrowser, browserFetch, selector = {}, params = 
   log(taskType, 'SUCCESS');
   return { ok: true, status: 'success', result };
 };
+
+module.exports._internals = { countValue };

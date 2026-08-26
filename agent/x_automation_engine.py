@@ -370,8 +370,29 @@ class XAutomationEngine:
         target_search_url = f"https://x.com/search?q={kw_encoded}&f=live"
 
         try:
-            await page.goto(target_search_url, wait_until="domcontentloaded", timeout=20000)
-            await asyncio.sleep(random.uniform(3.5, 6.0))
+            # 1. 发起跳转并等待页面网络基本结算
+            await page.goto(target_search_url, wait_until="load", timeout=25000)
+
+            # 2. 🛡️ 【抗抢跑核心】：物理等待 X 平台真正的搜索框或推文容器在屏幕上渲染绘制出来！
+            self._print("⏳ 正在等待 X 平台网页 DOM 渲染与画面绘制...")
+            ready = False
+            for selector in ['input[data-testid="SearchBox_Search_Input"]', 'article', 'div[data-testid="primaryColumn"]']:
+                try:
+                    # 强行要求 state="visible"，确保元素不仅存在，而且在视觉上完全看得见
+                    await page.wait_for_selector(selector, state="visible", timeout=8000)
+                    ready = True
+                    break
+                except Exception:
+                    continue
+
+            if not ready:
+                self._print("⚠️ 网页渲染较慢，追加 3 秒强制拟人缓冲...")
+                await asyncio.sleep(3.0)
+
+            # 3. 拟人随机停顿（模拟人类眼睛看到页面后的反应时间）
+            reaction_time = random.uniform(2.5, 4.5)
+            self._print(f"✅ 网页完全加载渲染完毕，真人视觉反应延迟: {reaction_time:.2f} 秒")
+            await asyncio.sleep(reaction_time)
 
             if "/explore" in page.url.lower():
                 self._print("⚠️ 页面被强制重定向至 /explore，这通常代表当前浏览器未登录账号！")
@@ -380,10 +401,11 @@ class XAutomationEngine:
                     raise NotLoggedInError(self.tag)
             else:
                 self._print("✅ 检索页面跳转成功，已切入最新推文流！")
+
         except NotLoggedInError:
             raise
         except Exception as e:
-            self._print(f"⚠️ 页面跳转过程捕获到异常: {e}")
+            self._print(f"⚠️ 页面跳转/渲染等待过程捕获到异常: {e}")
 
     async def _browse_home_feed(self, page: Any) -> None:
         self._print("🎲 [拟人消痕] 随机切回 For You 首页逛街刷帖...")

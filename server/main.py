@@ -117,11 +117,13 @@ def _user_usage(db: Session, item: User) -> dict:
         for model in token_models
     )
     storage = int(db.scalar(select(func.coalesce(func.sum(AIImage.byte_size), 0)).where(AIImage.user_id == item.id)) or 0)
-    last_activity = db.scalar(select(func.max(AuditLog.timestamp)).where(AuditLog.user_id == item.id))
-    if last_activity is not None and last_activity.tzinfo is None:
-        last_activity = last_activity.replace(tzinfo=timezone.utc)
-    online = bool(last_activity and datetime.now(timezone.utc) - last_activity.astimezone(timezone.utc) <= timedelta(minutes=5))
-    return {"ai_total_tokens": tokens, "storage_bytes": storage, "last_activity_at": _dt(last_activity), "online": online}
+    last_seen = _aware(item.last_seen_at) if item.last_seen_at else None
+    return {
+        "ai_total_tokens": tokens,
+        "storage_bytes": storage,
+        "last_seen_at": _dt(item.last_seen_at),
+        "online": bool(last_seen and datetime.now(timezone.utc) - last_seen <= timedelta(minutes=5)),
+    }
 
 
 def _workspace_dict(item: Workspace) -> dict:
@@ -472,9 +474,18 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         except Exception:
             audit(db, request, action="AUTH_USER", result="DENIED", message="Invalid user authentication")
             raise HTTPException(status_code=401, detail="Unauthorized")
-        if not user or user.status != "ACTIVE" or payload.get("auth_version") != password_auth_version(user.password_hash):
+        if (
+            not user
+            or user.status != "ACTIVE"
+            or payload.get("auth_version") != password_auth_version(user.password_hash)
+            or payload.get("session_version") != user.web_session_version
+        ):
             audit(db, request, action="AUTH_USER", result="DENIED", message="Inactive or missing user")
             raise HTTPException(status_code=401, detail="Unauthorized")
+        current_time = now()
+        if not user.last_seen_at or current_time - _aware(user.last_seen_at) >= timedelta(seconds=60):
+            user.last_seen_at = current_time
+            db.commit()
         return user
 
     def current_agent(request: Request, authorization: Annotated[str | None, Header()] = None, db: Session = Depends(get_db)) -> Agent:
@@ -629,6 +640,14 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if not user or not password_valid or user.status != "ACTIVE":
             audit(db, request, action="LOGIN", result="DENIED", user_id=user.id if user else None, workspace_id=user.workspace_id if user else None, message="Invalid credentials")
             raise HTTPException(status_code=401, detail="Unauthorized")
+        session_version = db.scalar(
+            update(User)
+            .where(User.id == user.id)
+            .values(web_session_version=User.web_session_version + 1)
+            .returning(User.web_session_version)
+        )
+        db.commit()
+        user.web_session_version = int(session_version)
         audit(db, request, action="LOGIN", result="SUCCESS", user_id=user.id, workspace_id=user.workspace_id)
         return {"access_token": create_jwt(user, settings), "token_type": "bearer", "role": user.role, "workspace_id": user.workspace_id}
 
@@ -696,6 +715,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if verify_login_password(body.new_password, user.password_hash):
             raise HTTPException(status_code=422, detail="New password must be different")
         user.password_hash = hash_password(body.new_password)
+        user.web_session_version += 1
         db.commit()
         audit(db, request, action="PASSWORD_CHANGE", result="SUCCESS", user_id=user.id, workspace_id=user.workspace_id, resource_type="user", resource_id=user.id)
         return {"ok": True, "access_token": create_jwt(user, settings)}

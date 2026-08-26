@@ -36,7 +36,7 @@ def password_auth_version(hashed: str) -> str:
 def create_jwt(user, settings: ServerSettings) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode(
-        {"sub": user.id, "role": user.role, "workspace_id": user.workspace_id, "auth_version": password_auth_version(user.password_hash), "iat": now, "exp": now + timedelta(minutes=settings.jwt_expire_minutes)},
+        {"sub": user.id, "role": user.role, "workspace_id": user.workspace_id, "auth_version": password_auth_version(user.password_hash), "session_version": user.web_session_version, "iat": now, "exp": now + timedelta(minutes=settings.jwt_expire_minutes)},
         settings.jwt_secret,
         algorithm="HS256",
     )

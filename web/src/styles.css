@@ -1,4 +1,4 @@
-:root {
+﻿:root {
   font-family: Inter, "Microsoft YaHei UI", system-ui, sans-serif;
   color: #17202a;
   background: #f3f6f8;
@@ -93,11 +93,14 @@ h2 {
   position: fixed;
   inset: 0 auto 0 0;
   width: 224px;
+  height: 100vh;
+  box-sizing: border-box;
   background: #102a2a;
   color: #e7f7f5;
   padding: 20px 14px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .brand {
   display: flex;
@@ -161,13 +164,26 @@ nav {
   display: flex;
   flex-direction: column;
   gap: 3px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 2px 0 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #3f7772 transparent;
 }
+nav::-webkit-scrollbar { width: 7px; }
+nav::-webkit-scrollbar-thumb { background: #3f7772; border-radius: 8px; }
+nav::-webkit-scrollbar-track { background: transparent; }
 nav a {
   color: #bcd4d2;
   text-decoration: none;
   padding: 10px 12px;
   border-radius: 7px;
 }
+.nav-group-toggle { display: flex; width: 100%; justify-content: space-between; align-items: center; color: #d9f0ed; border: 0; background: transparent; text-align: left; }
+.nav-group-toggle:hover, .nav-group-toggle.active { color: #fff; background: #173b3a; border-color: transparent; }
+.nav-group-items { padding-left: 9px; border-left: 1px solid rgba(167, 220, 215, 0.22); }
 nav a:hover,
 nav a.active {
   color: white;
@@ -175,6 +191,7 @@ nav a.active {
 }
 .sidebar-bottom {
   margin-top: auto;
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -726,6 +743,27 @@ label {
 .provider-form-grid {
   grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
+.workspace-provider-toolbar {
+  align-items: end;
+}
+.workspace-provider-toolbar label {
+  min-width: 220px;
+}
+.policy-workspace-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid #dbe4ea;
+  border-radius: 10px;
+  background: #f8fafb;
+}
+.policy-workspace-summary div {
+  display: grid;
+  gap: 3px;
+}
 .provider-default-check {
   align-self: end;
   min-height: 36px;
@@ -782,6 +820,24 @@ label {
   margin-top: 5px;
   color: #9c2c25;
 }
+.provider-actual-model {
+  margin-top: 4px;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 600;
+}
+.online-dot::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: #94a3b8;
+  content: "";
+}
+.online-dot.online { color: #0f766e; }
+.online-dot.online::before { background: #14b8a6; }
+.online-dot.offline { color: #718096; }
 .chat-create-controls {
   display: flex;
   gap: 8px;

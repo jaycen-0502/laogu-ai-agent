@@ -10,6 +10,7 @@ export type User = {
   ai_total_tokens?: number;
   storage_bytes?: number;
   last_activity_at?: string | null;
+  last_seen_at?: string | null;
   online?: boolean;
   permissions?: Record<string, boolean>;
   linked_agent_count?: number;

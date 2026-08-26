@@ -103,7 +103,7 @@ def test_alembic_upgrade_downgrade_upgrade_and_legacy_token_migration(tmp_path, 
         migrated = db.execute("SELECT agent_id, token_hash, status FROM agent_tokens").fetchone()
         assert migrated == ("a1", legacy_hash, "ACTIVE")
         assert db.execute("SELECT token_hash FROM agents WHERE id='a1'").fetchone()[0] == ""
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0018_provider_actual_model"
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0019_provider_actual_model"
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='automation_metrics'").fetchone() == ("automation_metrics",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scripts'").fetchone() == ("scripts",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_providers'").fetchone() == ("ai_providers",)
@@ -379,10 +379,12 @@ def test_rate_limit_uses_shared_task_bucket_and_request_size_limit():
     boot = bootstrap(client)
     login = {"username": "admin", "password": "password123"}
     assert client.post("/api/auth/login", json=login).status_code == 200
-    assert client.post("/api/auth/login", json=login).status_code == 200
+    current_token = client.post("/api/auth/login", json=login)
+    assert current_token.status_code == 200
     assert client.post("/api/auth/login", json=login).status_code == 429
 
-    assert client.get("/api/tasks", headers=auth(boot["access_token"])).status_code == 200
+    headers = auth(current_token.json()["access_token"])
+    assert client.get("/api/tasks", headers=headers).status_code == 200
     second_task_path = client.get("/api/tasks/nonexistent", headers=auth(boot["access_token"]))
     assert second_task_path.status_code == 429
     assert second_task_path.headers["x-content-type-options"] == "nosniff"

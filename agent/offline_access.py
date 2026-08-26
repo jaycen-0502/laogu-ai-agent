@@ -18,8 +18,12 @@ OFFLINE_ACCESS_PREFIX = "LGOFF1."
 
 def _decode_b64(value: str) -> bytes:
     raw = str(value).strip()
-    raw += "=" * (-len(raw) % 4)
-    return base64.urlsafe_b64decode(raw.encode("ascii"))
+    padded = raw + "=" * (-len(raw) % 4)
+    decoded = base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
+    canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+    if canonical != raw:
+        raise ValueError("Invalid Base64URL encoding")
+    return decoded
 
 
 def _verify_lease(token: str, public_key_value: str) -> dict[str, Any]:

@@ -46,6 +46,17 @@ _RUNNING_PROFILES: set[str] = set()
 _RUNNING_LOCK = threading.Lock()
 
 
+def _resolve_automation_engine_class(cache_dir: str | Path, engine_id: str) -> type:
+    """Keep the bundled default stable; cached files are for named engines only."""
+    normalized_id = str(engine_id or "default").strip() or "default"
+    if normalized_id == "default":
+        return XAutomationEngine
+    cached = get_cached_automation_engine_class(cache_dir, normalized_id) if cache_dir else None
+    if cached is None:
+        raise RuntimeError(f"未找到已校验的自动化引擎缓存：{normalized_id}")
+    return cached
+
+
 def _resolve_ws_cdp_url(cdp_url: str) -> str:
     """将 http://127.0.0.1:19876 自动解析转换为 Playwright 要求的 ws:// 连接地址，带重试保护"""
     if str(cdp_url).startswith("ws://") or str(cdp_url).startswith("wss://"):
@@ -80,11 +91,15 @@ def _run_engine_in_thread(
     asyncio.set_event_loop(loop)
     try:
         real_cdp_url = _resolve_ws_cdp_url(cdp_url)
-        engine_class = get_cached_automation_engine_class(cache_dir, engine_id) if cache_dir else None
-        if engine_class is None:
-            if str(engine_id or "default") != "default":
-                raise RuntimeError(f"未找到已校验的自动化引擎缓存：{engine_id}")
-            engine_class = XAutomationEngine
+        engine_class = _resolve_automation_engine_class(cache_dir, engine_id)
+        if logger:
+            logger.info(
+                "Automation engine selected: id=%s class=%s module=%s source=%s",
+                str(engine_id or "default").strip() or "default",
+                getattr(engine_class, "__name__", str(engine_class)),
+                getattr(engine_class, "__module__", ""),
+                "bundled" if str(engine_id or "default").strip() in ("", "default") else "cache",
+            )
         engine = engine_class(cdp_url=real_cdp_url, logger=logger)
         return loop.run_until_complete(engine.run(config))
     except Exception as exc:
@@ -319,7 +334,7 @@ class DesktopController:
             engine_id = str(config.get("engine_id") or "default").strip() or "default"
             engine_name = str(config.get("engine_name") or engine_id).strip()
             engine_client = getattr(self.agent_service, "server_client", None) if self.agent_service is not None else None
-            cached_engine = get_cached_automation_engine_class(self.settings.engine_cache_dir, engine_id)
+            cached_engine = get_cached_automation_engine_class(self.settings.engine_cache_dir, engine_id) if engine_id != "default" else XAutomationEngine
             if cached_engine is None and engine_id != "default":
                 if engine_client is None or (self.server_agent_status().get("server") != "ONLINE"):
                     raise RuntimeError(f"自定义自动化引擎“{engine_name}”尚未下载，当前服务器不可用。")
@@ -349,8 +364,8 @@ class DesktopController:
                 "source": "LOCAL_PARALLEL_ENGINE",
                 "engine_id": engine_id,
                 "name": engine_name,
-                "version": "cached" if engine_id != "default" else "bundled-or-cached",
-                "sha256": "cached-or-local",
+                "version": "cached" if engine_id != "default" else "bundled",
+                "sha256": "cached" if engine_id != "default" else "bundled",
             }
 
             run_id = uuid4().hex
@@ -460,6 +475,21 @@ class DesktopController:
                 self.agent_service.flush_automation_metrics()
         except Exception as exc:
             self.logger.info("Automation statistics sync deferred: %s", exc)
+
+        # Refresh only the local account snapshot; this supplementary read must
+        # never turn a completed automation run into a failure.
+        if str(result.get("status") or "").upper() in {"SUCCESS", "COMPLETED"}:
+            try:
+                profile_task = self.task_service.run(
+                    profile_id,
+                    "x.read_profile",
+                    {"readOnly": True, "source": "automation_finished"},
+                )
+                profile_status = getattr(profile_task, "status", None)
+                if str(getattr(profile_status, "value", profile_status) or "").upper() != "SUCCESS":
+                    self.logger.info("Profile asset refresh returned %s for profile=%s", profile_status, profile_id)
+            except Exception as exc:
+                self.logger.info("Profile asset refresh deferred for profile=%s: %s", profile_id, exc)
 
     @staticmethod
     def _extract_cdp_url(payload: Any) -> str:

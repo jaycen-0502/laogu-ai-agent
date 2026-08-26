@@ -8,8 +8,8 @@ import socket
 import sys
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, Qt, QThread, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QMouseEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QThread, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QMouseEvent, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -30,7 +31,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QSplitter,
-    QStyle,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -39,6 +39,8 @@ from PySide6.QtWidgets import (
 )
 
 from .controller import AccountRow, DesktopController
+from .branding import application_icon
+from .iconography import line_icon
 from .workers import FunctionWorker
 from .styles import APP_STYLE
 
@@ -79,30 +81,30 @@ class TaskConfigDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("配置自动化任务")
         self.setModal(True)
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(500)
         initial = initial or {}
         active = initial.get("active") if isinstance(initial.get("active"), dict) else initial
 
         form = QFormLayout(self)
-        form.setContentsMargins(22, 20, 22, 16)
+        form.setContentsMargins(24, 20, 24, 16)
         form.setVerticalSpacing(12)
 
         self.engine_input = QComboBox()
+        self.engine_input.setMinimumHeight(32)
         selected_engine = str(active.get("engine_id") or "default")
         self.set_engines(engines, selected_engine)
         form.addRow("自动化方案", self.engine_input)
 
         raw_kw = str(active.get("keyword") or active.get("keywords") or "")
-        # 保留原样包含括号的输入
         self.keyword_input = QLineEdit(raw_kw)
         self.keyword_input.setMaxLength(500)
+        self.keyword_input.setMinimumHeight(32)
         self.keyword_input.setPlaceholderText("例如：(#やっぱり乃木坂だな) lang:ja 或高级检索表达式")
         form.addRow("检索关键词", self.keyword_input)
 
         self.daily_limit_input = self._spin(active.get("daily_task_limit"), 50, 1, 10_000)
         form.addRow("单日任务上限", self.daily_limit_input)
 
-        # 保留原配置并新增：批次间隔时间输入框（支持设置 1~1440 分钟）
         self.batch_interval_input = self._spin(active.get("batch_interval_minutes"), 15, 1, 1440)
         self.batch_interval_input.setSuffix(" 分钟")
         form.addRow("批次间隔时间", self.batch_interval_input)
@@ -150,7 +152,7 @@ class TaskConfigDialog(QDialog):
         self.keyword_input.setText(raw_kw)
         for widget, key, default in (
             (self.daily_limit_input, "daily_task_limit", 50),
-            (self.batch_interval_input, "batch_interval_minutes", 15), # 保持默认15分钟回显
+            (self.batch_interval_input, "batch_interval_minutes", 15),
             (self.follower_limit_input, "max_follower_threshold", 150),
             (self.engagement_limit_input, "max_engagement_threshold", 10_000),
         ):
@@ -164,6 +166,7 @@ class TaskConfigDialog(QDialog):
     def _spin(value: Any, default: int, minimum: int, maximum: int) -> QSpinBox:
         widget = QSpinBox()
         widget.setRange(minimum, maximum)
+        widget.setMinimumHeight(32)
         try:
             widget.setValue(default if value is None else int(value))
         except (TypeError, ValueError):
@@ -177,9 +180,9 @@ class TaskConfigDialog(QDialog):
         return {
             "engine_id": str(engine.get("engine_id") or "default"),
             "engine_name": str(engine.get("engine_name") or "默认自动化引擎"),
-            "keyword": raw_kw,  # 原样保留括号提交
+            "keyword": raw_kw,
             "daily_task_limit": self.daily_limit_input.value(),
-            "batch_interval_minutes": self.batch_interval_input.value(), # 传递批次间隔分钟数
+            "batch_interval_minutes": self.batch_interval_input.value(),
             "max_follower_threshold": self.follower_limit_input.value(),
             "max_engagement_threshold": self.engagement_limit_input.value(),
             "sleep_on_rate_limit": True,
@@ -196,15 +199,17 @@ class AgentReauthDialog(QDialog):
         self.setMinimumWidth(480)
         form = QFormLayout(self)
         form.setContentsMargins(22, 20, 22, 16)
-        
+
         self.agent_id_input = QLineEdit(str(agent_id).strip())
         self.agent_id_input.setReadOnly(True)
+        self.agent_id_input.setMinimumHeight(32)
         self.agent_id_input.setToolTip("Agent ID 由服务器签发，不能在控制中心修改")
         self.agent_id_input.setPlaceholderText("从 Web 后台复制 Agent ID")
         form.addRow("Agent ID", self.agent_id_input)
 
         self.agent_token_input = QLineEdit()
         self.agent_token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.agent_token_input.setMinimumHeight(32)
         self.agent_token_input.setPlaceholderText("粘贴新生成的 Agent Token")
         form.addRow("Agent Token", self.agent_token_input)
 
@@ -246,7 +251,7 @@ class AccountCardWidget(QFrame):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(14, 10, 14, 10)
+        main_layout.setContentsMargins(12, 8, 12, 8)
         main_layout.setSpacing(6)
 
         top_row = QHBoxLayout()
@@ -264,7 +269,13 @@ class AccountCardWidget(QFrame):
         name.setObjectName("accountName")
         
         handle_str = record.x_username if record.x_username and record.x_username != "-" else "未绑定 X 账号"
-        login_str = "已登录" if record.login_status in ["LOGGED_IN", "VALID"] else "未登录"
+        login_labels = {
+            "LOGGED_IN": "已登录",
+            "VALID": "已登录",
+            "NOT_LOGGED_IN": "未登录",
+            "UNKNOWN": "未确认",
+        }
+        login_str = login_labels.get(str(record.login_status or "").upper(), "未确认")
         account_id = f" · ID {record.x_account_id}" if record.x_account_id else ""
         sub_info = QLabel(f"{handle_str} · {login_str}{account_id}")
         sub_info.setObjectName("accountHandle")
@@ -279,13 +290,15 @@ class AccountCardWidget(QFrame):
         state.setObjectName("tagRunning" if running else "tagStopped")
         top_row.addWidget(state)
 
-        for text, object_name, callback in (
-            ("▶ 运行", "miniRunButton", on_run),
-            ("■ 停止", "miniStopButton", on_stop),
-            ("⚙️ 配置", "miniConfigButton", on_config),
+        for text, object_name, callback, icon_name, icon_color in (
+            ("运行", "miniRunButton", on_run, "play", "#059669"),
+            ("停止", "miniStopButton", on_stop, "stop", "#DC2626"),
+            ("配置", "miniConfigButton", on_config, "settings", "#475569"),
         ):
             button = QPushButton(text)
             button.setObjectName(object_name)
+            button.setIcon(line_icon(icon_name, icon_color, 15))
+            button.setMinimumHeight(28)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda checked=False, cb=callback, pid=self.profile_id: cb(pid))
             top_row.addWidget(button)
@@ -306,10 +319,10 @@ class AccountCardWidget(QFrame):
 
         bottom_row = QHBoxLayout()
         stats_label = QLabel(
-            f"账号资产：粉丝 {own_followers} · 关注 {own_following}  |  今日执行：赞 {likes} · 关 {follows} · 评 {comments} · 扫描 {scanned_posts}"
+            f"数据：粉丝 {own_followers} · 关注 {own_following}  |  今日：赞 {likes} · 关 {follows} · 评 {comments} · 扫 {scanned_posts}"
         )
         stats_label.setObjectName("accountHandle")
-        stats_label.setStyleSheet("color: #475569; font-size: 11px; font-weight: 600;")
+        stats_label.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 500;")
         bottom_row.addWidget(stats_label)
         bottom_row.addStretch(1)
 
@@ -325,6 +338,158 @@ class AccountCardWidget(QFrame):
         self.style().polish(self)
 
 
+class MiniLogWindow(QWidget):
+    """Always-on-top status and log surface shown while the main window is minimized."""
+
+    restore_requested = Signal()
+    stop_all_requested = Signal()
+    exit_requested = Signal()
+
+    def __init__(self):
+        super().__init__(None)
+        self.setObjectName("miniLogWindow")
+        self.setWindowTitle("老谷控制中心 - 日志浮窗")
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+        )
+        self.setWindowOpacity(1.0)
+        self.setWindowIcon(application_icon())
+        self.setFixedSize(470, 420)
+        self._drag_offset: QPoint | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        header = QHBoxLayout()
+        header.setSpacing(9)
+        brand_mark = QLabel(objectName="miniBrandMark")
+        brand_mark.setPixmap(application_icon().pixmap(34, 34))
+        header.addWidget(brand_mark)
+        title_block = QVBoxLayout()
+        title_block.setSpacing(1)
+        title_block.addWidget(QLabel("老谷控制中心", objectName="miniTitle"))
+        title_block.addWidget(QLabel("任务运行监控", objectName="miniSubtitle"))
+        header.addLayout(title_block)
+        header.addStretch(1)
+        self.connection_label = QLabel("● 正在连接", objectName="miniStatus")
+        header.addWidget(self.connection_label)
+        self.exit_button = QPushButton("×")
+        self.exit_button.setObjectName("miniWindowCloseButton")
+        self.exit_button.setToolTip("关闭控制中心并退出内置 Agent")
+        self.exit_button.clicked.connect(self.exit_requested.emit)
+        header.addWidget(self.exit_button)
+        layout.addLayout(header)
+
+        self.metrics_label = QLabel("运行 0  ·  成功 0  ·  失败 0", objectName="miniMetrics")
+        layout.addWidget(self.metrics_label)
+
+        log_header = QHBoxLayout()
+        log_header.setContentsMargins(1, 0, 1, 0)
+        log_header.addWidget(QLabel("实时日志", objectName="miniSectionTitle"))
+        log_header.addStretch(1)
+        log_header.addWidget(QLabel("自动跟随最新", objectName="miniAutoFollow"))
+        layout.addLayout(log_header)
+
+        self.log_output = QPlainTextEdit(objectName="miniLogOutput")
+        self.log_output.setReadOnly(True)
+        self.log_output.setMaximumBlockCount(80)
+        self.log_output.setPlaceholderText("等待控制中心日志…")
+        self.log_output.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.log_output.textChanged.connect(self._scroll_to_latest)
+        layout.addWidget(self.log_output, 1)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(7)
+        self.pause_button = QPushButton("暂停日志")
+        self.pause_button.setObjectName("miniSecondaryButton")
+        self.pause_button.setCheckable(True)
+        self.pause_button.setToolTip("暂停或继续浮窗日志滚动")
+        self.pause_button.toggled.connect(self._set_paused)
+        actions.addWidget(self.pause_button, 1)
+
+        self.stop_button = QPushButton("停止全部")
+        self.stop_button.setObjectName("miniDangerButton")
+        self.stop_button.setToolTip("停止全部浏览器档案，操作前会再次确认")
+        self.stop_button.clicked.connect(self.stop_all_requested.emit)
+        actions.addWidget(self.stop_button, 1)
+
+        self.restore_button = QPushButton("打开控制中心")
+        self.restore_button.setObjectName("miniPrimaryButton")
+        self.restore_button.setToolTip("恢复完整控制中心")
+        self.restore_button.clicked.connect(self.restore_requested.emit)
+        layout.addWidget(self.restore_button)
+        layout.addLayout(actions)
+
+    def _set_paused(self, paused: bool) -> None:
+        self.pause_button.setText("继续日志" if paused else "暂停日志")
+
+    def _scroll_to_latest(self) -> None:
+        if not self.pause_button.isChecked():
+            scrollbar = self.log_output.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+
+    def set_connection(self, text: str, online: bool) -> None:
+        self.connection_label.setText(text)
+        self.connection_label.setObjectName("miniStatusOnline" if online else "miniStatus")
+        self.connection_label.style().unpolish(self.connection_label)
+        self.connection_label.style().polish(self.connection_label)
+
+    def set_metrics(self, running: int, success: int, failed: int) -> None:
+        self.metrics_label.setText(f"运行 {running}  ·  成功 {success}  ·  失败 {failed}")
+
+    def append_log(self, line: str) -> None:
+        if self.pause_button.isChecked():
+            return
+        clean = str(line).strip()
+        if clean:
+            self.log_output.appendPlainText(clean)
+            self._scroll_to_latest()
+
+    def seed_logs(self, lines: list[str]) -> None:
+        if self.pause_button.isChecked():
+            return
+        self.log_output.setPlainText("\n".join(str(line).strip() for line in lines if str(line).strip()))
+        self._scroll_to_latest()
+
+    def show_at_bottom_right(self, available_geometry: Any) -> None:
+        margin = 18
+        self.move(
+            available_geometry.right() - self.width() - margin + 1,
+            available_geometry.bottom() - self.height() - margin + 1,
+        )
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.restore_requested.emit()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+
 class MainWindow(QMainWindow):
     engine_progress_signal = Signal(int, str)
 
@@ -333,6 +498,7 @@ class MainWindow(QMainWindow):
     def __init__(self, controller: DesktopController | None = None):
         super().__init__()
         self.setStyleSheet(APP_STYLE)
+        self.setWindowIcon(application_icon())
 
         self.controller = controller or DesktopController()
         self.thread_pool = QThreadPool.globalInstance()
@@ -358,7 +524,19 @@ class MainWindow(QMainWindow):
         self._automation_engines_cache: list[dict[str, Any]] | None = None
         self._account_view_signature: tuple[Any, ...] | None = None
         self._pending_log_lines: deque[str] = deque(maxlen=200)
+        self._recent_log_lines: deque[str] = deque(maxlen=20)
         self._log_flush_scheduled = False
+        settings = getattr(self.controller, "settings", None)
+        self._log_tail_path = os.fspath(getattr(settings, "log_file", ""))
+        self._log_tail_offset = 0
+        self._log_tail_partial = ""
+        self._log_tail_timer = QTimer(self)
+        self._log_tail_timer.setInterval(700)
+        self._log_tail_timer.timeout.connect(self._poll_log_file)
+        self._mini_window = MiniLogWindow()
+        self._mini_window.restore_requested.connect(self._restore_from_mini_window)
+        self._mini_window.stop_all_requested.connect(self._confirm_stop_all_from_mini)
+        self._mini_window.exit_requested.connect(self.close)
 
         self._build_ui()
         self._setup_stdout_redirect()
@@ -385,13 +563,19 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(100, lambda: self._run_job("检查 API 连接", self.controller.health, self._health_finished))
 
+    def _apply_drop_shadow(self, widget: QWidget) -> None:
+        """为面板组件注入柔和悬浮阴影"""
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(25)
+        shadow.setColor(QColor(0, 0, 0, 12))
+        shadow.setOffset(0, 4)
+        widget.setGraphicsEffect(shadow)
+
     def _auto_refresh_profile_snapshots(self) -> None:
-        """底层数据改变时无感自动更新控制中心列表"""
         try:
             snapshot_path = os.path.join(os.getcwd(), "agent_data", "profile_snapshots.json")
             if not os.path.exists(snapshot_path):
                 return
-
             mtime = os.path.getmtime(snapshot_path)
             if self._last_snapshot_mtime == mtime:
                 return
@@ -420,11 +604,64 @@ class MainWindow(QMainWindow):
             self._queue_log(text)
 
     def _queue_log(self, text: str) -> None:
-        self._pending_log_lines.append(str(text))
+        line = str(text)
+        self._pending_log_lines.append(line)
+        self._recent_log_lines.append(line)
+        self._mini_window.append_log(line)
         if self._log_flush_scheduled:
             return
         self._log_flush_scheduled = True
         QTimer.singleShot(80, self._flush_log_buffer)
+
+    def _read_log_file_tail(self, *, seed: bool = False) -> None:
+        """Incrementally mirror agent.log into the compact log window."""
+        path = self._log_tail_path
+        if not path:
+            return
+        try:
+            size = os.path.getsize(path)
+            if size < self._log_tail_offset:
+                self._log_tail_offset = 0
+                self._log_tail_partial = ""
+            if seed:
+                with open(path, "rb") as handle:
+                    start = max(0, size - 16_384)
+                    handle.seek(start)
+                    raw = handle.read()
+                text = raw.decode("utf-8", errors="replace")
+                if start:
+                    text = text.partition("\n")[2]
+                self._log_tail_offset = size
+                self._log_tail_partial = ""
+                lines = [line.strip() for line in text.splitlines() if line.strip()][-8:]
+                if lines:
+                    recent = list(self._recent_log_lines)
+                    merged = lines + [line for line in recent if line not in lines]
+                    self._mini_window.seed_logs(merged[-8:])
+                    self._recent_log_lines.clear()
+                    self._recent_log_lines.extend(merged[-20:])
+                return
+            if size == self._log_tail_offset:
+                return
+            with open(path, "rb") as handle:
+                handle.seek(self._log_tail_offset)
+                raw = handle.read()
+            self._log_tail_offset = size
+            text = self._log_tail_partial + raw.decode("utf-8", errors="replace")
+            chunks = text.split("\n")
+            self._log_tail_partial = chunks.pop() if chunks else ""
+            for line in chunks:
+                clean = line.strip()
+                if clean:
+                    self._recent_log_lines.append(clean)
+                    self._mini_window.append_log(clean)
+        except (OSError, UnicodeError):
+            return
+
+    def _poll_log_file(self) -> None:
+        if self._closing or not self._mini_window.isVisible():
+            return
+        self._read_log_file_tail()
 
     def _flush_log_buffer(self) -> None:
         self._log_flush_scheduled = False
@@ -434,22 +671,32 @@ class MainWindow(QMainWindow):
         self._pending_log_lines.clear()
         self.log_output.appendPlainText("\n".join(lines))
 
+    def _scroll_main_log_to_latest(self) -> None:
+        scrollbar = self.log_output.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
     def _build_ui(self) -> None:
         self.setWindowTitle("老谷自动化控制中心 - 2026 SaaS 版")
-        self.setMinimumSize(1120, 780)
-        self.resize(1280, 840)
+        self.setMinimumSize(1160, 800)
+        self.resize(1280, 880)
 
         root = QWidget()
+        root.setObjectName("rootWidget")  # <--- 重要：限制灰色背景范围，解决白底灰色穿透阴影问题
         root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
         header = QFrame(objectName="header")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(26, 16, 26, 16)
+        header_layout.setContentsMargins(24, 14, 24, 14)
+        header_layout.setSpacing(12)
+
+        brand_mark = QLabel(objectName="headerBrandMark")
+        brand_mark.setPixmap(application_icon().pixmap(42, 42))
+        header_layout.addWidget(brand_mark)
         
         title_box = QVBoxLayout()
-        title_box.setSpacing(3)
+        title_box.setSpacing(2)
         title_box.addWidget(QLabel("老谷自动化控制中心", objectName="title"))
         title_box.addWidget(QLabel("统一管理浏览器档案、账号状态与全自动并发引擎", objectName="subtitle"))
         header_layout.addLayout(title_box)
@@ -465,8 +712,9 @@ class MainWindow(QMainWindow):
         status_box.addWidget(self.agent_state_label)
         status_box.addWidget(self.heartbeat_label)
 
-        self.reauth_button = QPushButton("🔑 重新认证")
+        self.reauth_button = QPushButton("重新认证")
         self.reauth_button.setObjectName("reauthButton")
+        self.reauth_button.setMinimumHeight(34)
         self.reauth_button.setVisible(False)
         status_box.addWidget(self.reauth_button)
 
@@ -474,12 +722,12 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(header)
 
         self.live_status_label = QLabel("● 运行端正在连接服务器…", objectName="liveStatus")
-        self.live_status_label.setContentsMargins(26, 8, 26, 8)
+        self.live_status_label.setContentsMargins(24, 8, 24, 8)
         root_layout.addWidget(self.live_status_label)
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(20, 16, 20, 18)
+        content_layout.setContentsMargins(20, 16, 20, 16)
         
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -487,12 +735,13 @@ class MainWindow(QMainWindow):
 
         left_panel = QWidget()
         left = QVBoxLayout(left_panel)
-        left.setContentsMargins(0, 0, 6, 0)
-        left.setSpacing(12)
+        left.setContentsMargins(0, 0, 8, 0)
+        left.setSpacing(10)
 
         overview = QFrame(objectName="overviewPanel")
+        self._apply_drop_shadow(overview)
         metrics = QGridLayout(overview)
-        metrics.setContentsMargins(12, 12, 12, 12)
+        metrics.setContentsMargins(14, 12, 14, 12)
         metrics.setHorizontalSpacing(10)
         self.stat_labels: dict[str, QLabel] = {}
         for column, (key, text) in enumerate((("total_tasks", "今日任务"), ("success_tasks", "成功"), ("failed_tasks", "失败"), ("timeout_tasks", "超时"))):
@@ -521,40 +770,52 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(False)  # <--- 重要：关闭斑马条纹，解决灰色穿透
+        self.table.setMinimumHeight(300)           # <--- 重要：强制加大最小高度，确保列表内容显示充分
         self.table.setMouseTracking(True)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.table.verticalHeader().setDefaultSectionSize(78)
-        self.table.verticalScrollBar().setSingleStep(18)
+        self.table.verticalHeader().setDefaultSectionSize(80)
+        self.table.verticalScrollBar().setSingleStep(20)
         for column in range(1, len(self.HEADERS)):
             self.table.setColumnHidden(column, True)
         left.addWidget(self.table, 1)
 
         action_panel = QFrame(objectName="actionPanel")
+        self._apply_drop_shadow(action_panel)
         action_layout = QVBoxLayout(action_panel)
         action_layout.setContentsMargins(12, 12, 12, 12)
+        action_layout.setSpacing(8)
         
         self.automation_button = QPushButton("配置并运行自动化")
         self.automation_button.setObjectName("primaryButton")
-        self.automation_button.setMinimumHeight(42)
+        self.automation_button.setMinimumHeight(40)
         self.automation_button.setToolTip("为选中的档案设置参数并提交自动化任务")
         action_layout.addWidget(self.automation_button)
+
         self.engine_update_button = QPushButton("检查脚本更新")
+        self.engine_update_button.setIcon(line_icon("update", "#475569"))
+        self.engine_update_button.setMinimumHeight(32)
         self.engine_update_button.setToolTip("检查 Web 后台发布的自动化脚本；确认后下载并激活")
-        action_layout.addWidget(self.engine_update_button)
         self.engine_update_label = QLabel("自动化脚本：尚未检查", objectName="summary")
-        action_layout.addWidget(self.engine_update_label)
+        update_row = QHBoxLayout()
+        update_row.setSpacing(8)
+        update_row.addWidget(self.engine_update_label, 1)
+        update_row.addWidget(self.engine_update_button)
+        action_layout.addLayout(update_row)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
-        self.run_all_button = self._button("▶ 运行全部", QStyle.StandardPixmap.SP_MediaPlay)
-        self.stop_all_button = self._button("■ 停止全部", QStyle.StandardPixmap.SP_MediaStop)
+        self.run_all_button = self._button("运行全部", "play", "#FFFFFF")
+        self.run_all_button.setObjectName("runAllButton")
+        self.stop_all_button = self._button("停止全部", "stop", "#FFFFFF")
         self.stop_all_button.setObjectName("stopAllButton")
-        self.refresh_button = self._button("🔄 刷新账号", QStyle.StandardPixmap.SP_BrowserReload)
-        self.scan_all_button = self._button("🔍 扫描底层环境", QStyle.StandardPixmap.SP_DialogApplyButton)
+        self.refresh_button = self._button("刷新账号", "refresh")
+        self.scan_all_button = self._button("扫描底层", "scan")
         
         for button in (self.run_all_button, self.stop_all_button, self.refresh_button, self.scan_all_button):
+            button.setMinimumHeight(32)
             actions.addWidget(button, 1)
         action_layout.addLayout(actions)
         left.addWidget(action_panel)
@@ -563,12 +824,14 @@ class MainWindow(QMainWindow):
 
         right_panel = QWidget()
         right = QVBoxLayout(right_panel)
-        right.setContentsMargins(6, 0, 0, 0)
-        right.setSpacing(12)
+        right.setContentsMargins(8, 0, 0, 0)
+        right.setSpacing(10)
 
         runtime = QFrame(objectName="runtimePanel")
+        self._apply_drop_shadow(runtime)
         runtime_layout = QVBoxLayout(runtime)
         runtime_layout.setContentsMargins(16, 12, 16, 12)
+        runtime_layout.setSpacing(4)
         runtime_layout.addWidget(QLabel("当前选中档案信息", objectName="sectionTitle"))
         self.selected_profile_label = QLabel("尚未选择档案", objectName="runtimeValue")
         self.selected_runtime_label = QLabel("运行状态：—", objectName="summary")
@@ -577,35 +840,46 @@ class MainWindow(QMainWindow):
         right.addWidget(runtime)
 
         tools = QFrame(objectName="toolsPanel")
+        self._apply_drop_shadow(tools)
         tools_layout = QGridLayout(tools)
-        tools_layout.setContentsMargins(16, 12, 16, 14)
+        tools_layout.setContentsMargins(12, 8, 12, 8)
+        tools_layout.setSpacing(5)
         tools_layout.addWidget(QLabel("只读工具箱", objectName="sectionTitle"), 0, 0, 1, 2)
         
-        self.check_login_button = self._button("登录检查", QStyle.StandardPixmap.SP_DialogApplyButton)
-        self.read_profile_button = self._button("读取档案", QStyle.StandardPixmap.SP_FileDialogInfoView)
-        self.read_timeline_button = self._button("读取时间线", QStyle.StandardPixmap.SP_BrowserReload)
-        self.scan_selected_button = self._button("扫描选中", QStyle.StandardPixmap.SP_FileDialogContentsView)
+        self.check_login_button = self._button("登录检查", "check")
+        self.read_profile_button = self._button("读取档案", "profile")
+        self.read_timeline_button = self._button("读取时间线", "timeline")
+        self.scan_selected_button = self._button("扫描选中", "scan")
         
+        for btn in (self.check_login_button, self.read_profile_button, self.read_timeline_button, self.scan_selected_button):
+            btn.setMinimumHeight(28)
+
         tools_layout.addWidget(self.check_login_button, 1, 0)
         tools_layout.addWidget(self.read_profile_button, 1, 1)
         tools_layout.addWidget(self.read_timeline_button, 2, 0)
         tools_layout.addWidget(self.scan_selected_button, 2, 1)
 
         self.search_input = QLineEdit()
+        self.search_input.setMinimumHeight(30)
         self.search_input.setPlaceholderText("输入关键词只读搜索")
         self.search_input.setClearButtonEnabled(True)
-        self.search_button = self._button("搜索", QStyle.StandardPixmap.SP_FileDialogContentsView)
+        self.search_button = self._button("搜索", "search")
+        self.search_button.setMinimumHeight(30)
         self.search_button.setToolTip("执行只读关键词搜索")
         tools_layout.addWidget(self.search_input, 3, 0)
         tools_layout.addWidget(self.search_button, 3, 1)
+        tools.setMaximumHeight(165)
         right.addWidget(tools)
 
         tabs = QTabWidget(objectName="detailsTabs")
         self.log_output = QPlainTextEdit()
+        self.log_output.setObjectName("mainLogOutput")
         self.log_output.setReadOnly(True)
-        self.log_output.setMaximumBlockCount(1000)
-        self.log_output.verticalScrollBar().setSingleStep(18)
+        self.log_output.setMaximumBlockCount(2000)
+        self.log_output.setMinimumHeight(360)
+        self.log_output.verticalScrollBar().setSingleStep(20)
         self.log_output.setPlaceholderText("系统控制台日志将在这里实时显示…")
+        self.log_output.textChanged.connect(self._scroll_main_log_to_latest)
         tabs.addTab(self.log_output, "系统控制台日志")
 
         self.activity_table = QTableWidget(0, 5)
@@ -613,7 +887,9 @@ class MainWindow(QMainWindow):
         self.activity_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.activity_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.activity_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self.activity_table.verticalScrollBar().setSingleStep(18)
+        self.activity_table.setShowGrid(False)
+        self.activity_table.setAlternatingRowColors(True)
+        self.activity_table.verticalScrollBar().setSingleStep(20)
         self.activity_table.verticalHeader().setVisible(False)
         self.activity_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.activity_table.horizontalHeader().setStretchLastSection(True)
@@ -622,15 +898,15 @@ class MainWindow(QMainWindow):
         right.addWidget(tabs, 1)
         splitter.addWidget(right_panel)
 
-        splitter.setSizes([740, 500])
+        splitter.setSizes([800, 480])
         content_layout.addWidget(splitter, 1)
         root_layout.addWidget(content, 1)
         self.setCentralWidget(root)
         self.statusBar().showMessage("系统准备就绪")
 
-    def _button(self, text: str, icon: QStyle.StandardPixmap) -> QPushButton:
+    def _button(self, text: str, icon_name: str, icon_color: str = "#475569") -> QPushButton:
         button = QPushButton(text, self)
-        button.setIcon(self.style().standardIcon(icon))
+        button.setIcon(line_icon(icon_name, icon_color))
         return button
 
     def _wire_events(self) -> None:
@@ -661,9 +937,6 @@ class MainWindow(QMainWindow):
         try:
             summary = self.controller.task_statistics("today") or {}
             by_acc = summary.get("by_account", {}) if isinstance(summary, dict) else {}
-            # The controller/database is the source of truth.  Keep any
-            # in-memory entries that are not in the database, but never let
-            # an older cached value (often still 0) overwrite fresh counts.
             if "by_account" in self._statistics and isinstance(self._statistics["by_account"], dict):
                 for key, val in self._statistics["by_account"].items():
                     if key in by_acc and isinstance(by_acc[key], dict):
@@ -689,9 +962,6 @@ class MainWindow(QMainWindow):
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
         by_acc = summary.get("by_account", {}) if isinstance(summary, dict) else {}
         if "by_account" in self._statistics and isinstance(self._statistics["by_account"], dict):
-            # Fresh dashboard data wins over the previous UI snapshot.  The
-            # old order caused today's likes/follows from SQLite to be
-            # replaced by stale zeros on every refresh.
             merged = dict(self._statistics["by_account"])
             for key, val in self._statistics["by_account"].items():
                 if key not in merged:
@@ -785,6 +1055,10 @@ class MainWindow(QMainWindow):
 
         heartbeat = str(status.get("last_heartbeat") or "—").replace("T", " ")[:19]
         self.heartbeat_label.setText(f"最近心跳：{heartbeat}")
+        self._mini_window.set_connection(
+            "● 服务在线" if online else f"● {agent_text}",
+            online,
+        )
         self._update_busy_state()
 
     def reauthenticate_agent(self) -> None:
@@ -874,6 +1148,7 @@ class MainWindow(QMainWindow):
         self._statistics = summary or {}
         for key, label in self.stat_labels.items():
             label.setText(str(self._statistics.get(key, 0)))
+        self._update_mini_metrics()
 
     def set_activities(self, activities: list[dict[str, Any]]) -> None:
         self.activity_table.setRowCount(len(activities or []))
@@ -923,6 +1198,7 @@ class MainWindow(QMainWindow):
         )
         if signature == self._account_view_signature:
             self.summary_label.setText(f"{len(records)} 个账号")
+            self._update_mini_metrics()
             return
         self._account_view_signature = signature
         self.table.setUpdatesEnabled(False)
@@ -963,6 +1239,7 @@ class MainWindow(QMainWindow):
             self.table.blockSignals(False)
             self.table.setUpdatesEnabled(True)
         self.summary_label.setText(f"{len(records)} 个账号")
+        self._update_mini_metrics()
         self._account_selection_changed()
 
     def _require_selection(self, single: bool = False) -> list[str]:
@@ -1229,8 +1506,60 @@ class MainWindow(QMainWindow):
         t = datetime.now().strftime("%H:%M:%S")
         self._queue_log(f"[{t}] {message}")
 
+    def _update_mini_metrics(self) -> None:
+        records = list(self._account_rows_by_id.values())
+        running = sum(1 for record in records if record.runtime_running and record.runtime_debug_ready)
+        success = int(self._statistics.get("success_tasks", 0) or 0)
+        failed = int(self._statistics.get("failed_tasks", 0) or 0) + int(self._statistics.get("timeout_tasks", 0) or 0)
+        self._mini_window.set_metrics(running, success, failed)
+
+    def _show_mini_window(self) -> None:
+        if self._closing:
+            return
+        screen = self.screen()
+        if screen is None:
+            from PySide6.QtWidgets import QApplication
+
+            screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        if self._log_tail_path:
+            self._read_log_file_tail(seed=True)
+        else:
+            self._mini_window.seed_logs(list(self._recent_log_lines)[-6:])
+        self._update_mini_metrics()
+        self.hide()
+        self._mini_window.show_at_bottom_right(screen.availableGeometry())
+        self._log_tail_timer.start()
+
+    def _restore_from_mini_window(self) -> None:
+        self._log_tail_timer.stop()
+        self._mini_window.hide()
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _confirm_stop_all_from_mini(self) -> None:
+        answer = QMessageBox.question(
+            self._mini_window,
+            "停止全部任务",
+            "确定要停止全部浏览器档案和当前自动化任务吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.stop_all()
+
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange and self.isMinimized() and not self._closing:
+            QTimer.singleShot(0, self._show_mini_window)
+
     def closeEvent(self, event: QCloseEvent) -> None:
         self._closing = True
+        self._log_tail_timer.stop()
+        self._mini_window.hide()
+        self._mini_window.deleteLater()
         self._agent_status_timer.stop()
         self._statistics_timer.stop()
         if hasattr(self, "auto_refresh_timer"):

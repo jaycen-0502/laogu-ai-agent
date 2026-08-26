@@ -39,8 +39,8 @@ def _clean_models(values) -> list[str]:
     return result
 
 
-def _provider_dict(item: AIProvider) -> dict:
-    return {
+def _provider_dict(item: AIProvider, *, public: bool = False) -> dict:
+    payload = {
         "provider_id": item.id,
         "workspace_id": item.workspace_id,
         "name": item.name,
@@ -60,6 +60,10 @@ def _provider_dict(item: AIProvider) -> dict:
         "created_at": _dt(item.created_at),
         "updated_at": _dt(item.updated_at),
     }
+    if public:
+        for key in ("provider_type", "base_url", "api_key_masked", "has_api_key", "last_error", "created_by"):
+            payload.pop(key, None)
+    return payload
 
 
 def register_ai_provider_routes(
@@ -175,8 +179,6 @@ def register_ai_provider_routes(
         user: User = Depends(current_user),
         db: Session = Depends(get_db),
     ):
-        if user.role == "MEMBER":
-            raise HTTPException(status_code=403, detail="AI provider details are restricted to administrators")
         query = select(AIProvider)
         if user.role != "ADMIN":
             query = query.where(AIProvider.workspace_id == user.workspace_id)
@@ -188,15 +190,14 @@ def register_ai_provider_routes(
         if status.strip():
             query = query.where(AIProvider.status == checked_status(status))
         query = query.order_by(AIProvider.is_default.desc(), AIProvider.updated_at.desc())
+        serialize = (lambda item: _provider_dict(item, public=True)) if user.role == "MEMBER" else _provider_dict
         if paged_response:
-            return paged(db, query, _provider_dict, page=page, page_size=page_size)
-        return [_provider_dict(item) for item in db.scalars(query)]
+            return paged(db, query, serialize, page=page, page_size=page_size)
+        return [serialize(item) for item in db.scalars(query)]
 
     @app.get("/api/ai/providers/{provider_id}")
     def get_provider(provider_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-        if user.role == "MEMBER":
-            raise HTTPException(status_code=403, detail="AI provider details are restricted to administrators")
-        return _provider_dict(visible_provider(provider_id, user, db))
+        return _provider_dict(visible_provider(provider_id, user, db), public=user.role == "MEMBER")
 
     @app.post("/api/ai/providers")
     def create_provider(

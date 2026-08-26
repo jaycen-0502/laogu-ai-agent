@@ -12,6 +12,8 @@ export type User = {
   last_activity_at?: string | null;
   online?: boolean;
   permissions?: Record<string, boolean>;
+  linked_agent_count?: number;
+  revoked_agent_tokens?: number;
 };
 export type Invitation = {
   invitation_id: string;

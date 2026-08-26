@@ -158,7 +158,7 @@ def test_connection_test_uses_decrypted_key_saves_models_and_audits():
     assert response.json()["models"] == ["gpt-a", "gpt-b"]
     assert calls == [("https://api.openai.com/v1", API_KEY, "gpt-test")]
     detail = env["client"].get(f"/api/ai/providers/{item['provider_id']}", headers=auth(env["member"])).json()
-    assert detail["last_test_status"] == "SUCCESS" and detail["models"] == ["gpt-a", "gpt-b"]
+    assert detail["last_test_status"] == "SUCCESS" and detail["models"] == ["gpt-test", "gpt-a", "gpt-b"]
     actions = {row["action"] for row in env["client"].get("/api/audit", headers=auth(env["owner"])).json()}
     assert {"AI_PROVIDER_CREATED", "AI_PROVIDER_TESTED"}.issubset(actions)
 
@@ -201,7 +201,7 @@ def test_fetch_models_refreshes_catalog_without_returning_api_key():
     assert API_KEY not in response.text
     assert calls == [("https://api.openai.com/v1", API_KEY, "gpt-test")]
     detail = env["client"].get(f"/api/ai/providers/{item['provider_id']}", headers=auth(env["owner"])).json()
-    assert detail["models"] == ["relay-model-b", "relay-model-a"]
+    assert detail["models"] == ["gpt-test", "relay-model-b", "relay-model-a"]
     actions = {row["action"] for row in env["client"].get("/api/audit", headers=auth(env["owner"])).json()}
     assert "AI_PROVIDER_MODELS_FETCHED" in actions
 

@@ -1,5 +1,6 @@
 """
-Playwright CDP engine with Batch Interval Countdown & Ultra-Humanlike Anti-Ban System.
+Playwright CDP engine with Ultimate Stability & Control Center Sync.
+Seamless parameter mapping, live login status reporting, and URL safe encoding.
 """
 
 from __future__ import annotations
@@ -21,6 +22,12 @@ class AutomationEngineError(RuntimeError):
     """Expected automation failure that should be reported to the task log."""
 
 
+class RateLimitPause(AutomationEngineError):
+    def __init__(self, seconds: int):
+        super().__init__(f"Rate limit detected; pause for {seconds} seconds")
+        self.seconds = seconds
+
+
 class CaptchaChallengeDetected(AutomationEngineError):
     """检测到 Cloudflare / X 平台人机验证卡点，必须中断执行以保护账号安全"""
     def __init__(self, url: str):
@@ -28,16 +35,24 @@ class CaptchaChallengeDetected(AutomationEngineError):
         self.url = url
 
 
+class NotLoggedInError(AutomationEngineError):
+    """账号尚未登录 X 平台，无法执行自动化搜索与互动"""
+    def __init__(self, handle: str = ""):
+        super().__init__(f"账号未登录 (目标 Handle: {handle or '未知'})，请先在浏览器中手动登录 X 账号！")
+
+
 @dataclass(frozen=True)
 class AutomationConfig:
     keyword: str = ""
     daily_task_limit: int = 15
+    daily_tasks_used: int = 0
     max_follower_threshold: int = 1000
     max_statuses_threshold: int = 1000
-    batch_interval_minutes: int = 15    # 批次间隔时间（分钟）
+    max_engagement_threshold: int = 10000
+    batch_interval_minutes: int = 15    # 完美匹配控制中心 TaskConfigDialog 下发的批次时间
     target_url: str = "https://x.com/home"
     account_tag: str = "默认"
-    profile_visit_ratio: float = 0.45   # 45% 概率进入主页
+    profile_visit_ratio: float = 0.45   # 45% 概率进入主页深读
     home_browse_ratio: float = 0.20      # 20% 概率去推荐页“逛街”
 
     @classmethod
@@ -61,8 +76,10 @@ class AutomationConfig:
         return cls(
             keyword=kw,
             daily_task_limit=integer("daily_task_limit", 15, 1, 10_000),
+            daily_tasks_used=integer("daily_tasks_used", 0, 0, 10_000),
             max_follower_threshold=integer("max_follower_threshold", 1000, 0, 100_000_000),
             max_statuses_threshold=integer("max_statuses_threshold", 1000, 0, 100_000_000),
+            max_engagement_threshold=integer("max_engagement_threshold", 10_000, 0, 100_000_000),
             batch_interval_minutes=integer("batch_interval_minutes", 15, 1, 1440),
             target_url=str(values.get("target_url") or "https://x.com/home").strip()[:500],
             account_tag=tag,
@@ -72,7 +89,7 @@ class AutomationConfig:
 
 
 class ProfilePersonality:
-    """账号专属性格基因库，提高冷却时间以避免 Rate Limit"""
+    """账号专属性格基因库，高度模拟人类行为频率"""
 
     def __init__(self, cdp_url: str):
         port_match = re.search(r":(\d+)", cdp_url)
@@ -81,25 +98,25 @@ class ProfilePersonality:
         hash_val = int(hashlib.md5(cdp_url.encode("utf-8")).hexdigest(), 16)
         rng = random.Random(hash_val)
 
-        self.mean_cool_down = rng.uniform(30.0, 55.0)
+        self.mean_cool_down = rng.uniform(22.0, 40.0)
         self.std_dev_cool_down = rng.uniform(5.0, 10.0)
-        self.mouse_steps = rng.randint(18, 32)
+        self.mouse_steps = rng.randint(15, 30)
         self.press_duration = (rng.uniform(0.10, 0.22), rng.uniform(0.20, 0.35))
-        self.nap_interval_range = (rng.randint(2, 3), rng.randint(3, 5))
-        self.nap_duration_mean = rng.uniform(300.0, 500.0)
+        self.nap_interval_range = (rng.randint(2, 3), rng.randint(4, 5))
+        self.nap_duration_mean = rng.uniform(200.0, 380.0)
 
-        if self.mean_cool_down < 35.0:
+        if self.mean_cool_down < 28.0:
             self.p_type = "标准自然型"
         else:
             self.p_type = "沉稳慢读型"
 
     def get_cooldown(self) -> float:
         val = random.gauss(self.mean_cool_down, self.std_dev_cool_down)
-        return max(15.0, min(90.0, val))
+        return max(15.0, min(80.0, val))
 
     def get_nap_duration(self) -> float:
-        val = random.gauss(self.nap_duration_mean, 60.0)
-        return max(150.0, min(600.0, val))
+        val = random.gauss(self.nap_duration_mean, 50.0)
+        return max(120.0, min(500.0, val))
 
 
 class AccountFilterGuard:
@@ -142,6 +159,7 @@ async def is_element_fully_loaded(element: Any) -> bool:
     if not element:
         return False
     try:
+        await element.scroll_into_view_if_needed(timeout=2000)
         if not await element.is_visible():
             return False
         box = await element.bounding_box()
@@ -217,6 +235,14 @@ async def human_discrete_scroll(page: Any, distance: int | None = None) -> None:
 
 
 class XAutomationEngine:
+    RATE_LIMIT_PATTERNS = (
+        re.compile(r"rate limit", re.I),
+        re.compile(r"too many requests", re.I),
+        re.compile(r"请求过于频繁"),
+        re.compile(r"操作频率过高"),
+        re.compile(r"速率限制"),
+    )
+
     def __init__(self, cdp_url: str = "", config_path: str = "selectors_config.json", *, logger: logging.Logger | None = None, **kwargs: Any):
         target_cdp = cdp_url or kwargs.get("cdp_url") or ""
         if not str(target_cdp).strip():
@@ -229,9 +255,31 @@ class XAutomationEngine:
         self.personality = ProfilePersonality(self.cdp_url)
 
     def _print(self, msg: str) -> None:
-        """带精确时间戳格式 [HH:MM:SS] 的控制台输出"""
+        """带精确时间戳的日志输出"""
         now_str = datetime.now().strftime("%H:%M:%S")
         print(f"[{now_str}] [账号: {self.tag}] {msg}")
+
+    async def _check_login_status(self, page: Any) -> bool:
+        """检查当前浏览器环境是否已经成功登录 X 账号"""
+        try:
+            curr_url = page.url.lower()
+            if "/i/flow/login" in curr_url or "/login" in curr_url:
+                return False
+
+            # 查找登录后才会出现的侧边栏个人头像或发推按钮
+            post_btn = await page.query_selector('a[data-testid="SideNav_NewTweet_Button"]')
+            profile_link = await page.query_selector('a[data-testid="AppTabBar_Profile_Link"]')
+
+            if post_btn or profile_link:
+                return True
+
+            # 如果在 explore 页面并且有登录/注册按钮，说明未登录
+            login_btn = await page.query_selector('a[data-testid="loginButton"]')
+            if login_btn:
+                return False
+        except Exception:
+            pass
+        return True
 
     async def _assert_no_challenge(self, page: Any) -> None:
         current_url = page.url.lower()
@@ -248,13 +296,22 @@ class XAutomationEngine:
             pass
 
     async def _wait_for_page_ready(self, page: Any, timeout_sec: float = 10.0) -> bool:
-        try:
-            main_col = await page.wait_for_selector('div[data-testid="primaryColumn"]', timeout=int(timeout_sec * 1000))
-            if main_col and await is_element_fully_loaded(main_col):
-                return True
-        except Exception:
-            pass
-        return False
+        selectors = [
+            'div[data-testid="primaryColumn"]',
+            'article',
+            'div[data-testid="cellInnerScrollbox"]',
+            'input[data-testid="SearchBox_Search_Input"]',
+            'nav[role="navigation"]'
+        ]
+        per_timeout = max(1000, int((timeout_sec * 1000) / len(selectors)))
+        for sel in selectors:
+            try:
+                el = await page.wait_for_selector(sel, timeout=per_timeout)
+                if el:
+                    return True
+            except Exception:
+                continue
+        return True
 
     async def _dismiss_hover_card(self, page: Any) -> None:
         try:
@@ -266,7 +323,7 @@ class XAutomationEngine:
     async def _handle_response_interception(self, response: Any) -> None:
         try:
             url = response.url
-            if "UserBy" in url or "HoverCard" in url or "UserDetail" in url or "Viewer" in url:
+            if "UserBy" in url or "HoverCard" in url or "UserDetail" in url or "Viewer" in url or "ProfileSpotlight" in url:
                 if response.status == 200:
                     json_data = await response.json()
                     user_data = json_data.get("data", {}).get("user", {}).get("result", {}) or json_data.get("data", {}).get("viewer", {})
@@ -306,23 +363,32 @@ class XAutomationEngine:
             pass
 
     async def navigate_to_keyword_search(self, page: Any, keyword: str) -> None:
-        clean_keyword = keyword.replace("(", "").replace(")", "").replace("（", "").replace("）", "").strip()
+        clean_keyword = keyword.strip()
         self._print(f"🔍 准备搜索关键词: '{clean_keyword}'")
 
-        kw_encoded = quote(clean_keyword)
+        kw_encoded = quote(clean_keyword, safe='')
         target_search_url = f"https://x.com/search?q={kw_encoded}&f=live"
 
         try:
-            await page.goto(target_search_url, wait_until="commit", timeout=15000)
+            await page.goto(target_search_url, wait_until="domcontentloaded", timeout=20000)
             await asyncio.sleep(random.uniform(3.5, 6.0))
-            self._print("✅ 检索页面跳转成功，已切入最新推文流！")
+
+            if "/explore" in page.url.lower():
+                self._print("⚠️ 页面被强制重定向至 /explore，这通常代表当前浏览器未登录账号！")
+                is_logged = await self._check_login_status(page)
+                if not is_logged:
+                    raise NotLoggedInError(self.tag)
+            else:
+                self._print("✅ 检索页面跳转成功，已切入最新推文流！")
+        except NotLoggedInError:
+            raise
         except Exception as e:
             self._print(f"⚠️ 页面跳转过程捕获到异常: {e}")
 
     async def _browse_home_feed(self, page: Any) -> None:
         self._print("🎲 [拟人消痕] 随机切回 For You 首页逛街刷帖...")
         try:
-            await page.goto("https://x.com/home", wait_until="commit", timeout=12000)
+            await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=12000)
             await asyncio.sleep(random.uniform(3.0, 5.0))
 
             for _ in range(random.randint(2, 4)):
@@ -431,7 +497,7 @@ class XAutomationEngine:
 
             self._print(f"  └─ 🔙 拜访完毕，尝试返回搜索推文列表...")
             try:
-                await page.go_back(wait_until="commit", timeout=8000)
+                await page.go_back(wait_until="domcontentloaded", timeout=8000)
                 await asyncio.sleep(random.uniform(2.5, 4.0))
             except Exception:
                 self._print("  └─ ⚠️ 返回超时，重新导航拉回搜索轨道...")
@@ -449,8 +515,7 @@ class XAutomationEngine:
         return await self.run(custom_config=custom_config)
 
     async def _run_single_batch(self, page: Any, config: AutomationConfig, current_total_exec: int) -> tuple[int, int, int, int]:
-        """运行单批次推文扫描与交互（最多单批处理 3~5 个账号）"""
-        batch_limit = random.randint(3, 5)  # 单批次最多处理 3~5 个目标
+        batch_limit = random.randint(3, 5)
         exec_count = 0
         likes_count = 0
         follows_count = 0
@@ -459,23 +524,20 @@ class XAutomationEngine:
         empty_rounds = 0
 
         processed_handles = set()
-        seen_articles = set()
 
         for round_idx in range(25):
             await self._assert_no_challenge(page)
 
             if exec_count >= batch_limit or (current_total_exec + exec_count) >= config.daily_task_limit:
-                self._print(f"🎉 当前批次目标 ({exec_count}) 已完成，准备进入批次休息倒计时...")
+                self._print(f"🎉 当前批次目标已处理完成 ({exec_count} 人)，即将进入挂机倒计时...")
                 break
 
-            # 随机切去推荐页闲逛
             if exec_count > 0 and random.random() < config.home_browse_ratio:
                 await self._browse_home_feed(page)
                 await self.navigate_to_keyword_search(page, config.keyword)
                 await asyncio.sleep(3.0)
                 continue
 
-            # 连续关注 2 个触发 3~5 分钟强行挂机
             if consecutive_follows >= 2:
                 follow_nap_time = random.uniform(180.0, 300.0)
                 self._print(f"🛑 [关注专项保护] 已连续关注 {consecutive_follows} 个账号，触发挂机 ({follow_nap_time:.1f} 秒)...")
@@ -493,11 +555,6 @@ class XAutomationEngine:
             target_found_in_round = False
 
             for article in articles:
-                art_id = id(article)
-                if art_id in seen_articles:
-                    continue
-                seen_articles.add(art_id)
-
                 if not await is_element_fully_loaded(article):
                     continue
 
@@ -545,15 +602,16 @@ class XAutomationEngine:
                                 await self._dismiss_hover_card(page)
                                 break
 
-                            if statuses_count > config.max_statuses_threshold:
+                            if statuses_count > config.max_statuses_threshold and statuses_count != -1:
                                 self._print(f"⏩ 跳过博主 @{handle} (发帖量 {statuses_count} > {config.max_statuses_threshold})")
                                 await self._dismiss_hover_card(page)
                                 break
 
-                            is_match = (0 <= follower_count <= config.max_follower_threshold)
+                            is_match = (follower_count <= config.max_follower_threshold) if follower_count >= 0 else True
 
                             if is_match:
-                                self._print(f"🎯 命中目标 @{handle} (粉丝数: {follower_count} <= {config.max_follower_threshold})")
+                                count_desc = f"{follower_count}" if follower_count >= 0 else "动态探测中"
+                                self._print(f"🎯 命中目标 @{handle} (粉丝数: {count_desc} <= {config.max_follower_threshold})")
                                 await asyncio.sleep(random.uniform(1.5, 3.0))
 
                                 should_visit_profile = (random.random() < config.profile_visit_ratio)
@@ -590,7 +648,7 @@ class XAutomationEngine:
                                         actual_likes = await self._like_multiple_posts_for_account(page, article, target_likes_num)
                                         likes_count += actual_likes
                                     else:
-                                        self._print(f"⚠️ 按钮未就绪，跳过 @{handle}")
+                                        self._print(f"⚠️ 关注按钮未就绪，跳过 @{handle}")
                                         await self._dismiss_hover_card(page)
 
                                 cool_down = self.personality.get_cooldown()
@@ -610,9 +668,8 @@ class XAutomationEngine:
                 if empty_rounds >= 6:
                     self._print("⚠️ 连续 6 轮未发现新推文，刷新页面...")
                     try:
-                        await page.reload(wait_until="commit", timeout=12000)
+                        await page.reload(wait_until="domcontentloaded", timeout=12000)
                         await asyncio.sleep(4.0)
-                        seen_articles.clear()
                     except Exception:
                         pass
                     empty_rounds = 0
@@ -623,13 +680,22 @@ class XAutomationEngine:
         config = AutomationConfig.from_mapping(custom_config)
         self.tag = config.account_tag
 
+        if config.daily_tasks_used >= config.daily_task_limit:
+            return {
+                "status": "SKIPPED",
+                "read_only": True,
+                "reason": "DAILY_TASK_LIMIT_REACHED",
+                "daily_tasks_used": config.daily_tasks_used,
+                "daily_task_limit": config.daily_task_limit,
+            }
+
         jitter_delay = random.uniform(2.0, 4.0)
         self._print(f"⏳ 注入拟人启动延迟: {jitter_delay:.2f} 秒...")
         await asyncio.sleep(jitter_delay)
 
         self._log("started", keyword=config.keyword)
         self._print("==========================================")
-        self._print(f"0.21.8 倒计时循环防封版引擎启动! [CDP端口: {self.personality.port} | 性格: {self.personality.p_type}]")
+        self._print(f"老谷控制中心 2026 协同引擎启动! [CDP端口: {self.personality.port}]")
         self._print(f"目标关键词: '{config.keyword}' | 单日上限: {config.daily_task_limit} | 批次间隔: {config.batch_interval_minutes} 分钟")
         self._print("==========================================\n")
 
@@ -644,7 +710,6 @@ class XAutomationEngine:
         total_views = 0
 
         browser = None
-        context = None
         page = None
         resp_listener = None
 
@@ -656,6 +721,15 @@ class XAutomationEngine:
                 valid_pages = [p for p in context.pages if not p.url.startswith("devtools")]
                 page = valid_pages[0] if valid_pages else await context.new_page()
 
+                # 前置登录状态预检：检测目标浏览器上下文是否处于已登录状态
+                if not await self._check_login_status(page):
+                    self._print(f"🛑 拦截：账号 [{self.tag}] 未登录！请先在控制中心点击【▶ 运行】打开浏览器窗口并登录账号！")
+                    return {
+                        "status": "NOT_LOGGED_IN",
+                        "error": f"账号 {self.tag} 未登录，请先手动登录 X 账号！",
+                        "processed_count": 0
+                    }
+
                 page.on("response", self._response_callback)
                 resp_listener = lambda res: asyncio.create_task(self._handle_response_interception(res))
                 page.on("response", resp_listener)
@@ -664,7 +738,7 @@ class XAutomationEngine:
                     await self.navigate_to_keyword_search(page, config.keyword)
                 else:
                     try:
-                        await page.goto(config.target_url, wait_until="commit", timeout=12000)
+                        await page.goto(config.target_url, wait_until="domcontentloaded", timeout=12000)
                     except Exception:
                         pass
 
@@ -689,21 +763,18 @@ class XAutomationEngine:
                         self._print(f"🎉 已达到单日任务上限 ({total_exec}/{config.daily_task_limit})，全天自动化完美收官！")
                         break
 
-                    # 批次切回首页消痕
                     self._print("🏠 批次完成：切回 For You 首页休息消痕...")
                     try:
-                        await page.goto("https://x.com/home", wait_until="commit", timeout=8000)
+                        await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=8000)
                     except Exception:
                         pass
 
-                    # 【倒计时打印】按分钟倒计时，并在日志中明确显示
                     interval_min = config.batch_interval_minutes
                     self._print(f"⏳ 批次结束：开启【{interval_min} 分钟】下一调度周期倒计时...")
                     
                     for remain_m in range(interval_min, 0, -1):
                         self._print(f"⏱️ [批次倒计时] 距离第 {batch_index + 1} 批次启动还剩 {remain_m} 分钟...")
                         
-                        # 挂机期间模拟微小晃动
                         for _ in range(6):
                             await asyncio.sleep(10)
                             if random.random() < 0.20:
@@ -713,7 +784,6 @@ class XAutomationEngine:
                                     pass
 
                     batch_index += 1
-                    # 倒计时结束，重新切回搜索流
                     if config.keyword:
                         await self.navigate_to_keyword_search(page, config.keyword)
 
@@ -726,6 +796,9 @@ class XAutomationEngine:
                     "url": "https://x.com/home",
                 }
 
+        except NotLoggedInError as log_err:
+            self._print(f"🛑 任务中断: {log_err}")
+            return {"status": "NOT_LOGGED_IN", "error": str(log_err), "processed_count": 0}
         except CaptchaChallengeDetected as challenge_err:
             return {
                 "status": "CHALLENGE_REQUIRED",
@@ -754,6 +827,39 @@ class XAutomationEngine:
         url = str(getattr(response, "url", ""))
         if status in (429, 403) or "account/access" in url:
             self._print(f"🚨 防风控警告: 检测到 HTTP {status} 或验证拦截! 目标: {url[:80]}")
+
+    @classmethod
+    def _find_rate_limit(cls, text: str) -> str | None:
+        for pattern in cls.RATE_LIMIT_PATTERNS:
+            match = pattern.search(text or "")
+            if match:
+                return match.group(0)
+        return None
+
+    @staticmethod
+    def _filter_read_only_snapshot(text: str, *, url: str, title: str, config: AutomationConfig) -> dict[str, Any]:
+        normalized = text.casefold()
+        matched = not config.keyword or config.keyword.casefold() in normalized
+        numbers = [int(value.replace(",", "")) for value in re.findall(r"\b\d{1,3}(?:,\d{3})*\b", text)]
+        follower_value = numbers[0] if numbers else None
+        engagement_value = numbers[1] if len(numbers) > 1 else None
+        eligible = matched
+        if follower_value is not None:
+            eligible = eligible and follower_value <= config.max_follower_threshold
+        if engagement_value is not None:
+            eligible = eligible and engagement_value <= config.max_engagement_threshold
+        return {
+            "status": "SUCCESS",
+            "read_only": True,
+            "matched": matched,
+            "eligible": eligible,
+            "keyword": config.keyword,
+            "follower_value": follower_value,
+            "engagement_value": engagement_value,
+            "daily_task_limit": config.daily_task_limit,
+            "url": url,
+            "title": title,
+        }
 
     @staticmethod
     def _parse_followers_from_text(text: str) -> int:

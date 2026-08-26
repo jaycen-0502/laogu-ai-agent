@@ -70,12 +70,12 @@ function Layout({ user }: { user: User }) {
     authStore.clear();
     navigate("/login");
   };
-  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/translation", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
+  const memberPaths = new Set(["/dashboard", "/control-center", "/profiles", "/scripts", "/script-runs", "/ai/chat", "/ai/translation", "/ai/images", "/ai/writing", "/ai/analysis", "/ai/tasks"]);
   const canSee = (path: string, roles: readonly string[]) => {
     if (!roles.some((role) => role === user.role)) return false;
     if (user.role !== "MEMBER") return true;
     if (!memberPaths.has(path)) return false;
-    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/translation" ? "TRANSLATE" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
+    const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/translation" ? "TRANSLATE" : path === "/ai/images" ? "IMAGES" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
     return !feature || user.permissions?.[feature] !== false;
   };
   return (
@@ -150,8 +150,8 @@ function Protected({ user }: { user: User | null }) {
   if (!user) return <Navigate to="/login" replace />;
   const location = useLocation();
   if (user.role === "MEMBER") {
-    const allowed = ["/dashboard", "/control-center", "/profiles", "/ai/chat", "/ai/translation", "/ai/writing", "/ai/analysis", "/ai/tasks"];
-    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/translation") ? "TRANSLATE" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
+    const allowed = ["/dashboard", "/control-center", "/profiles", "/scripts", "/script-runs", "/ai/chat", "/ai/translation", "/ai/images", "/ai/writing", "/ai/analysis", "/ai/tasks"];
+    const feature = location.pathname.startsWith("/ai/chat") ? "CHAT" : location.pathname.startsWith("/ai/translation") ? "TRANSLATE" : location.pathname.startsWith("/ai/images") ? "IMAGES" : location.pathname.startsWith("/ai/writing") ? "WRITING" : location.pathname.startsWith("/ai/analysis") ? "ANALYSIS" : location.pathname.startsWith("/ai/tasks") ? "TASKS" : "";
     if (!allowed.some((path) => location.pathname === path || location.pathname.startsWith(`${path}/`)) || (feature && user.permissions?.[feature] === false)) {
       return <Navigate to="/dashboard" replace />;
     }

@@ -121,6 +121,40 @@ def test_server_disconnect_does_not_stop_local_components():
         assert tasks.executions == 0
 
 
+def test_revoked_agent_clears_offline_access_and_keeps_only_emergency_permissions():
+    class RevokedClient(FakeClient):
+        def heartbeat(self, payload):
+            raise ServerClientError("revoked", status_code=401)
+
+    class OfflineAccess:
+        revoked = False
+
+        def revoke(self):
+            self.revoked = True
+
+        def status(self, **_kwargs):
+            return {
+                "valid": not self.revoked,
+                "capabilities": ["automation.run", "local.browser.control"],
+                "expires_at": "2099-01-01T00:00:00+00:00",
+            }
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        offline_access = OfflineAccess()
+        service = AgentService(
+            RevokedClient(),
+            FakeTaskService(),
+            FakeRegistry(),
+            AgentStateStore(Path(temp_dir) / "state.db"),
+            offline_access_store=offline_access,
+        )
+        assert service.cycle_once() is False
+        assert offline_access.revoked is True
+        status = service.status()
+        assert status["authorization_mode"] == "REAUTH_REQUIRED"
+        assert status["capabilities"] == ["local.browser.stop", "local.view"]
+
+
 def test_automation_metrics_remain_queued_offline_and_upload_after_reconnect():
     with tempfile.TemporaryDirectory() as temp_dir:
         client = FakeClient()

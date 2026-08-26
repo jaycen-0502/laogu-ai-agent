@@ -186,7 +186,8 @@ def test_user_workspace_provider_and_model_isolation():
         headers=auth(env["member"]),
         json={"provider_id": env["provider"]["provider_id"], "model": "not-allowed"},
     )
-    assert invalid_model.status_code == 422
+    assert invalid_model.status_code == 200
+    assert invalid_model.json()["model"] == "gpt-test"
     disabled = create_provider(env, "owner", "Disabled", status="DISABLED")
     assert env["client"].post(
         "/api/ai/chat/sessions",

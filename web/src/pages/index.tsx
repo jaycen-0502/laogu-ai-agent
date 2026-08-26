@@ -1192,10 +1192,16 @@ function UsersPage({ current }: { current: User }) {
   const patchUser = async (item: User, body: Record<string, unknown>) => {
     try {
       if (item.status !== "DELETED" && body.status === "DELETED" && !window.confirm(`确定要软删除用户“${item.username}”吗？用户将立即无法登录，但历史数据会保留。`)) return;
-      await apiClient(`/users/${item.user_id}`, {
+      if (item.status === "ACTIVE" && body.status === "DISABLED" && !window.confirm(`确定停用用户“${item.username}”吗？系统会同时撤销该用户关联运行端的全部认证，在线运行端将转为受限模式。`)) return;
+      const updated = await apiClient<User>(`/users/${item.user_id}`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
+      if (body.status === "DISABLED") {
+        setMessage(`用户“${item.username}”已停用；已撤销 ${updated.linked_agent_count || 0} 个关联运行端的 ${updated.revoked_agent_tokens || 0} 个 Token。`);
+      } else if (body.status === "ACTIVE") {
+        setMessage(`用户“${item.username}”已启用；已撤销的运行端需要重新签发 Token 后才能恢复连接。`);
+      }
       result.reload();
     } catch (exc) {
       setMessage(errorText(exc));
@@ -1440,11 +1446,11 @@ function UsersPage({ current }: { current: User }) {
                   disabled={item.user_id === current.user_id || (item.status === "DELETED" && current.role !== "ADMIN")}
                   onClick={() =>
                     patchUser(item, {
-                      status: item.status === "DELETED" ? "ACTIVE" : current.role === "ADMIN" ? "DELETED" : item.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
+                      status: item.status === "DELETED" ? "ACTIVE" : item.status === "ACTIVE" ? "DISABLED" : "ACTIVE",
                     })
                   }
                 >
-                  {item.status === "DELETED" ? "恢复" : current.role === "ADMIN" ? "删除" : item.status === "ACTIVE" ? "停用" : "启用"}
+                  {item.status === "DELETED" ? "恢复" : item.status === "ACTIVE" ? "停用并撤权" : "启用"}
                 </button>
                 {current.role === "ADMIN" && item.user_id !== current.user_id && <button className="danger-button" onClick={() => void purgeUser(item)}>彻底删除</button>}
               </td>

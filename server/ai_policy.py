@@ -46,6 +46,7 @@ def resolve_provider(
 ) -> tuple[AIProvider, str]:
     feature = normalized_feature(feature)
     policy = require_feature(db, user, feature)
+    requested_provider_id = str(provider_id or "").strip()
     target_workspace = workspace_id or user.workspace_id
     if not target_workspace:
         raise HTTPException(status_code=422, detail="User workspace is required")
@@ -57,6 +58,8 @@ def resolve_provider(
     provider = db.scalar(query)
     if not provider:
         raise HTTPException(status_code=422, detail="Enabled AI provider is not assigned")
+    if user.role == "MEMBER" and requested_provider_id and requested_provider_id != provider.id:
+        raise HTTPException(status_code=422, detail="AI provider is not assigned to this account")
     selected_model = str(model or provider.default_model or "").strip()
     if not selected_model:
         raise HTTPException(status_code=422, detail="AI model is not assigned")

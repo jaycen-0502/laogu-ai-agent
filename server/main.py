@@ -208,10 +208,24 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             if agent.bound_device_id and (not device_id or device_id != agent.bound_device_id):
                 await websocket.close(code=4403)
                 return
+            socket_token_id = token.token_id
+            socket_agent_id = agent.id
             await websocket.accept()
             while True:
+                # Revalidate long-lived sockets so a revoked Agent token loses
+                # command-channel access without waiting for a reconnect.
+                db.expire_all()
+                active_token = db.scalar(select(AgentToken).where(
+                    AgentToken.token_id == socket_token_id,
+                    AgentToken.status == TOKEN_ACTIVE,
+                    AgentToken.revoked_at.is_(None),
+                ))
+                active_agent = db.get(Agent, socket_agent_id)
+                if not active_token or not active_agent or active_agent.status == "DELETED":
+                    await websocket.close(code=4401)
+                    return
                 lease_expired = now() - timedelta(seconds=COMMAND_LEASE_SECONDS)
-                items = list(db.scalars(select(Command).where(Command.agent_id == agent.id, or_(Command.status == "PENDING", (Command.status == "DELIVERED") & (Command.delivered_at < lease_expired))).order_by(Command.created_at).limit(10)))
+                items = list(db.scalars(select(Command).where(Command.agent_id == socket_agent_id, or_(Command.status == "PENDING", (Command.status == "DELIVERED") & (Command.delivered_at < lease_expired))).order_by(Command.created_at).limit(10)))
                 for item in items:
                     item.status = "DELIVERED"; item.delivered_at = now(); item.attempts += 1
                 db.commit()
@@ -224,7 +238,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
                 if not isinstance(message, dict):
                     continue
                 item = db.get(Command, str(message.get("command_id") or ""))
-                if not item or item.agent_id != agent.id:
+                if not item or item.agent_id != socket_agent_id:
                     continue
                 if message.get("type") == "ack" and item.status not in {"SUCCESS", "FAILED", "CANCELLED"}:
                     item.status = "RUNNING"; item.acknowledged_at = item.acknowledged_at or now(); item.started_at = item.started_at or now()
@@ -355,11 +369,15 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
                         member = None
                     if member and member.status == "ACTIVE" and member.role == "MEMBER":
                         path = request.url.path
-                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/ai/chat", "/api/ai/translate", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
-                        if not path.startswith(allowed):
+                        allowed = ("/api/dashboard", "/api/control", "/api/profiles", "/api/scripts", "/api/script-runs", "/api/ai/chat", "/api/ai/images", "/api/ai/translate", "/api/ai/writing", "/api/ai/analysis", "/api/ai/task-proposals")
+                        read_only_allowed = ("/api/activities", "/api/commands", "/api/ai/providers")
+                        if not path.startswith(allowed) and not (
+                            request.method == "GET" and path.startswith(read_only_allowed)
+                        ):
                             return secure_response(403, "该账号无权访问此功能")
                         feature_by_prefix = {
                             "/api/ai/chat": "CHAT",
+                            "/api/ai/images": "IMAGES",
                             "/api/ai/translate": "TRANSLATE",
                             "/api/ai/writing": "WRITING",
                             "/api/ai/analysis": "ANALYSIS",
@@ -390,7 +408,9 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
                     chunks = [chunk async for chunk in response.body_iterator]
                     try:
                         data = json.loads(b"".join(chunks).decode("utf-8"))
-                        hidden = {"provider_id", "provider_name", "provider_type", "base_url", "api_key_masked", "has_api_key", "default_model", "models", "model", "prompt_tokens", "completion_tokens", "total_tokens", "latency_ms", "ai_total_tokens"}
+                        hidden = {"provider_type", "base_url", "api_key_masked", "has_api_key", "last_error"}
+                        if request.url.path == "/api/ai/translate":
+                            hidden.add("model")
                         def scrub(value):
                             if isinstance(value, dict):
                                 return {key: scrub(item) for key, item in value.items() if key not in hidden}
@@ -495,6 +515,28 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         token = AgentToken(agent_id=agent_id, token_hash=token_hash(raw), created_at=issued, expires_at=issued + timedelta(days=settings.agent_token_ttl_days), status=TOKEN_ACTIVE)
         db.add(token)
         return raw, token
+
+    def revoke_user_agent_access(db: Session, target_user: User, *, when: datetime) -> tuple[list[str], int]:
+        """Revoke runtimes registered by a disabled user in the same transaction."""
+        agents = list(db.scalars(select(Agent).where(Agent.registered_by_user_id == target_user.id)))
+        agent_ids = [item.id for item in agents]
+        if not agent_ids:
+            return [], 0
+        revoked = 0
+        active_tokens = db.scalars(select(AgentToken).where(
+            AgentToken.agent_id.in_(agent_ids),
+            AgentToken.status == TOKEN_ACTIVE,
+        ))
+        for token in active_tokens:
+            token.status = TOKEN_REVOKED
+            token.revoked_at = when
+            revoked += 1
+        for linked_agent in agents:
+            if linked_agent.status != "DELETED":
+                linked_agent.status = "OFFLINE"
+                linked_agent.last_heartbeat = None
+                linked_agent.running_task_count = 0
+        return agent_ids, revoked
 
     @app.get("/api/health")
     def health():
@@ -826,6 +868,8 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if body.password is not None:
             item.password_hash = hash_password(body.password)
         item.role = role; item.workspace_id = workspace_id
+        revoked_agent_ids: list[str] = []
+        revoked_agent_tokens = 0
         if body.status is not None:
             next_status = body.status.upper()
             if next_status not in {"ACTIVE", "DISABLED", "DELETED"}: raise HTTPException(status_code=422, detail="Invalid user status")
@@ -833,10 +877,18 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             if next_status == "DELETED" and user.role != "ADMIN": deny(request, db, action="USER_DELETE", user=user)
             if item.status == "DELETED" and next_status != "DELETED" and user.role != "ADMIN": deny(request, db, action="USER_RESTORE", user=user)
             item.status = next_status
+            if next_status in {"DISABLED", "DELETED"}:
+                revoked_agent_ids, revoked_agent_tokens = revoke_user_agent_access(db, item, when=now())
         db.commit()
         action = "USER_DELETE" if body.status and body.status.upper() == "DELETED" else "USER_RESTORE" if previous_status == "DELETED" and body.status and body.status.upper() == "ACTIVE" else "USER_UPDATE"
-        audit(db, request, action=action, result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, resource_type="user", resource_id=item.id)
-        return _user_dict(item)
+        message = ""
+        if revoked_agent_ids:
+            message = f"linked_agents={len(revoked_agent_ids)}; revoked_agent_tokens={revoked_agent_tokens}"
+        audit(db, request, action=action, result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, resource_type="user", resource_id=item.id, message=message)
+        return _user_dict(item) | {
+            "linked_agent_count": len(revoked_agent_ids),
+            "revoked_agent_tokens": revoked_agent_tokens,
+        }
 
     @app.post("/api/users/{user_id}/clear-cache")
     def clear_user_cache(user_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):

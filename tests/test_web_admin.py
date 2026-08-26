@@ -1,21 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-import shutil
 
 from fastapi.testclient import TestClient
 import jwt
 import pytest
-from sqlalchemy import select
 
 from server.config import ServerSettings
-from server.auth import create_jwt
 from server.main import create_app
-from server.models import User
-
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 def configured(**overrides) -> ServerSettings:
@@ -207,16 +199,39 @@ def test_web_422_api_error_is_safe(web_env):
     assert response.status_code == 422 and "traceback" not in response.text.lower()
 
 
-def test_real_stage7_account_data_is_visible_through_web_api(tmp_path):
-    source = ROOT / "server" / "e2e-stage7-idempotent.db"
-    copied = tmp_path / "real-data.db"
-    shutil.copy2(source, copied)
-    settings = configured(database_url=f"sqlite:///{copied.as_posix()}")
+def test_synchronized_account_data_is_visible_through_web_api(tmp_path):
+    database = tmp_path / "account-data.db"
+    settings = configured(database_url=f"sqlite:///{database.as_posix()}")
     client = TestClient(create_app(settings.database_url, settings))
-    with client.app.state.SessionLocal() as db:
-        user = db.scalar(select(User))
-        token = create_jwt(user, settings)
-    accounts = client.get("/api/accounts?paged=true", headers=auth(token)).json()["items"]
-    profiles = client.get("/api/profiles?paged=true", headers=auth(token)).json()["items"]
+    boot = client.post(
+        "/api/auth/bootstrap",
+        json={"workspace_name": "Imported data", "username": "admin", "password": "password123"},
+    ).json()
+    registered = client.post(
+        "/api/agents/register",
+        headers=auth(boot["access_token"]),
+        json={"agent_name": "Imported Agent", "machine_name": "IMPORTED-PC", "client_version": "0.8.0"},
+    ).json()
+    synchronized = client.post(
+        "/api/accounts/sync",
+        headers=auth(registered["agent_token"]),
+        json={
+            "agent_id": registered["agent_id"],
+            "items": [{
+                "profile_id": "profile-imported",
+                "instance_id": "instance-imported",
+                "x_username": "@ZarrarSiddiqui3",
+                "x_account_id": "1219971479187517440",
+                "login_status": "LOGGED_IN",
+                "browser_status": "RUNNING",
+                "account_status": "VALID",
+                "last_checked": datetime.now(timezone.utc).isoformat(),
+            }],
+        },
+    )
+    assert synchronized.status_code == 200
+
+    accounts = client.get("/api/accounts?paged=true", headers=auth(boot["access_token"])).json()["items"]
+    profiles = client.get("/api/profiles?paged=true", headers=auth(boot["access_token"])).json()["items"]
     assert any(item["x_username"] == "@ZarrarSiddiqui3" and item["x_account_id"] == "1219971479187517440" for item in accounts)
-    assert any(item["profile_id"] for item in profiles)
+    assert any(item["profile_id"] == "profile-imported" for item in profiles)

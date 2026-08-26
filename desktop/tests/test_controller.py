@@ -387,6 +387,47 @@ def test_desktop_statistics_are_displayed():
     app.processEvents()
 
 
+def test_desktop_minimize_surface_tracks_logs_and_restores_main_window():
+    app = qapp()
+    window = MainWindow(make_controller(records=[]))
+    window.show()
+    app.processEvents()
+
+    window._log("浮窗日志测试")
+    window._show_mini_window()
+    app.processEvents()
+
+    assert window.isHidden()
+    assert window._mini_window.isVisible()
+    assert "浮窗日志测试" in window._mini_window.log_output.toPlainText()
+
+    window._restore_from_mini_window()
+    app.processEvents()
+    assert window.isVisible()
+    assert window._mini_window.isHidden()
+
+    window.close()
+    app.processEvents()
+
+
+def test_desktop_minimize_surface_reads_new_agent_log_lines(tmp_path):
+    app = qapp()
+    window = MainWindow(make_controller(records=[]))
+    window._log_tail_path = str(tmp_path / "agent.log")
+    (tmp_path / "agent.log").write_text("[12:00:00] initial agent line\n", encoding="utf-8")
+    window._show_mini_window()
+    app.processEvents()
+    assert "initial agent line" in window._mini_window.log_output.toPlainText()
+
+    with (tmp_path / "agent.log").open("a", encoding="utf-8") as handle:
+        handle.write("[12:00:01] latest agent line\n")
+    window._poll_log_file()
+    assert "latest agent line" in window._mini_window.log_output.toPlainText()
+
+    window.close()
+    app.processEvents()
+
+
 def test_dashboard_refresh_does_not_overwrite_fresh_automation_counts_with_stale_ui_values():
     app = qapp()
     window = MainWindow(make_controller(records=[]))

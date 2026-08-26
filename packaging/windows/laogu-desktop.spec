@@ -8,6 +8,7 @@ a = Analysis(
     pathex=[str(project)],
     binaries=[],
     datas=[
+        (str(project / "desktop" / "assets"), "desktop/assets"),
         (str(project / "scripts" / "discover_x_account.js"), "scripts"),
         (str(project / "scripts" / "x_readonly_tasks.js"), "scripts"),
     ],
@@ -44,6 +45,7 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(project / "desktop" / "assets" / "laogu-control-center.ico"),
 )
 coll = COLLECT(
     exe,

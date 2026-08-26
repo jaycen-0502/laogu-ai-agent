@@ -8,7 +8,7 @@ from sqlalchemy import select
 from server.config import ServerSettings
 from server.image_service import AIImageRequestError, AIImageResult, AIImageService
 from server.main import create_app
-from server.models import AIImage
+from server.models import AIImage, User
 
 
 API_KEY = "sk-stage9b-image-secret-1234"
@@ -70,6 +70,14 @@ def make_env(tmp_path):
     )
     assert provider.status_code == 200, provider.text
     env["provider"] = provider.json()
+    with client.app.state.SessionLocal() as db:
+        member_id = db.scalar(select(User.id).where(User.username == "member-a"))
+    assigned = client.put(
+        f"/api/users/{member_id}/ai-policy",
+        headers=auth(env["owner"]),
+        json={"feature": "IMAGES", "enabled": True, "provider_id": env["provider"]["provider_id"]},
+    )
+    assert assigned.status_code == 200, assigned.text
     return env
 
 
@@ -114,7 +122,7 @@ def test_generate_list_content_delete_and_audit(tmp_path):
     content = env["client"].get(image["content_url"], headers=auth(env["member"]));
     assert content.status_code == 200 and content.content == PNG_BYTES
     assert content.headers["content-type"].startswith("image/png")
-    assert env["client"].get(image["content_url"], headers=auth(env["member2"])).status_code == 404
+    assert env["client"].get(image["content_url"], headers=auth(env["member2"])).status_code == 403
 
     stored = list(env["storage"].rglob(f"{image['image_id']}.png"))
     assert len(stored) == 1 and stored[0].read_bytes() == PNG_BYTES

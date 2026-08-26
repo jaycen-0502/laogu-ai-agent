@@ -38,4 +38,5 @@ def test_command_websocket_ack_result_and_close(tmp_path: Path):
     assert any('"type": "ack"' in item for item in socket.sent)
     assert any('"type": "result"' in item for item in socket.sent)
     assert captured["url"] == "wss://server.example/api/agent/commands/ws"
-    assert captured["header"] == ["Authorization: Bearer secret"]
+    assert captured["header"][0] == "Authorization: Bearer secret"
+    assert captured["header"][1].startswith("X-Laogu-Device-ID: ")

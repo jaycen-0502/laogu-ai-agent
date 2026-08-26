@@ -4,14 +4,18 @@ import sys
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from .branding import application_icon, configure_windows_app_identity
 from .main_window import MainWindow
 from .startup import import_existing_credentials, standalone_agent_processes, stop_processes
 from .styles import APP_STYLE
 
 
 def main() -> int:
+    configure_windows_app_identity()
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Laogu 账号资产控制中心")
+    app.setApplicationDisplayName("老谷自动化控制中心")
+    app.setWindowIcon(application_icon())
     app.setStyle("Fusion")
     app.setStyleSheet(APP_STYLE)
 

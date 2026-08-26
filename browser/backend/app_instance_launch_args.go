@@ -144,7 +144,7 @@ func (a *App) markProfileStoppedLocked(profileId string, profile *BrowserProfile
 
 // AddProfileWithRegionPreset 提供给前端调用的“一键添加美国/日本独立环境”接口
 // region 参数可传 "US" 或 "JP"
-func (a *App) AddProfileWithRegionPreset(profileName string, region string) (*browser.Profile, error) {
+func (a *App) AddProfileWithRegionPreset(profileName string, region string) (*BrowserProfile, error) {
 	regionUpper := strings.ToUpper(strings.TrimSpace(region))
 	if regionUpper != "US" && regionUpper != "JP" {
 		return nil, fmt.Errorf("不支持的地区类型，仅支持 'US' 或 'JP'")
@@ -163,26 +163,27 @@ func (a *App) AddProfileWithRegionPreset(profileName string, region string) (*br
 
 	// 3. 构造全新的 Profile 实例
 	profileID := fmt.Sprintf("profile_%d", time.Now().UnixMilli())
-	newProfile := &browser.Profile{
+	nowStr := time.Now().Format("2006-01-02 15:04:05")
+	newProfile := &BrowserProfile{
 		ProfileId:   profileID,
 		ProfileName: profileName,
 		UserDataDir: profileID,
 		LaunchArgs:  presetArgs,
 		Running:     false,
-		CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
-		UpdatedAt:   time.Now().Format("2006-01-02 15:04:05"),
+		CreatedAt:   nowStr,
+		UpdatedAt:   nowStr,
 	}
 
 	// 4. 安全存入 Manager 的内存 Map 与 DAO 持久化
 	if a.browserMgr != nil {
 		a.browserMgr.Mutex.Lock()
 		if a.browserMgr.Profiles == nil {
-			a.browserMgr.Profiles = make(map[string]*browser.Profile)
+			a.browserMgr.Profiles = make(map[string]*BrowserProfile)
 		}
 		a.browserMgr.Profiles[profileID] = newProfile
 		a.browserMgr.Mutex.Unlock()
 
-		// 如果项目配置了 SQLite DAO 层，进行持久化落地
+		// 如果项目配置了 DAO 层，进行持久化落地
 		if a.browserMgr.ProfileDAO != nil {
 			_ = a.browserMgr.ProfileDAO.Upsert(newProfile)
 		}
@@ -209,15 +210,14 @@ func (a *App) openBrowserWindowForRunningProfile(profile *BrowserProfile, extraL
 	args := []string{
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		// === 关键抗封锁 Flag 汇总 ===
-		"--disable-blink-features=AutomationControlled", // 隐藏 Chromium 原生的 navigator.webdriver = true 标记
-		"--excludeSwitches=enable-automation",           // 隐藏顶部的“正受自动测试软件控制”警告条
-		"--disable-infobars",                            // 禁用信息栏通知
-		"--no-first-run",                                // 跳过 Chrome 首次运行引导页
-		"--no-default-browser-check",                    // 跳过默认浏览器提示
-		"--password-store=basic",                        // 避免不同环境凭据冲突
+		"--excludeSwitches=enable-automation", // 隐藏顶部的“正受自动测试软件控制”警告条
+		"--disable-infobars",                  // 禁用信息栏通知
+		"--no-first-run",                      // 跳过 Chrome 首次运行引导页
+		"--no-default-browser-check",          // 跳过默认浏览器提示
+		"--password-store=basic",              // 避免不同环境凭据冲突
 	}
 
-	// 注入 Profile 本身保存的 LaunchArgs（如一键生成时写入的语言、时区、随机 CPU/内存与 GPS 坐标等）
+	// 注入 Profile 本身保存的 LaunchArgs（如语言、时区、硬件指纹等）
 	if len(profile.LaunchArgs) > 0 {
 		args = append(args, profile.LaunchArgs...)
 	}
@@ -226,7 +226,7 @@ func (a *App) openBrowserWindowForRunningProfile(profile *BrowserProfile, extraL
 	logManagedLaunchArgOverrides(logger.New("Browser"), profile.ProfileId, "running-window.extraLaunchArgs", managedExtraArgs)
 	args = append(args, sanitizedExtraLaunchArgs...)
 
-	// === 保底机制：确保 Canvas Noise / ClientRects Noise / WebRTC UDP 屏蔽 100% 被注入 ===
+	// === 保底机制：确保 Canvas / ClientRects / WebRTC 防泄露参数 100% 被注入 ===
 	args = browser.EnsureRuntimeFingerprintArgs(args)
 
 	if len(startURLs) > 0 {

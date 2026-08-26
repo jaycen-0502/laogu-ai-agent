@@ -41,8 +41,8 @@ func TestBuildBrowserLaunchArgsAlwaysInjectsRuntimeFingerprintProtection(t *test
 
 	for _, expected := range []string{
 		"--disable-non-proxied-udp",
-		"--fingerprinting-canvas-image-data-noise",
-		"--fingerprinting-client-rects-noise",
+		"--fingerprinting-canvas-image-data-noise=0",
+		"--fingerprinting-client-rects-noise=0",
 	} {
 		found := false
 		for _, arg := range args {

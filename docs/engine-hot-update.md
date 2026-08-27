@@ -10,7 +10,8 @@ publish engines from the Web Script Center using an engine ID such as
 
 1. In the Web Script Center, enter an engine ID, display name, description and
    version, then upload a Python file exposing `XAutomationEngine`.
-2. The server validates the source, stores it under
+2. The server validates UTF-8, Python syntax and the `XAutomationEngine.run`
+   interface, stores it under
    `agent_data/engine_publish/<engine-id>/`, and exposes a signed-by-HTTPS,
    SHA-256 manifest to authenticated Agents.
 3. The Windows control center lists the available engine names in the
@@ -25,8 +26,11 @@ publish engines from the Web Script Center using an engine ID such as
 - Agent Bearer authentication and the device-binding header are required.
 - Only `https://api.jaycwl.org` is accepted by the default client policy.
 - The manifest must be marked `read_only` and contain a valid SHA-256 digest.
-- System, filesystem, process, socket, and dynamic import primitives are
-  rejected before activation.
+- Upload is restricted to `ADMIN`. Administrator-published engines are trusted
+  application code, so system, filesystem and network modules are allowed.
+- Sensitive imports and dynamic/file operations are retained as manifest audit
+  findings and shown after publishing; they do not block a trusted upload.
+- Legacy or non-admin-trusted bundles keep the restrictive static policy.
 - A failed download, timeout, hash check, compile check, or compatibility check
   leaves the current engine untouched.
 - If the active cache is damaged, the previous cache is selected atomically.

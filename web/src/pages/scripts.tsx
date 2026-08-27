@@ -123,7 +123,12 @@ export function ScriptsPage({ user }: { user: User }) {
             const file = event.target.files?.[0]; event.target.value = "";
             if (!file || !engineVersion.trim()) { setEngineMessage("请先填写自动化脚本版本号"); return; }
             setEngineMessage("正在上传自动化脚本…");
-            try { const result = await uploadEngine(file, engineVersion.trim(), engineId.trim() || "default", engineName.trim(), engineDescription.trim()); setEngineMessage(`发布成功：${result.name}（${result.engine_id}）版本 ${result.version}，控制中心重新打开自动化配置即可选择`); setEngineVersion(""); }
+            try {
+              const result = await uploadEngine(file, engineVersion.trim(), engineId.trim() || "default", engineName.trim(), engineDescription.trim());
+              const findings = result.security_warnings?.length ? `；已记录可信代码能力：${result.security_warnings.join(", ")}` : "";
+              setEngineMessage(`发布成功：${result.name}（${result.engine_id}）版本 ${result.version}${findings}。控制中心重新打开自动化配置即可选择`);
+              setEngineVersion("");
+            }
             catch (exc) { setEngineMessage(exc instanceof Error ? exc.message : "脚本发布失败"); }
           }} />
           <input value={engineId} onChange={(event) => setEngineId(event.target.value)} placeholder="引擎ID，例如 new-account" />

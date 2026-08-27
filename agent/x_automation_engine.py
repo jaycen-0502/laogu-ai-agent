@@ -85,14 +85,14 @@ def generate_ai_reply(
     else:
         models = remote_cfg.get("models") or ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
 
-    # 💡 系统角色定义：日本本地 SNS 深度分析专家 (强行封锁敬语)[cite: 3]
+    # 💡 系统角色定义：日本本地 SNS 深度分析专家 (强行封锁敬语)[cite: 3, 4]
     system_prompt = (
         "You are an expert in Japanese social media nuance and local dialects (関東弁, 関西弁, 博多弁, etc.). "
         "Your role is to analyze a tweet's emotion, intent, and language style, and then reply in natural, casual Japanese (タメ口). "
         "CRITICAL RULE: NEVER use polite forms or honorifics like 'です', 'ます', 'ございます', or 'でしょうか'."
     )
 
-    # 💡 引入思维链 (Chain of Thought)：先分析，后生成[cite: 3]
+    # 💡 引入思维链 (Chain of Thought)：先分析，后生成[cite: 3, 4]
     prompt = (
         "以下のツイートを深層分析し、最適で自然なタメ口リプライを作成してください。\n\n"
         "【分析ステップ】\n"
@@ -147,12 +147,12 @@ def generate_ai_reply(
                             text = choice.get("content", "") if "content" in choice else choice.get("message", {}).get("content", "")
                             clean_text = text.strip().replace('"', '').replace('\n', ' ')
 
-                            # 文本过滤：剔除句尾句号/感叹号及可能残留的敬语后缀[cite: 3]
+                            # 文本过滤：剔除句尾句号/感叹号及可能残留的敬语后缀[cite: 3, 4]
                             clean_text = re.sub(r'[。\.！!]+$', '', clean_text).strip()
                             clean_text = re.sub(r'です$', '', clean_text)
                             clean_text = re.sub(r'ます$', '', clean_text)
 
-                            # 线程安全的去重逻辑[cite: 3]
+                            # 线程安全的去重逻辑[cite: 3, 4]
                             with _CACHE_LOCK:
                                 if clean_text and clean_text not in _RECENT_REPLIES_CACHE:
                                     _RECENT_REPLIES_CACHE.append(clean_text)
@@ -164,7 +164,7 @@ def generate_ai_reply(
             except Exception as err:
                 print(f"  └─ ⚠️ [AI 评论] 模型 [{model}] 调用异常，尝试备用模型: {err}")
 
-    # 兜底纯平语短句库[cite: 3]
+    # 兜底纯平语短句库[cite: 3, 4]
     fallback_replies = [
         "それな", "めっちゃ分かる", "まじで助かる", "ほんとこれすぎる",
         "なるほどな", "ええなこれ", "神かよ", "ほんとそれ"
@@ -206,9 +206,9 @@ class AutomationConfig:
     account_tag: str = "默认"
     profile_visit_ratio: float = 0.45
     home_browse_ratio: float = 0.20
-    ai_reply_ratio: float = 0.15       # 15% 概率执行 AI 评论回复（可由控制中心传 0.0 关闭）
-    bookmark_ratio: float = 0.25       # 25% 概率执行保存书签
-    retweet_ratio: float = 0.10        # 10% 偶发转推概率
+    ai_reply_ratio: float = 0.15       # 15% 概率执行 AI 评论回复（可由控制中心传 0.0 关闭）[cite: 4]
+    bookmark_ratio: float = 0.25       # 25% 概率执行保存书签[cite: 4]
+    retweet_ratio: float = 0.10        # 10% 偶发转推概率[cite: 4]
 
     @classmethod
     def from_mapping(cls, values: dict[str, Any] | None) -> "AutomationConfig":
@@ -416,11 +416,11 @@ async def safe_human_click(page: Any, element: Any, personality: ProfilePersonal
 
 
 async def human_type_text(page: Any, element: Any, text: str) -> None:
-    """模拟真人按键打字，带有随机微延时与节奏变异[cite: 3]"""
+    """模拟真人按键打字，带有随机微延时与节奏变异[cite: 3, 4]"""
     try:
         await element.click()
 
-        # 🛡️ 极致细节：打字前追加 0.6 ~ 1.2 秒“光标闪烁/键盘弹起”微缓冲[cite: 3]
+        # 🛡️ 极致细节：打字前追加 0.6 ~ 1.2 秒“光标闪烁/键盘弹起”微缓冲[cite: 3, 4]
         await asyncio.sleep(random.uniform(0.6, 1.2))
 
         for i, char in enumerate(text):
@@ -474,7 +474,7 @@ class XAutomationEngine:
         self.progress_callback = kwargs.get("progress_callback")
         self._comments_total = 0
 
-        # 🛡️ 极致细节：AI API 连续失败计数与熔断标志位[cite: 3]
+        # 🛡️ 极致细节：AI API 连续失败计数与熔断标志位[cite: 3, 4]
         self._consecutive_ai_failures = 0
         self._ai_circuit_broken = False
 
@@ -655,8 +655,8 @@ class XAutomationEngine:
         return False
 
     async def _do_ai_comment_reply(self, page: Any, article: Any) -> bool:
-        """调用 ChatGPT 模型生成回复（熔断保护 + 异步线程解耦）[cite: 3]"""
-        # 🛡️ 熔断检查：连续失败达到 3 次时，跳过本批次 AI 评论，仅保留点赞和关注[cite: 3]
+        """调用 ChatGPT 模型生成回复（熔断保护 + 异步线程解耦）[cite: 3, 4]"""
+        # 🛡️ 熔断检查：连续失败达到 3 次时，跳过本批次 AI 评论，仅保留点赞和关注[cite: 3, 4]
         if self._ai_circuit_broken:
             self._print("  └─ ⚡ [熔断保护] AI 接口处于冷却保护状态，跳过本条评论生成")
             return False
@@ -687,11 +687,11 @@ class XAutomationEngine:
 
             if self._consecutive_ai_failures >= 3:
                 self._ai_circuit_broken = True
-                self._print("  └─ 🚨 [熔断触发] AI 接口连续 3 次异常，已暂停本批次评论，防止重复兜底[cite: 3]！")
+                self._print("  └─ 🚨 [熔断触发] AI 接口连续 3 次异常，已暂停本批次评论，防止重复兜底！")
         return False
 
     async def _like_and_engage_post(self, page: Any, article: Any, config: AutomationConfig) -> int:
-        """多维度拟人社交行为组合执行器（带热度感知动态评论过滤）[cite: 3]"""
+        """多维度拟人社交行为组合执行器（带热度感知动态评论过滤）[cite: 3, 4]"""
         likes_added = 0
         first_like_btn = await article.query_selector('button[data-testid="like"]')
         if first_like_btn and await safe_human_click(page, first_like_btn, self.personality):
@@ -705,7 +705,7 @@ class XAutomationEngine:
         if random.random() < config.retweet_ratio:
             await self._do_retweet(page, article)
 
-        # 🛡️ 极致细节：热度感知评论——解析互动量，避免在 0 赞 0 转推的死寂推文下留言[cite: 3]
+        # 🛡️ 极致细节：热度感知评论——解析互动量，避免在 0 赞 0 转推的死寂推文下留言[cite: 3, 4]
         if config.ai_reply_ratio > 0.0 and random.random() < config.ai_reply_ratio:
             try:
                 article_inner = await article.inner_text()
@@ -715,7 +715,7 @@ class XAutomationEngine:
                     if await self._do_ai_comment_reply(page, article):
                         self._comments_total += 1
                 else:
-                    self._print("  └─ ⏩ [热度感知] 推文属于零互动冷门帖子，跳过评论仅点赞/关注[cite: 3]")
+                    self._print("  └─ ⏩ [热度感知] 推文属于零互动冷门帖子，跳过评论仅点赞/关注")
             except Exception:
                 pass
 
@@ -1047,8 +1047,8 @@ class XAutomationEngine:
         self._log("started", keyword=config.keyword)
         self._print("==========================================")
         self._print(f"老谷控制中心 2026 协同引擎启动! [CDP端口: {self.personality.port}]")
-        self._print(f"目标关键词列表 ({len(keywords_list)} 个): {keywords_list} | 单日上限: {config.daily_task_limit} 人")
-        self._print("⏰ [分时段拓客模式] 仅在东京时间 08-12点 | 14-16点 | 18-22点 随机执行")
+        self._print(f"目标关键词列表 ({len(keywords_list)} 个): {keywords_list} | 全天目标上限: {config.daily_task_limit} 人")
+        self._print("⏰ [3时段配额分配模式] 08-12点(35%) | 14-16点(25%) | 18-22点(40%) 动态平摊执行")
         self._print("==========================================\n")
 
         try:
@@ -1065,20 +1065,38 @@ class XAutomationEngine:
         page = None
         resp_listener = None
 
-        # 💡 东京时间 (UTC+9) 3 段式允许窗口校验辅助函数
-        def is_in_allowed_time_window() -> tuple[bool, str]:
+        # 💡 东京时间 (UTC+9) 3 段式允许窗口与【动态配额上限】计算函数
+        def get_time_window_status(current_total: int, daily_limit: int) -> tuple[bool, str, int]:
             tokyo_tz = timezone(timedelta(hours=9))
             now_tokyo = datetime.now(tokyo_tz)
             hour = now_tokyo.hour
 
+            remaining_tasks = daily_limit - current_total
+            if remaining_tasks <= 0:
+                return False, "全天目标已达成", 0
+
+            # 按照 上午35% / 下午25% / 晚间40% 计算各阶段应达到的累计上限
+            morning_target = int(daily_limit * 0.35)
+            afternoon_target = int(daily_limit * 0.60)
+            evening_target = daily_limit
+
             if 8 <= hour < 12:
-                return True, "上午窗口 (08:00 - 12:00)"
+                # 如果上午跑满了 35%，则提前休眠等待下午
+                if current_total >= morning_target:
+                    return False, f"上午配额已达标 ({current_total}/{morning_target})，等待 14 点", 0
+                return True, "上午窗口 (08:00 - 12:00)", morning_target
+
             elif 14 <= hour < 16:
-                return True, "下午窗口 (14:00 - 16:00)"
+                # 如果下午跑满了 60%（累计），休眠等待晚间
+                if current_total >= afternoon_target:
+                    return False, f"下午配额已达标 ({current_total}/{afternoon_target})，等待 18 点", 0
+                return True, "下午窗口 (14:00 - 16:00)", afternoon_target
+
             elif 18 <= hour < 22:
-                return True, "晚间窗口 (18:00 - 22:00)"
+                return True, "晚间窗口 (18:00 - 22:00)", evening_target
+
             else:
-                return False, f"非执行时段 (当前东京时间: {now_tokyo.strftime('%H:%M')})"
+                return False, f"非工作时段 (当前东京时间: {now_tokyo.strftime('%H:%M')})", 0
 
         try:
             async with async_playwright() as playwright:
@@ -1111,25 +1129,27 @@ class XAutomationEngine:
 
                 batch_index = 1
                 while total_exec < config.daily_task_limit:
-                    # 💡 2. 轮询选择当前批次对应的关键词
                     current_keyword = keywords_list[(batch_index - 1) % len(keywords_list)]
 
-                    # 检查时间窗口
-                    is_allowed, win_desc = is_in_allowed_time_window()
+                    # 💡 校验时间窗口并获取当前窗口的【阶段目标上限】
+                    is_allowed, win_desc, stage_limit = get_time_window_status(total_exec, config.daily_task_limit)
+
                     if not is_allowed:
-                        self._print(f"🌙 [{win_desc}] 触发非工作时段休息，休眠 10 分钟后重新检测...")
-                        await asyncio.sleep(600)  # 每 10 分钟检测一次时间
+                        self._print(f"🌙 [{win_desc}] 触发休眠，每 10 分钟自动检测下一阶段...")
+                        await asyncio.sleep(600)  # 每 10 分钟检测一次
                         continue
 
-                    self._print(f"\n🚀 当前处于 [{win_desc}] - 开始第 {batch_index} 批次任务 | 当前轮询关键词: '{current_keyword}' (进度: {total_exec}/{config.daily_task_limit})...")
+                    self._print(f"\n🚀 当前处于 [{win_desc}] - 开始第 {batch_index} 批次任务 | 当前轮询关键词: '{current_keyword}'")
+                    self._print(f"📊 阶段进度: {total_exec}/{stage_limit} (全天总目标: {config.daily_task_limit})...")
 
-                    # 💡 3. 导航切入当前批次的关键词搜索轨道
                     await self.navigate_to_keyword_search(page, current_keyword)
 
-                    # 构造包含当前关键词的临时配置对象传入单批次执行器
+                    # 动态计算当前批次的目标限制，防止跨越阶段配额上限，并完全透传所有用户自定义配置
+                    batch_max = min(stage_limit - total_exec, config.daily_task_limit - total_exec)
                     batch_config = AutomationConfig.from_mapping({
                         **(custom_config or {}),
-                        "keyword": current_keyword
+                        "keyword": current_keyword,
+                        "daily_task_limit": total_exec + batch_max
                     })
 
                     e_cnt, l_cnt, f_cnt, v_cnt = await self._run_single_batch(
@@ -1146,7 +1166,7 @@ class XAutomationEngine:
                     total_views += v_cnt
 
                     if total_exec >= config.daily_task_limit:
-                        self._print(f"🎉 已达到单日任务上限 ({total_exec}/{config.daily_task_limit})，全天自动化完美收官！")
+                        self._print(f"🎉 已达到全天任务上限 ({total_exec}/{config.daily_task_limit})，全天自动化完美收官！")
                         break
 
                     self._print("🏠 批次完成：切回 For You 首页休息消痕...")

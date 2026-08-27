@@ -124,3 +124,56 @@ def test_install_rejects_invalid_manifest_size(tmp_path: Path):
     }
     with pytest.raises(script_updater.EngineUpdateError, match="manifest size"):
         script_updater.install_engine_update(manifest, source, tmp_path)
+
+
+def test_admin_trusted_engine_can_use_system_and_network_modules(tmp_path: Path):
+    source = (
+        b"import os\n"
+        b"import urllib.request\n\n"
+        b"class XAutomationEngine:\n"
+        b"    async def run(self, custom_config=None):\n"
+        b"        return os.environ.get('LAOGU_TEST_VALUE', '')\n"
+    )
+    manifest = {
+        "engine_id": "trusted-test",
+        "version": "1.0.0",
+        "sha256": hashlib.sha256(source).hexdigest(),
+        "size": len(source),
+        "read_only": True,
+        "trusted_by_admin": True,
+        "security_warnings": ["os", "urllib"],
+    }
+
+    assert script_updater.install_engine_update(manifest, source, tmp_path) is True
+    state = script_updater.read_engine_state(tmp_path)
+    assert state["trusted_by_admin"] is True
+    assert state["security_warnings"] == ["os", "urllib"]
+    assert script_updater.get_cached_automation_engine_class(tmp_path) is not None
+
+    safe_source = b"class XAutomationEngine:\n    async def run(self):\n        return 'safe'\n"
+    safe_manifest = {
+        "version": "1.0.1",
+        "sha256": hashlib.sha256(safe_source).hexdigest(),
+        "size": len(safe_source),
+        "read_only": True,
+    }
+    assert script_updater.install_engine_update(safe_manifest, safe_source, tmp_path) is True
+    active_state = script_updater.read_engine_state(tmp_path)
+    (tmp_path / active_state["active_path"]).write_bytes(b"damaged")
+    assert script_updater.get_cached_automation_engine_class(tmp_path) is not None
+    rolled_back = script_updater.read_engine_state(tmp_path)
+    assert rolled_back["trusted_by_admin"] is True
+    assert rolled_back["security_warnings"] == ["os", "urllib"]
+
+
+def test_untrusted_engine_still_rejects_system_modules(tmp_path: Path):
+    source = b"import os\nclass XAutomationEngine:\n    async def run(self):\n        return {}\n"
+    manifest = {
+        "version": "1.0.0",
+        "sha256": hashlib.sha256(source).hexdigest(),
+        "size": len(source),
+        "read_only": True,
+    }
+
+    with pytest.raises(script_updater.EngineUpdateError, match="blocked import"):
+        script_updater.install_engine_update(manifest, source, tmp_path)

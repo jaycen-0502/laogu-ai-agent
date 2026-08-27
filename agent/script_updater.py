@@ -52,7 +52,7 @@ def _is_allowed_url(remote_url: str) -> bool:
     return parts.scheme == "https" and bool(parts.hostname) and parts.hostname.lower() in hosts
 
 
-def _validate_code(code: bytes) -> None:
+def _validate_code(code: bytes, *, trusted_by_admin: bool = False) -> None:
     if not code or len(code) > MAX_ENGINE_BYTES:
         raise EngineUpdateError("Engine update size is invalid")
     try:
@@ -62,9 +62,11 @@ def _validate_code(code: bytes) -> None:
     except (UnicodeError, SyntaxError) as exc:
         raise EngineUpdateError("Engine update is not valid UTF-8 Python") from exc
 
-    # The downloadable engine is deliberately read-only.  Block direct system,
-    # filesystem, subprocess and network primitives even though transport is
-    # already authenticated and pinned by SHA-256.
+    # Legacy and non-admin bundles retain the restrictive static policy.
+    # Administrator-published bundles are trusted application code, but still
+    # require authenticated transport, a signed-in Agent and an exact SHA-256.
+    if trusted_by_admin:
+        return
     blocked = {
         "builtins", "ctypes", "ftplib", "http", "importlib", "os", "pathlib",
         "requests", "shutil", "socket", "subprocess", "urllib", "winreg",
@@ -147,7 +149,8 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
             raise EngineUpdateError("Engine source size does not match its manifest")
     if hashlib.sha256(source).hexdigest() != digest:
         raise EngineUpdateError("Engine SHA-256 verification failed")
-    _validate_code(source)
+    trusted_by_admin = manifest.get("trusted_by_admin") is True
+    _validate_code(source, trusted_by_admin=trusted_by_admin)
 
     root = _engine_root(cache_dir, engine_id)
     engine_path = root / "versions" / f"{version}-{digest[:12]}" / "x_automation_engine.py"
@@ -169,17 +172,23 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
 
     previous_path = str(state.get("active_path") or "")
     previous_sha256 = str(state.get("active_sha256") or "")
+    previous_trusted_by_admin = state.get("trusted_by_admin") is True
+    previous_security_warnings = list(state.get("security_warnings") or [])
     _atomic_json(
         state_path,
         {
             "engine_id": str(manifest.get("engine_id") or engine_id),
             "name": str(manifest.get("name") or manifest.get("engine_id") or engine_id),
             "description": str(manifest.get("description") or ""),
+            "trusted_by_admin": trusted_by_admin,
+            "security_warnings": list(manifest.get("security_warnings") or []),
             "active_version": version,
             "active_sha256": digest,
             "active_path": str(engine_path.relative_to(root)),
             "previous_path": previous_path,
             "previous_sha256": previous_sha256,
+            "previous_trusted_by_admin": previous_trusted_by_admin,
+            "previous_security_warnings": previous_security_warnings,
         },
     )
     return True
@@ -232,18 +241,18 @@ def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str], engine
     root = _engine_root(cache_dir, engine_id)
     state = read_engine_state(root)
     candidates = (
-        ("active", str(state.get("active_path") or ""), str(state.get("active_sha256") or "")),
-        ("previous", str(state.get("previous_path") or ""), str(state.get("previous_sha256") or "")),
+        ("active", str(state.get("active_path") or ""), str(state.get("active_sha256") or ""), state.get("trusted_by_admin") is True),
+        ("previous", str(state.get("previous_path") or ""), str(state.get("previous_sha256") or ""), state.get("previous_trusted_by_admin") is True),
     )
     last_error: Exception | None = None
-    for label, relative, expected in candidates:
+    for label, relative, expected, trusted_by_admin in candidates:
         path = _safe_cached_path(root, relative)
         if path is None or not _SHA256.fullmatch(expected):
             continue
         try:
             if get_file_sha256(path) != expected:
                 raise EngineUpdateError("Cached engine integrity check failed")
-            _validate_code(path.read_bytes())
+            _validate_code(path.read_bytes(), trusted_by_admin=trusted_by_admin)
             _, engine_class = _load_module(path, expected)
         except Exception as exc:
             last_error = exc
@@ -255,11 +264,15 @@ def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str], engine
                     "engine_id": str(state.get("engine_id") or engine_id),
                     "name": str(state.get("name") or engine_id),
                     "description": str(state.get("description") or ""),
+                    "trusted_by_admin": trusted_by_admin,
+                    "security_warnings": list(state.get("previous_security_warnings") or []),
                     "active_version": "rollback",
                     "active_sha256": expected,
                     "active_path": relative,
                     "previous_path": "",
                     "previous_sha256": "",
+                    "previous_trusted_by_admin": False,
+                    "previous_security_warnings": [],
                 },
             )
             logger.warning("Rolled back to the previous cached automation engine")

@@ -61,9 +61,27 @@ def _manifest_path(engine_id: str) -> Path:
     return target
 
 
-def _validate_source(source: bytes) -> None:
+def _security_findings(tree: ast.AST) -> list[str]:
+    """Collect sensitive capabilities for audit metadata without blocking admins."""
+    findings: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            roots = {alias.name.split(".", 1)[0] for alias in node.names}
+            findings.extend(sorted(roots & _BLOCKED_IMPORTS))
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".", 1)[0]
+            if root in _BLOCKED_IMPORTS:
+                findings.append(root)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in {"open", "eval", "exec", "compile", "__import__"}:
+                findings.append(node.func.id)
+    return sorted(set(findings))
+
+
+def _validate_source(source: bytes) -> list[str]:
+    """Validate compatibility while treating ADMIN uploads as trusted code."""
     if not source or len(source) > MAX_ENGINE_BYTES:
-        raise HTTPException(status_code=413, detail="脚本文件过大")
+        raise HTTPException(status_code=413, detail="脚本文件超过 2 MiB 限制")
     try:
         tree = ast.parse(source.decode("utf-8"))
     except (UnicodeDecodeError, SyntaxError) as exc:
@@ -71,15 +89,12 @@ def _validate_source(source: bytes) -> None:
     classes = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "XAutomationEngine"]
     if not classes:
         raise HTTPException(status_code=422, detail="脚本必须提供 XAutomationEngine 类")
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            roots = {alias.name.split(".", 1)[0] for alias in node.names}
-            if roots & _BLOCKED_IMPORTS:
-                raise HTTPException(status_code=422, detail="脚本包含禁止的系统或网络模块")
-        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".", 1)[0] in _BLOCKED_IMPORTS:
-            raise HTTPException(status_code=422, detail="脚本包含禁止的系统或网络模块")
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"open", "eval", "exec", "compile", "__import__"}:
-            raise HTTPException(status_code=422, detail="脚本包含禁止的动态或文件操作")
+    if not any(
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "run"
+        for item in classes[0].body
+    ):
+        raise HTTPException(status_code=422, detail="脚本必须提供 XAutomationEngine.run 方法")
+    return _security_findings(tree)
 
 
 def _read_manifest(engine_id: str) -> dict:
@@ -113,6 +128,8 @@ def _engine_manifest(engine_id: str) -> dict:
         "source_url": "/api/agent/engine/source" if engine_id == "default" else f"/api/agent/engines/{engine_id}/source",
         "size": len(source),
         "read_only": True,
+        "trusted_by_admin": stored.get("trusted_by_admin", False) is True,
+        "security_warnings": list(stored.get("security_warnings") or []),
         "enabled": stored.get("enabled", True) is not False,
     }
 
@@ -191,7 +208,7 @@ def register_engine_update_routes(app: FastAPI, *, current_user: Callable, curre
         if not _VERSION.fullmatch(version):
             raise HTTPException(status_code=422, detail="脚本版本号无效")
         source = await request.body()
-        _validate_source(source)
+        security_warnings = _validate_source(source)
         digest = hashlib.sha256(source).hexdigest()
         target = _engine_dir(engine_id)
         target.mkdir(parents=True, exist_ok=True)
@@ -201,8 +218,9 @@ def register_engine_update_routes(app: FastAPI, *, current_user: Callable, curre
         _manifest_path(engine_id).write_text(json.dumps({
             "engine_id": engine_id, "name": name, "description": description,
             "version": version, "sha256": digest, "size": len(source), "enabled": True,
+            "read_only": True, "trusted_by_admin": True, "security_warnings": security_warnings,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"ok": True, "engine_id": engine_id, "name": name, "version": version, "sha256": digest, "size": len(source)}
+        return {"ok": True, "engine_id": engine_id, "name": name, "version": version, "sha256": digest, "size": len(source), "trusted_by_admin": True, "security_warnings": security_warnings}
 
     @app.post("/api/admin/engine/{engine_id}/toggle")
     async def toggle_engine(engine_id: str, request: Request, user=Depends(current_user)):

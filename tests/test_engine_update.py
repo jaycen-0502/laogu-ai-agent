@@ -5,6 +5,7 @@ import hashlib
 from fastapi.testclient import TestClient
 
 from server.config import ServerSettings
+from server import engine_update_api
 from server.main import create_app
 
 
@@ -12,7 +13,8 @@ def auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_authenticated_engine_manifest_and_source():
+def test_authenticated_engine_manifest_and_source(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine_update_api, "_PUBLISH_DIR", tmp_path / "engine_publish")
     settings = ServerSettings(
         database_url="sqlite://",
         jwt_secret="engine-update-test-secret-more-than-32-bytes",
@@ -60,7 +62,8 @@ def test_authenticated_engine_manifest_and_source():
     assert source_response.headers["x-laogu-engine-sha256"] == manifest["sha256"]
 
 
-def test_admin_can_publish_and_agent_can_select_named_engine():
+def test_admin_can_publish_and_agent_can_select_named_engine(monkeypatch, tmp_path):
+    monkeypatch.setattr(engine_update_api, "_PUBLISH_DIR", tmp_path / "engine_publish")
     settings = ServerSettings(
         database_url="sqlite://",
         jwt_secret="engine-update-test-secret-more-than-32-bytes",
@@ -77,7 +80,13 @@ def test_admin_can_publish_and_agent_can_select_named_engine():
         headers=auth(bootstrap["access_token"]),
         json={"agent_name": "Agent", "machine_name": "PC", "client_version": "0.21.8", "device_id": "named-engine-device"},
     ).json()
-    source = b"class XAutomationEngine:\n    async def run(self, config=None):\n        return {'status': 'SUCCESS', 'engine': 'new-account'}\n"
+    source = (
+        b"import os\n"
+        b"import urllib.request\n\n"
+        b"class XAutomationEngine:\n"
+        b"    async def run(self, config=None):\n"
+        b"        return {'status': 'SUCCESS', 'endpoint': os.environ.get('TEST_ENDPOINT', '')}\n"
+    )
     published = client.post(
         "/api/admin/engine/publish?engine_id=new-account&name=%E6%96%B0%E5%8F%B7&description=test&version=1.0.0",
         headers=auth(bootstrap["access_token"]),
@@ -85,6 +94,8 @@ def test_admin_can_publish_and_agent_can_select_named_engine():
     )
     assert published.status_code == 200
     assert published.json()["engine_id"] == "new-account"
+    assert published.json()["trusted_by_admin"] is True
+    assert published.json()["security_warnings"] == ["os", "urllib"]
     agent_headers = {**auth(registered["agent_token"]), "X-Laogu-Device-ID": "named-engine-device"}
     listing = client.get("/api/agent/engines", headers=agent_headers)
     assert listing.status_code == 200
@@ -92,6 +103,7 @@ def test_admin_can_publish_and_agent_can_select_named_engine():
     assert selected["name"] == "新号"
     manifest = client.get("/api/agent/engines/new-account/manifest", headers=agent_headers)
     assert manifest.status_code == 200
+    assert manifest.json()["trusted_by_admin"] is True
     downloaded = client.get("/api/agent/engines/new-account/source", headers=agent_headers)
     assert downloaded.status_code == 200
     assert downloaded.content == source

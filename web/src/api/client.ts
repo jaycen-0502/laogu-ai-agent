@@ -88,7 +88,7 @@ export async function apiBlob(path: string, timeoutMs = 30000): Promise<Blob> {
   return response.blob();
 }
 
-export async function uploadEngine(source: Blob, version: string, engineId = "default", name = "", description = ""): Promise<{ ok: boolean; engine_id: string; name: string; version: string; sha256: string; size: number }> {
+export async function uploadEngine(source: Blob, version: string, engineId = "default", name = "", description = ""): Promise<{ ok: boolean; engine_id: string; name: string; version: string; sha256: string; size: number; trusted_by_admin: boolean; security_warnings: string[] }> {
   const headers = new Headers({ Accept: "application/json", "Content-Type": "text/x-python" });
   const token = authStore.get();
   if (token) headers.set("Authorization", `Bearer ${token}`);

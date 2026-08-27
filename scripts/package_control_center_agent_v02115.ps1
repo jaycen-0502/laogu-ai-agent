@@ -8,7 +8,10 @@ $checks = Join-Path $release "02-checksums"
 $docs = Join-Path $release "03-build-record"
 $zip = Join-Path $release "01-windows-portable\Laogu-Control-Center-Agent-0.21.15-windows-amd64.zip"
 $dist = Join-Path $root "dist\Laogu-Desktop"
-$gitCommit = (git -C $root rev-parse --short HEAD).Trim()
+$previousLocation = Get-Location
+Set-Location -LiteralPath $root
+$gitCommit = (git rev-parse --short HEAD).Trim()
+Set-Location -LiteralPath $previousLocation
 if ($LASTEXITCODE -ne 0 -or -not $gitCommit) {
     throw "Unable to read the current Git commit."
 }

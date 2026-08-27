@@ -9,7 +9,7 @@ import sys
 from typing import Any, Callable
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QThread, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QMouseEvent, QColor
+from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QPlainTextEdit,
     QProgressDialog,
     QPushButton,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
+    QSystemTrayIcon,
 )
 
 from .controller import AccountRow, DesktopController
@@ -115,6 +117,18 @@ class TaskConfigDialog(QDialog):
         self.engagement_limit_input = self._spin(active.get("max_engagement_threshold"), 10_000, 0, 100_000_000)
         form.addRow("互动/帖子门槛", self.engagement_limit_input)
 
+        self.ai_reply_ratio_input = QComboBox()
+        self.ai_reply_ratio_input.setMinimumHeight(32)
+        for label, ratio in (
+            ("关闭", 0.0),
+            ("低频 10%", 0.10),
+            ("标准 15%", 0.15),
+            ("高频 25%", 0.25),
+        ):
+            self.ai_reply_ratio_input.addItem(label, ratio)
+        self._set_ai_reply_ratio(active.get("ai_reply_ratio", 0.15))
+        form.addRow("AI 评论回复", self.ai_reply_ratio_input)
+
         hint = QLabel("自动化引擎将在后台独立运行筛选，不会进行未经许可的违规操作。")
         hint.setWordWrap(True)
         hint.setObjectName("subtitle")
@@ -160,7 +174,19 @@ class TaskConfigDialog(QDialog):
                 widget.setValue(default if active.get(key) is None else int(active.get(key)))
             except (TypeError, ValueError):
                 widget.setValue(default)
+        self._set_ai_reply_ratio(active.get("ai_reply_ratio", 0.15))
         self.set_engines(None, str(active.get("engine_id") or "default"))
+
+    def _set_ai_reply_ratio(self, value: Any) -> None:
+        try:
+            target = float(value)
+        except (TypeError, ValueError):
+            target = 0.15
+        for index in range(self.ai_reply_ratio_input.count()):
+            if abs(float(self.ai_reply_ratio_input.itemData(index)) - target) < 1e-9:
+                self.ai_reply_ratio_input.setCurrentIndex(index)
+                return
+        self.ai_reply_ratio_input.setCurrentIndex(2)
 
     @staticmethod
     def _spin(value: Any, default: int, minimum: int, maximum: int) -> QSpinBox:
@@ -185,6 +211,7 @@ class TaskConfigDialog(QDialog):
             "batch_interval_minutes": self.batch_interval_input.value(),
             "max_follower_threshold": self.follower_limit_input.value(),
             "max_engagement_threshold": self.engagement_limit_input.value(),
+            "ai_reply_ratio": float(self.ai_reply_ratio_input.currentData()),
             "sleep_on_rate_limit": True,
         }
 
@@ -267,7 +294,7 @@ class AccountCardWidget(QFrame):
         info.setSpacing(1)
         name = QLabel(self.profile_name)
         name.setObjectName("accountName")
-        
+
         handle_str = record.x_username if record.x_username and record.x_username != "-" else "未绑定 X 账号"
         login_labels = {
             "LOGGED_IN": "已登录",
@@ -342,6 +369,7 @@ class MiniLogWindow(QWidget):
     """Always-on-top status and log surface shown while the main window is minimized."""
 
     restore_requested = Signal()
+    hide_requested = Signal()
     stop_all_requested = Signal()
     exit_requested = Signal()
 
@@ -356,8 +384,11 @@ class MiniLogWindow(QWidget):
         )
         self.setWindowOpacity(1.0)
         self.setWindowIcon(application_icon())
-        self.setFixedSize(470, 420)
+        self.setMinimumSize(360, 260)
+        self.resize(470, 420)
         self._drag_offset: QPoint | None = None
+        self._resize_edges: set[str] = set()
+        self._resize_margin = 12
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
@@ -376,10 +407,18 @@ class MiniLogWindow(QWidget):
         header.addStretch(1)
         self.connection_label = QLabel("● 正在连接", objectName="miniStatus")
         header.addWidget(self.connection_label)
+        self.restore_window_button = self._make_window_button("restore", "打开控制中心")
+        self.restore_window_button.clicked.connect(self.restore_requested.emit)
+        header.addWidget(self.restore_window_button)
+        self.hide_button = self._make_window_button("minimize", "隐藏浮窗到后台，控制中心继续运行")
+        self.hide_button.clicked.connect(self.hide_requested.emit)
+        header.addWidget(self.hide_button)
         self.exit_button = QPushButton("×")
         self.exit_button.setObjectName("miniWindowCloseButton")
         self.exit_button.setToolTip("关闭控制中心并退出内置 Agent")
         self.exit_button.clicked.connect(self.exit_requested.emit)
+        self.exit_button.setIcon(line_icon("close", "#64748B", 16))
+        self.exit_button.setText("")
         header.addWidget(self.exit_button)
         layout.addLayout(header)
 
@@ -416,12 +455,16 @@ class MiniLogWindow(QWidget):
         self.stop_button.clicked.connect(self.stop_all_requested.emit)
         actions.addWidget(self.stop_button, 1)
 
-        self.restore_button = QPushButton("打开控制中心")
-        self.restore_button.setObjectName("miniPrimaryButton")
-        self.restore_button.setToolTip("恢复完整控制中心")
-        self.restore_button.clicked.connect(self.restore_requested.emit)
-        layout.addWidget(self.restore_button)
         layout.addLayout(actions)
+
+    @staticmethod
+    def _make_window_button(icon_name: str, tooltip: str) -> QPushButton:
+        button = QPushButton()
+        button.setObjectName("miniWindowActionButton")
+        button.setIcon(line_icon(icon_name, "#475569", 16))
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        return button
 
     def _set_paused(self, paused: bool) -> None:
         self.pause_button.setText("继续日志" if paused else "暂停日志")
@@ -464,6 +507,30 @@ class MiniLogWindow(QWidget):
         self.raise_()
         self.activateWindow()
 
+    def _edges_at(self, point: QPoint) -> set[str]:
+        edges: set[str] = set()
+        if point.x() <= self._resize_margin:
+            edges.add("left")
+        elif point.x() >= self.width() - self._resize_margin:
+            edges.add("right")
+        if point.y() <= self._resize_margin:
+            edges.add("top")
+        elif point.y() >= self.height() - self._resize_margin:
+            edges.add("bottom")
+        return edges
+
+    def _update_resize_cursor(self, edges: set[str]) -> None:
+        if edges in ({"left", "top"}, {"right", "bottom"}):
+            self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+        elif edges in ({"right", "top"}, {"left", "bottom"}):
+            self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        elif edges & {"left", "right"}:
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
+        elif edges & {"top", "bottom"}:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+        else:
+            self.unsetCursor()
+
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             self.restore_requested.emit()
@@ -473,21 +540,49 @@ class MiniLogWindow(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            edges = self._edges_at(event.position().toPoint())
+            if edges:
+                self._resize_edges = edges
+                self._drag_offset = None
+                event.accept()
+                return
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._resize_edges and event.buttons() & Qt.MouseButton.LeftButton:
+            point = event.globalPosition().toPoint()
+            geometry = self.geometry()
+            if "left" in self._resize_edges:
+                geometry.setLeft(min(point.x(), geometry.right() - self.minimumWidth() + 1))
+            if "right" in self._resize_edges:
+                geometry.setRight(max(point.x(), geometry.left() + self.minimumWidth() - 1))
+            if "top" in self._resize_edges:
+                geometry.setTop(min(point.y(), geometry.bottom() - self.minimumHeight() + 1))
+            if "bottom" in self._resize_edges:
+                geometry.setBottom(max(point.y(), geometry.top() + self.minimumHeight() - 1))
+            self.setGeometry(geometry)
+            event.accept()
+            return
         if self._drag_offset is not None and event.buttons() & Qt.MouseButton.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
             return
+        self._update_resize_cursor(self._edges_at(event.position().toPoint()))
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_offset = None
+        self._resize_edges.clear()
+        self._update_resize_cursor(set())
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        if not self._resize_edges and self._drag_offset is None:
+            self.unsetCursor()
+        super().leaveEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -535,8 +630,11 @@ class MainWindow(QMainWindow):
         self._log_tail_timer.timeout.connect(self._poll_log_file)
         self._mini_window = MiniLogWindow()
         self._mini_window.restore_requested.connect(self._restore_from_mini_window)
+        self._mini_window.hide_requested.connect(self._hide_mini_window)
         self._mini_window.stop_all_requested.connect(self._confirm_stop_all_from_mini)
         self._mini_window.exit_requested.connect(self.close)
+        self._tray_icon: QSystemTrayIcon | None = None
+        self._setup_tray_icon()
 
         self._build_ui()
         self._setup_stdout_redirect()
@@ -554,7 +652,7 @@ class MainWindow(QMainWindow):
 
         self._statistics_timer = QTimer(self)
         self._statistics_timer.timeout.connect(self._refresh_local_statistics)
-        self._statistics_timer.start(10000)
+        self._statistics_timer.start(2000)
 
         self.auto_refresh_timer = QTimer(self)
         self.auto_refresh_timer.setInterval(3000)
@@ -573,7 +671,7 @@ class MainWindow(QMainWindow):
 
     def _auto_refresh_profile_snapshots(self) -> None:
         try:
-            snapshot_path = os.path.join(os.getcwd(), "agent_data", "profile_snapshots.json")
+            snapshot_path = os.fspath(self.controller.settings.profile_snapshot_file)
             if not os.path.exists(snapshot_path):
                 return
             mtime = os.path.getmtime(snapshot_path)
@@ -1462,6 +1560,9 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"档案 {profile_id} 自动化任务已下发：{status}")
         self._log(f"档案 {profile_id} 自动化任务下发完成，状态: {status}")
+
+        # 💡【核心修复】任务完成后同时刷新账号资产与今日数据统计
+        self._load_local_statistics()
         self._load_registry()
 
     def _find_numeric_val(self, data: Any, keys: list[str]) -> Any:
@@ -1539,6 +1640,46 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def _setup_tray_icon(self) -> None:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        tray = QSystemTrayIcon(application_icon(), self)
+        tray.setToolTip("老谷控制中心（后台运行）")
+        menu = QMenu()
+        open_action = QAction("打开控制中心", menu)
+        open_action.triggered.connect(self._restore_from_mini_window)
+        menu.addAction(open_action)
+        mini_action = QAction("显示日志浮窗", menu)
+        mini_action.triggered.connect(self._show_mini_window)
+        menu.addAction(mini_action)
+        menu.addSeparator()
+        exit_action = QAction("退出", menu)
+        exit_action.triggered.connect(self.close)
+        menu.addAction(exit_action)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_activated)
+        tray.show()
+        self._tray_icon = tray
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._restore_from_mini_window()
+
+    def _hide_mini_window(self) -> None:
+        """隐藏监控浮窗，但不停止后台 Agent 或主窗口生命周期。"""
+        self._log_tail_timer.stop()
+        self._mini_window.hide()
+        if self._tray_icon is not None:
+            self._tray_icon.showMessage(
+                "老谷控制中心",
+                "控制中心已隐藏到后台，双击托盘图标可恢复。",
+                QSystemTrayIcon.MessageIcon.Information,
+                2500,
+            )
+
     def _confirm_stop_all_from_mini(self) -> None:
         answer = QMessageBox.question(
             self._mini_window,
@@ -1560,6 +1701,8 @@ class MainWindow(QMainWindow):
         self._log_tail_timer.stop()
         self._mini_window.hide()
         self._mini_window.deleteLater()
+        if self._tray_icon is not None:
+            self._tray_icon.hide()
         self._agent_status_timer.stop()
         self._statistics_timer.stop()
         if hasattr(self, "auto_refresh_timer"):

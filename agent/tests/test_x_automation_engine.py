@@ -5,10 +5,23 @@ from agent.x_automation_engine import AutomationConfig, RateLimitPause, XAutomat
 
 
 def test_automation_config_clamps_values_and_supports_keywords_alias():
-    config = AutomationConfig.from_mapping({"keywords": " AI ", "daily_task_limit": "0", "max_engagement_threshold": "999999999"})
+    config = AutomationConfig.from_mapping({
+        "keywords": " AI ",
+        "daily_task_limit": "0",
+        "max_engagement_threshold": "999999999",
+        "ai_reply_ratio": "0.25",
+    })
     assert config.keyword == "AI"
     assert config.daily_task_limit == 1
     assert config.max_engagement_threshold == 100_000_000
+    assert config.ai_reply_ratio == 0.25
+
+
+def test_automation_config_disables_ai_replies_and_clamps_invalid_ratios():
+    assert AutomationConfig.from_mapping({"ai_reply_ratio": 0.0}).ai_reply_ratio == 0.0
+    assert AutomationConfig.from_mapping({"ai_reply_ratio": 2}).ai_reply_ratio == 1.0
+    assert AutomationConfig.from_mapping({"ai_reply_ratio": -1}).ai_reply_ratio == 0.0
+    assert AutomationConfig.from_mapping({"ai_reply_ratio": True}).ai_reply_ratio == 0.15
 
 
 def test_read_only_snapshot_filters_keyword_and_thresholds():

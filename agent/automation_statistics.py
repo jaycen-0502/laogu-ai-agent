@@ -30,6 +30,15 @@ def _optional_count(value: Any) -> int | None:
     return max(0, parsed)
 
 
+def _result_count(result: dict[str, Any], *keys: str) -> int:
+    # Different engines expose different aliases; use the greatest supplied
+    # value so a present-but-stale zero does not mask a populated alias.
+    return max(
+        (_count(result.get(key)) for key in keys if key in result and result.get(key) is not None),
+        default=0,
+    )
+
+
 class AutomationStatisticsStore:
     """Persist engine result counters without changing the engine itself (Optimized for 20+ concurrency)."""
 
@@ -108,15 +117,65 @@ class AutomationStatisticsStore:
             "started_at": str(started_at),
             "finished_at": finished.isoformat(),
             "status": str(result.get("status") or "ERROR")[:20],
-            "processed_count": _count(result.get("processed_count")),
-            "likes": _count(result.get("likes")),
-            "follows": _count(result.get("follows")),
-            "comments": _count(result.get("comments")),
-            "scanned_posts": _count(result.get("views")),
+            "processed_count": _result_count(result, "processed_count", "processed"),
+            "likes": _result_count(result, "likes", "like_count", "likes_today"),
+            "follows": _result_count(result, "follows", "follow_count", "follows_today"),
+            "comments": _result_count(result, "comments", "comment_count", "comments_today"),
+            "scanned_posts": _result_count(result, "scanned_posts", "views"),
             "own_followers": _optional_count(result.get("own_followers")),
             "own_following": _optional_count(result.get("own_following")),
         }
+        return self._upsert_payload(payload)
+
+    def record_progress(
+        self,
+        *,
+        run_id: str,
+        profile_id: str,
+        x_account_id: str = "",
+        account_tag: str = "",
+        started_at: str,
+        progress: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = datetime.now().astimezone()
+        payload = {
+            "run_id": str(run_id),
+            "profile_id": str(profile_id),
+            "x_account_id": str(x_account_id or ""),
+            "account_tag": str(account_tag or "")[:120],
+            "metric_date": now.date().isoformat(),
+            "started_at": str(started_at),
+            "finished_at": now.isoformat(),
+            "status": "RUNNING",
+            "processed_count": _result_count(progress, "processed_count", "processed"),
+            "likes": _result_count(progress, "likes", "like_count", "likes_today"),
+            "follows": _result_count(progress, "follows", "follow_count", "follows_today"),
+            "comments": _result_count(progress, "comments", "comment_count", "comments_today"),
+            "scanned_posts": _result_count(progress, "scanned_posts", "views"),
+            "own_followers": _optional_count(progress.get("own_followers")),
+            "own_following": _optional_count(progress.get("own_following")),
+        }
+        return self._upsert_payload(payload)
+
+    def _upsert_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._lock, self._connect() as db:
+            existing = db.execute(
+                """
+                SELECT processed_count,likes,follows,comments,scanned_posts,
+                       own_followers,own_following
+                FROM automation_runs WHERE run_id=?
+                """,
+                (payload["run_id"],),
+            ).fetchone()
+            if existing is not None:
+                for index, key in enumerate(
+                    ("processed_count", "likes", "follows", "comments", "scanned_posts")
+                ):
+                    payload[key] = max(_count(existing[index]), _count(payload[key]))
+                if payload["own_followers"] is None:
+                    payload["own_followers"] = existing[5]
+                if payload["own_following"] is None:
+                    payload["own_following"] = existing[6]
             db.execute(
                 """
                 INSERT INTO automation_runs(
@@ -124,7 +183,23 @@ class AutomationStatisticsStore:
                     started_at,finished_at,status,processed_count,likes,follows,
                     comments,scanned_posts,own_followers,own_following,payload,uploaded
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)
-                ON CONFLICT(run_id) DO NOTHING
+                ON CONFLICT(run_id) DO UPDATE SET
+                    profile_id=excluded.profile_id,
+                    x_account_id=excluded.x_account_id,
+                    account_tag=excluded.account_tag,
+                    metric_date=excluded.metric_date,
+                    started_at=excluded.started_at,
+                    finished_at=excluded.finished_at,
+                    status=excluded.status,
+                    processed_count=MAX(automation_runs.processed_count, excluded.processed_count),
+                    likes=MAX(automation_runs.likes, excluded.likes),
+                    follows=MAX(automation_runs.follows, excluded.follows),
+                    comments=MAX(automation_runs.comments, excluded.comments),
+                    scanned_posts=MAX(automation_runs.scanned_posts, excluded.scanned_posts),
+                    own_followers=COALESCE(excluded.own_followers, automation_runs.own_followers),
+                    own_following=COALESCE(excluded.own_following, automation_runs.own_following),
+                    payload=excluded.payload,
+                    uploaded=0
                 """,
                 (
                     payload["run_id"], payload["profile_id"], payload["x_account_id"],

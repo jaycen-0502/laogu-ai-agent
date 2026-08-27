@@ -1,21 +1,175 @@
 """
-Playwright CDP engine with Ultimate Stability & Control Center Sync.
-Seamless parameter mapping, live login status reporting, and URL safe encoding.
+Playwright CDP engine with Multi-Persona AI Reply, VPS Remote Config Sync,
+Bookmark & Retweet Protection, Time-Window Scheduling, Multi-Keyword Rotation,
+and Control Center Compatibility.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import hashlib
 import json
 import logging
 import os
 import random
 import re
+import threading
 from typing import Any
 from urllib.parse import quote
+import urllib.request
+
+
+# ==================== VPS 远程热更新 & AI 评论生成模块 ====================
+
+# Optional protected HTTPS configuration endpoint. Keep blank when the Router
+# credentials are supplied directly through environment variables.
+REMOTE_CONFIG_URL = os.environ.get("ROUTER_CONFIG_URL", "").strip()
+
+
+def fetch_remote_router_config() -> dict:
+    """从 VPS 远程配置中心拉取最新 API Key、Base URL 与 Model 列表"""
+    if REMOTE_CONFIG_URL:
+        try:
+            if not REMOTE_CONFIG_URL.lower().startswith("https://"):
+                raise ValueError("ROUTER_CONFIG_URL must use HTTPS")
+            req = urllib.request.Request(
+                REMOTE_CONFIG_URL,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=4) as response:
+                if response.status == 200:
+                    raw_text = response.read().decode("utf-8")
+                    clean_json_str = raw_text.replace("\u201c", '"').replace("\u201d", '"')
+                    data = json.loads(clean_json_str)
+                    if isinstance(data, dict) and data.get("api_key") and data.get("base_url"):
+                        return data
+        except Exception as err:
+            print(f"  └─ ⚠️ [远程配置中心] 暂未获取到云端最新配置/网络超时，无缝回退本地配置: {err}")
+
+    # 🛡️ 本地保底配置
+    return {
+        "base_url": os.environ.get("ROUTER_BASE_URL", ""),
+        "api_key": os.environ.get("ROUTER_API_KEY", ""),
+        "models": ["gpt-5.6-terra", "gpt-5.6", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
+    }
+
+
+# 内存评论去重缓存与多线程锁（保证 asyncio.to_thread 并发安全）
+_RECENT_REPLIES_CACHE: list[str] = []
+_CACHE_LOCK = threading.Lock()
+
+
+def generate_ai_reply(
+    tweet_text: str,
+    custom_api_key: str = "",
+    custom_base_url: str = "",
+    model_candidates: list[str] | str | None = None
+) -> str:
+    """日本本地化 AI 深度分析与评论生成器（CoT思维链分析语境/地域方言/情绪后输出纯平语）"""
+    global _RECENT_REPLIES_CACHE
+
+    if not tweet_text or len(tweet_text.strip()) < 5:
+        return "めっちゃ助かる"
+
+    remote_cfg = fetch_remote_router_config()
+
+    API_KEY = custom_api_key or remote_cfg.get("api_key") or os.environ.get("ROUTER_API_KEY", "")
+    BASE_URL = custom_base_url or remote_cfg.get("base_url") or os.environ.get("ROUTER_BASE_URL", "")
+
+    if isinstance(model_candidates, str) and model_candidates.strip():
+        models = [model_candidates.strip()]
+    elif isinstance(model_candidates, list) and model_candidates:
+        models = [str(m).strip() for m in model_candidates if str(m).strip()]
+    else:
+        models = remote_cfg.get("models") or ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
+
+    # 💡 系统角色定义：日本本地 SNS 深度分析专家 (强行封锁敬语)[cite: 3]
+    system_prompt = (
+        "You are an expert in Japanese social media nuance and local dialects (関東弁, 関西弁, 博多弁, etc.). "
+        "Your role is to analyze a tweet's emotion, intent, and language style, and then reply in natural, casual Japanese (タメ口). "
+        "CRITICAL RULE: NEVER use polite forms or honorifics like 'です', 'ます', 'ございます', or 'でしょうか'."
+    )
+
+    # 💡 引入思维链 (Chain of Thought)：先分析，后生成[cite: 3]
+    prompt = (
+        "以下のツイートを深層分析し、最適で自然なタメ口リプライを作成してください。\n\n"
+        "【分析ステップ】\n"
+        "1. 言語・方言の特定：標準的なネット口語か、関西弁・博多弁などの地方の方言が含まれているか判断する。\n"
+        "2. 感情・ニュアンスの特定：共感、驚き、情報共有、愚痴、喜びなど、投稿者の感情を読み取る。\n"
+        "3. 返信の決定：敬語を100%排除し、相手の感情と方言のテンションに合わせた最も適したリアルなタメ口フレーズを考案する。\n\n"
+        "【厳格な出力ルール】\n"
+        "- 敬語（です・ます・ございます等）は完全禁止。\n"
+        "- 文末の句点（。）は絶対禁止。\n"
+        "- 20文字以内のスマホ手打ちな自然なフレーズ。\n"
+        "- 余計な解説は出力せず、最終的な【返信テキストのみ】を直接出力すること。\n\n"
+        f"対象ツイート：\"{tweet_text[:300]}\""
+    )
+
+    if API_KEY and not API_KEY.startswith("sk-你的"):
+        endpoint = BASE_URL.rstrip("/")
+        if not endpoint.endswith("/chat/completions"):
+            if endpoint.endswith("/v1"):
+                endpoint = f"{endpoint}/chat/completions"
+            else:
+                endpoint = f"{endpoint}/v1/chat/completions"
+
+        for model in models:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "max_tokens": 50,
+                    "temperature": 0.85,
+                }
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {API_KEY}",
+                        "User-Agent": "OpenAI-Python/1.12.0 (Codex-CLI-Engine)",
+                        "Accept": "application/json",
+                        "Connection": "keep-alive"
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status == 200:
+                        res_data = json.loads(response.read().decode("utf-8"))
+                        choices = res_data.get("choices", [])
+                        if choices:
+                            choice = choices[0]
+                            text = choice.get("content", "") if "content" in choice else choice.get("message", {}).get("content", "")
+                            clean_text = text.strip().replace('"', '').replace('\n', ' ')
+
+                            # 文本过滤：剔除句尾句号/感叹号及可能残留的敬语后缀[cite: 3]
+                            clean_text = re.sub(r'[。\.！!]+$', '', clean_text).strip()
+                            clean_text = re.sub(r'です$', '', clean_text)
+                            clean_text = re.sub(r'ます$', '', clean_text)
+
+                            # 线程安全的去重逻辑[cite: 3]
+                            with _CACHE_LOCK:
+                                if clean_text and clean_text not in _RECENT_REPLIES_CACHE:
+                                    _RECENT_REPLIES_CACHE.append(clean_text)
+                                    if len(_RECENT_REPLIES_CACHE) > 50:
+                                        _RECENT_REPLIES_CACHE.pop(0)
+
+                                    print(f"  └─ 🤖 [AI 分析后生成平语] 模型 [{model}]: \"{clean_text}\"")
+                                    return clean_text
+            except Exception as err:
+                print(f"  └─ ⚠️ [AI 评论] 模型 [{model}] 调用异常，尝试备用模型: {err}")
+
+    # 兜底纯平语短句库[cite: 3]
+    fallback_replies = [
+        "それな", "めっちゃ分かる", "まじで助かる", "ほんとこれすぎる",
+        "なるほどな", "ええなこれ", "神かよ", "ほんとそれ"
+    ]
+    return random.choice(fallback_replies)
 
 
 class AutomationEngineError(RuntimeError):
@@ -29,14 +183,12 @@ class RateLimitPause(AutomationEngineError):
 
 
 class CaptchaChallengeDetected(AutomationEngineError):
-    """检测到 Cloudflare / X 平台人机验证卡点，必须中断执行以保护账号安全"""
     def __init__(self, url: str):
         super().__init__(f"检测到人机验证页面 (account/access): {url}")
         self.url = url
 
 
 class NotLoggedInError(AutomationEngineError):
-    """账号尚未登录 X 平台，无法执行自动化搜索与互动"""
     def __init__(self, handle: str = ""):
         super().__init__(f"账号未登录 (目标 Handle: {handle or '未知'})，请先在浏览器中手动登录 X 账号！")
 
@@ -49,11 +201,14 @@ class AutomationConfig:
     max_follower_threshold: int = 1000
     max_statuses_threshold: int = 1000
     max_engagement_threshold: int = 10000
-    batch_interval_minutes: int = 15    # 完美匹配控制中心 TaskConfigDialog 下发的批次时间
+    batch_interval_minutes: int = 15
     target_url: str = "https://x.com/home"
     account_tag: str = "默认"
-    profile_visit_ratio: float = 0.45   # 45% 概率进入主页深读
-    home_browse_ratio: float = 0.20      # 20% 概率去推荐页“逛街”
+    profile_visit_ratio: float = 0.45
+    home_browse_ratio: float = 0.20
+    ai_reply_ratio: float = 0.15       # 15% 概率执行 AI 评论回复（可由控制中心传 0.0 关闭）
+    bookmark_ratio: float = 0.25       # 25% 概率执行保存书签
+    retweet_ratio: float = 0.10        # 10% 偶发转推概率
 
     @classmethod
     def from_mapping(cls, values: dict[str, Any] | None) -> "AutomationConfig":
@@ -70,6 +225,16 @@ class AutomationConfig:
                 value = default
             return max(minimum, min(maximum, value))
 
+        def ratio(name: str, default: float) -> float:
+            value = values.get(name, default)
+            if isinstance(value, bool):
+                return default
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                parsed = default
+            return max(0.0, min(1.0, parsed))
+
         kw = str(values.get("keyword") or values.get("keywords") or values.get("search_keyword") or "").strip()[:500]
         tag = str(values.get("account_tag") or values.get("profile_name") or values.get("profile_id") or "默认").strip()
 
@@ -83,13 +248,16 @@ class AutomationConfig:
             batch_interval_minutes=integer("batch_interval_minutes", 15, 1, 1440),
             target_url=str(values.get("target_url") or "https://x.com/home").strip()[:500],
             account_tag=tag,
-            profile_visit_ratio=float(values.get("profile_visit_ratio", 0.45)),
-            home_browse_ratio=float(values.get("home_browse_ratio", 0.20)),
+            profile_visit_ratio=ratio("profile_visit_ratio", 0.45),
+            home_browse_ratio=ratio("home_browse_ratio", 0.20),
+            ai_reply_ratio=ratio("ai_reply_ratio", 0.15),
+            bookmark_ratio=ratio("bookmark_ratio", 0.25),
+            retweet_ratio=ratio("retweet_ratio", 0.10),
         )
 
 
 class ProfilePersonality:
-    """账号专属性格基因库，高度模拟人类行为频率"""
+    """出海商务 & 美女 IP 多维专属性格基因库"""
 
     def __init__(self, cdp_url: str):
         port_match = re.search(r":(\d+)", cdp_url)
@@ -98,25 +266,54 @@ class ProfilePersonality:
         hash_val = int(hashlib.md5(cdp_url.encode("utf-8")).hexdigest(), 16)
         rng = random.Random(hash_val)
 
-        self.mean_cool_down = rng.uniform(22.0, 40.0)
-        self.std_dev_cool_down = rng.uniform(5.0, 10.0)
-        self.mouse_steps = rng.randint(15, 30)
-        self.press_duration = (rng.uniform(0.10, 0.22), rng.uniform(0.20, 0.35))
-        self.nap_interval_range = (rng.randint(2, 3), rng.randint(4, 5))
-        self.nap_duration_mean = rng.uniform(200.0, 380.0)
+        personality_index = hash_val % 8
 
-        if self.mean_cool_down < 28.0:
-            self.p_type = "标准自然型"
+        if personality_index == 0:
+            self.p_type = "外贸商务稳重型"
+            self.mean_cool_down = rng.uniform(30.0, 48.0)
+            self.mouse_steps = rng.randint(20, 35)
+            self.press_duration = (rng.uniform(0.12, 0.25), rng.uniform(0.25, 0.40))
+        elif personality_index == 1:
+            self.p_type = "美女IP-精致时尚型"
+            self.mean_cool_down = rng.uniform(16.0, 26.0)
+            self.mouse_steps = rng.randint(10, 20)
+            self.press_duration = (rng.uniform(0.06, 0.15), rng.uniform(0.15, 0.28))
+        elif personality_index == 2:
+            self.p_type = "美女IP-高情绪感互动型"
+            self.mean_cool_down = rng.uniform(18.0, 30.0)
+            self.mouse_steps = rng.randint(12, 22)
+            self.press_duration = (rng.uniform(0.08, 0.18), rng.uniform(0.18, 0.30))
+        elif personality_index == 3:
+            self.p_type = "美女IP-随性日常闲逛型"
+            self.mean_cool_down = rng.uniform(20.0, 35.0)
+            self.mouse_steps = rng.randint(14, 26)
+            self.press_duration = (rng.uniform(0.09, 0.19), rng.uniform(0.19, 0.32))
+        elif personality_index == 4:
+            self.p_type = "跨时区高效拓客型"
+            self.mean_cool_down = rng.uniform(20.0, 32.0)
+            self.mouse_steps = rng.randint(15, 25)
+            self.press_duration = (rng.uniform(0.08, 0.18), rng.uniform(0.18, 0.30))
+        elif personality_index == 5:
+            self.p_type = "谨慎风控考察型"
+            self.mean_cool_down = rng.uniform(40.0, 60.0)
+            self.mouse_steps = rng.randint(30, 45)
+            self.press_duration = (rng.uniform(0.15, 0.30), rng.uniform(0.30, 0.50))
+        elif personality_index == 6:
+            self.p_type = "美女IP-夜猫冲浪型"
+            self.mean_cool_down = rng.uniform(15.0, 28.0)
+            self.mouse_steps = rng.randint(10, 18)
+            self.press_duration = (rng.uniform(0.07, 0.16), rng.uniform(0.16, 0.29))
         else:
-            self.p_type = "沉稳慢读型"
+            self.p_type = "深耕社群 KOL 拜访型"
+            self.mean_cool_down = rng.uniform(25.0, 42.0)
+            self.mouse_steps = rng.randint(18, 32)
+            self.press_duration = (rng.uniform(0.10, 0.22), rng.uniform(0.22, 0.35))
+
+        self.std_dev_cool_down = rng.uniform(4.0, 8.0)
 
     def get_cooldown(self) -> float:
         val = random.gauss(self.mean_cool_down, self.std_dev_cool_down)
-        return max(15.0, min(80.0, val))
-
-    def get_nap_duration(self) -> float:
-        val = random.gauss(self.nap_duration_mean, 50.0)
-        return max(120.0, min(500.0, val))
+        return max(15.0, min(90.0, val))
 
 
 class AccountFilterGuard:
@@ -218,7 +415,27 @@ async def safe_human_click(page: Any, element: Any, personality: ProfilePersonal
     return False
 
 
+async def human_type_text(page: Any, element: Any, text: str) -> None:
+    """模拟真人按键打字，带有随机微延时与节奏变异[cite: 3]"""
+    try:
+        await element.click()
+
+        # 🛡️ 极致细节：打字前追加 0.6 ~ 1.2 秒“光标闪烁/键盘弹起”微缓冲[cite: 3]
+        await asyncio.sleep(random.uniform(0.6, 1.2))
+
+        for i, char in enumerate(text):
+            await page.keyboard.type(char)
+            await asyncio.sleep(random.uniform(0.08, 0.22))
+            # 每打 5-7 个字符插入微小的思考停顿，拟真度更高
+            if i > 0 and i % random.randint(5, 7) == 0:
+                await asyncio.sleep(random.uniform(0.3, 0.6))
+        await asyncio.sleep(random.uniform(0.8, 1.5))
+    except Exception as err:
+        logging.getLogger("laogu-ai-agent.x-automation").debug("human_type_text 打字非阻断提示: %s", err)
+
+
 async def human_discrete_scroll(page: Any, distance: int | None = None) -> None:
+    """模拟真人离散滚轮下翻"""
     try:
         total_dist = distance or random.randint(350, 700)
         scrolled = 0
@@ -230,8 +447,8 @@ async def human_discrete_scroll(page: Any, distance: int | None = None) -> None:
             await asyncio.sleep(random.uniform(0.06, 0.15))
 
         await asyncio.sleep(random.uniform(1.5, 3.5))
-    except Exception:
-        pass
+    except Exception as err:
+        logging.getLogger("laogu-ai-agent.x-automation").debug("human_discrete_scroll 滚动缓冲: %s", err)
 
 
 class XAutomationEngine:
@@ -247,33 +464,51 @@ class XAutomationEngine:
         target_cdp = cdp_url or kwargs.get("cdp_url") or ""
         if not str(target_cdp).strip():
             raise ValueError("cdp_url is required")
-        self.cdp_url = str(target_cdp).strip()
-        self.logger = logger or logging.getLogger("laogu-ai-agent.x-automation")
-        self.tag = "系统"
-        self.config_path = config_path
+
+        self.cdp_url: str = str(target_cdp).strip()
+        self.logger: logging.Logger = logger or logging.getLogger("laogu-ai-agent.x-automation")
+        self.tag: str = "系统"
+        self.config_path: str = config_path
         self.user_cache: dict[str, dict[str, Any]] = {}
-        self.personality = ProfilePersonality(self.cdp_url)
+        self.personality: ProfilePersonality = ProfilePersonality(self.cdp_url)
+        self.progress_callback = kwargs.get("progress_callback")
+        self._comments_total = 0
+
+        # 🛡️ 极致细节：AI API 连续失败计数与熔断标志位[cite: 3]
+        self._consecutive_ai_failures = 0
+        self._ai_circuit_broken = False
+
+    def _report_progress(self, **values: Any) -> None:
+        callback = getattr(self, "progress_callback", None)
+        if not callable(callback):
+            return
+        try:
+            progress = {
+                key: max(0, int(value or 0))
+                for key, value in values.items()
+                if key in {"processed_count", "likes", "follows", "comments", "scanned_posts"}
+            }
+            callback(progress)
+        except Exception as exc:
+            self.logger.debug("Automation progress callback failed: %s", exc)
 
     def _print(self, msg: str) -> None:
-        """带精确时间戳的日志输出"""
+        """带精确时间戳的格式化日志输出"""
         now_str = datetime.now().strftime("%H:%M:%S")
         print(f"[{now_str}] [账号: {self.tag}] {msg}")
 
     async def _check_login_status(self, page: Any) -> bool:
-        """检查当前浏览器环境是否已经成功登录 X 账号"""
         try:
             curr_url = page.url.lower()
             if "/i/flow/login" in curr_url or "/login" in curr_url:
                 return False
 
-            # 查找登录后才会出现的侧边栏个人头像或发推按钮
             post_btn = await page.query_selector('a[data-testid="SideNav_NewTweet_Button"]')
             profile_link = await page.query_selector('a[data-testid="AppTabBar_Profile_Link"]')
 
             if post_btn or profile_link:
                 return True
 
-            # 如果在 explore 页面并且有登录/注册按钮，说明未登录
             login_btn = await page.query_selector('a[data-testid="loginButton"]')
             if login_btn:
                 return False
@@ -321,7 +556,13 @@ class XAutomationEngine:
             pass
 
     async def _handle_response_interception(self, response: Any) -> None:
+        """带 Content-Type 校验的轻量化 JSON 抓包截获器"""
         try:
+            headers = getattr(response, "headers", {}) or {}
+            content_type = headers.get("content-type", "").lower()
+            if "application/json" not in content_type:
+                return
+
             url = response.url
             if "UserBy" in url or "HoverCard" in url or "UserDetail" in url or "Viewer" in url or "ProfileSpotlight" in url:
                 if response.status == 200:
@@ -340,25 +581,6 @@ class XAutomationEngine:
                             "description": legacy.get("description", ""),
                             "name": legacy.get("name", "")
                         }
-
-                        if self.tag and (screen_name.lower() in self.tag.lower() or str(self.tag) in screen_name):
-                            try:
-                                snapshot_path = os.path.join(os.getcwd(), "agent_data", "profile_snapshots.json")
-                                if os.path.exists(snapshot_path):
-                                    with open(snapshot_path, "r", encoding="utf-8") as f:
-                                        snapshots = json.load(f) or {}
-
-                                    p_data = snapshots.get(str(self.tag), {})
-                                    p_data["followers_count"] = followers_count
-                                    if isinstance(legacy.get("friends_count"), int):
-                                        p_data["following_count"] = legacy.get("friends_count")
-                                    p_data["x_username"] = screen_name
-                                    snapshots[str(self.tag)] = p_data
-
-                                    with open(snapshot_path, "w", encoding="utf-8") as f:
-                                        json.dump(snapshots, f, ensure_ascii=False, indent=2)
-                            except Exception:
-                                pass
         except Exception:
             pass
 
@@ -370,15 +592,12 @@ class XAutomationEngine:
         target_search_url = f"https://x.com/search?q={kw_encoded}&f=live"
 
         try:
-            # 1. 发起跳转并等待页面网络基本结算
             await page.goto(target_search_url, wait_until="load", timeout=25000)
 
-            # 2. 🛡️ 【抗抢跑核心】：物理等待 X 平台真正的搜索框或推文容器在屏幕上渲染绘制出来！
             self._print("⏳ 正在等待 X 平台网页 DOM 渲染与画面绘制...")
             ready = False
             for selector in ['input[data-testid="SearchBox_Search_Input"]', 'article', 'div[data-testid="primaryColumn"]']:
                 try:
-                    # 强行要求 state="visible"，确保元素不仅存在，而且在视觉上完全看得见
                     await page.wait_for_selector(selector, state="visible", timeout=8000)
                     ready = True
                     break
@@ -389,7 +608,6 @@ class XAutomationEngine:
                 self._print("⚠️ 网页渲染较慢，追加 3 秒强制拟人缓冲...")
                 await asyncio.sleep(3.0)
 
-            # 3. 拟人随机停顿（模拟人类眼睛看到页面后的反应时间）
             reaction_time = random.uniform(2.5, 4.5)
             self._print(f"✅ 网页完全加载渲染完毕，真人视觉反应延迟: {reaction_time:.2f} 秒")
             await asyncio.sleep(reaction_time)
@@ -407,7 +625,106 @@ class XAutomationEngine:
         except Exception as e:
             self._print(f"⚠️ 页面跳转/渲染等待过程捕获到异常: {e}")
 
-    async def _browse_home_feed(self, page: Any) -> None:
+    # ==================== 扩展拟人交互：书签、转推、ChatGPT AI 回复 ====================
+
+    async def _add_bookmark(self, page: Any, article: Any) -> bool:
+        """为目标推文加入【书签（Bookmark）】"""
+        try:
+            bookmark_btn = await article.query_selector('button[data-testid="bookmark"]')
+            if bookmark_btn and await safe_human_click(page, bookmark_btn, self.personality):
+                self._print("  └─ 🔖 [高权重社交] 成功将目标推文加入书签（Bookmark）！")
+                await asyncio.sleep(random.uniform(1.5, 3.0))
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def _do_retweet(self, page: Any, article: Any) -> bool:
+        """偶发【转推（Retweet）】目标推文"""
+        try:
+            retweet_btn = await article.query_selector('button[data-testid="retweet"]')
+            if retweet_btn and await safe_human_click(page, retweet_btn, self.personality):
+                await asyncio.sleep(random.uniform(1.0, 2.0))
+                confirm_retweet = await page.query_selector('div[data-testid="retweetConfirm"]')
+                if confirm_retweet and await safe_human_click(page, confirm_retweet, self.personality):
+                    self._print("  └─ 🔁 [偶发转推] 成功转推（Retweet）了该推文！")
+                    await asyncio.sleep(random.uniform(2.0, 4.0))
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def _do_ai_comment_reply(self, page: Any, article: Any) -> bool:
+        """调用 ChatGPT 模型生成回复（熔断保护 + 异步线程解耦）[cite: 3]"""
+        # 🛡️ 熔断检查：连续失败达到 3 次时，跳过本批次 AI 评论，仅保留点赞和关注[cite: 3]
+        if self._ai_circuit_broken:
+            self._print("  └─ ⚡ [熔断保护] AI 接口处于冷却保护状态，跳过本条评论生成")
+            return False
+
+        try:
+            tweet_text = await article.inner_text()
+            reply_text = await asyncio.to_thread(generate_ai_reply, tweet_text)
+
+            # 成功重置连续失败计数
+            self._consecutive_ai_failures = 0
+
+            reply_btn = await article.query_selector('button[data-testid="reply"]')
+            if reply_btn and await safe_human_click(page, reply_btn, self.personality):
+                await asyncio.sleep(random.uniform(1.8, 3.0))
+
+                input_box = await page.query_selector('div[data-testid="tweetTextarea_0"]')
+                if input_box and await is_element_fully_loaded(input_box):
+                    await human_type_text(page, input_box, reply_text)
+
+                    send_btn = await page.query_selector('button[data-testid="tweetButton"]')
+                    if send_btn and await safe_human_click(page, send_btn, self.personality):
+                        self._print("  └─ 💬 [ChatGPT 拟人回复] 评论发送成功！")
+                        await asyncio.sleep(random.uniform(3.0, 5.0))
+                        return True
+        except Exception as e:
+            self._consecutive_ai_failures += 1
+            self._print(f"  └─ ⚠️ AI 评论回复未完成 ({self._consecutive_ai_failures}/3): {e}")
+
+            if self._consecutive_ai_failures >= 3:
+                self._ai_circuit_broken = True
+                self._print("  └─ 🚨 [熔断触发] AI 接口连续 3 次异常，已暂停本批次评论，防止重复兜底[cite: 3]！")
+        return False
+
+    async def _like_and_engage_post(self, page: Any, article: Any, config: AutomationConfig) -> int:
+        """多维度拟人社交行为组合执行器（带热度感知动态评论过滤）[cite: 3]"""
+        likes_added = 0
+        first_like_btn = await article.query_selector('button[data-testid="like"]')
+        if first_like_btn and await safe_human_click(page, first_like_btn, self.personality):
+            self._print("  └─ 👍 成功点赞了目标推文")
+            likes_added += 1
+            await asyncio.sleep(random.uniform(1.5, 3.0))
+
+        if random.random() < config.bookmark_ratio:
+            await self._add_bookmark(page, article)
+
+        if random.random() < config.retweet_ratio:
+            await self._do_retweet(page, article)
+
+        # 🛡️ 极致细节：热度感知评论——解析互动量，避免在 0 赞 0 转推的死寂推文下留言[cite: 3]
+        if config.ai_reply_ratio > 0.0 and random.random() < config.ai_reply_ratio:
+            try:
+                article_inner = await article.inner_text()
+                # 匹配数字（支持 K/M/万 单位）判定是否有基础互动
+                has_engagement = bool(re.search(r'[\d\.]+\s*[KMkm万]?', article_inner))
+                if has_engagement or random.random() < 0.30:  # 70% 要求有互动，30% 允许冷门推文
+                    if await self._do_ai_comment_reply(page, article):
+                        self._comments_total += 1
+                else:
+                    self._print("  └─ ⏩ [热度感知] 推文属于零互动冷门帖子，跳过评论仅点赞/关注[cite: 3]")
+            except Exception:
+                pass
+
+        return likes_added
+
+    # =========================================================================
+
+    async def _browse_home_feed(self, page: Any) -> int:
+        likes_added = 0
         self._print("🎲 [拟人消痕] 随机切回 For You 首页逛街刷帖...")
         try:
             await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=12000)
@@ -425,10 +742,12 @@ class XAutomationEngine:
                         if like_btn and await is_element_fully_loaded(like_btn):
                             if await safe_human_click(page, like_btn, self.personality):
                                 self._print("  └─ 随机点赞了推荐页一条推文（模拟真人闲逛）")
+                                likes_added += 1
                                 await asyncio.sleep(random.uniform(2.0, 4.0))
 
         except Exception as e:
             self._print(f"⚠️ 逛推荐页时产生非致命异常: {e}")
+        return likes_added
 
     async def _get_followers_robust(self, page: Any, handle: str, container: Any = None) -> tuple[int, int]:
         handle_lower = handle.lower()
@@ -459,35 +778,6 @@ class XAutomationEngine:
 
         return -1, -1
 
-    async def _like_multiple_posts_for_account(self, page: Any, current_article: Any, target_count: int) -> int:
-        liked_count = 0
-        try:
-            first_like_btn = await current_article.query_selector('button[data-testid="like"]')
-            if first_like_btn and await safe_human_click(page, first_like_btn, self.personality):
-                liked_count += 1
-                self._print(f"  └─ 👍 组合拳：成功点赞第 {liked_count} 条推文")
-                await asyncio.sleep(random.uniform(2.5, 4.5))
-
-            if liked_count < target_count:
-                all_articles = await page.query_selector_all("article")
-                for art in all_articles:
-                    if liked_count >= target_count:
-                        break
-                    if not await is_element_fully_loaded(art):
-                        continue
-
-                    like_btn = await art.query_selector('button[data-testid="like"]')
-                    if like_btn and await is_element_fully_loaded(like_btn):
-                        btn_label = await like_btn.get_attribute("aria-label") or ""
-                        if "Liked" not in btn_label and "已赞" not in btn_label and "いいね済" not in btn_label:
-                            if await safe_human_click(page, like_btn, self.personality):
-                                liked_count += 1
-                                self._print(f"  └─ 👍 组合拳：深度下翻点赞第 {liked_count} 条推文")
-                                await asyncio.sleep(random.uniform(3.0, 5.0))
-        except Exception:
-            pass
-        return liked_count
-
     async def _interact_on_profile_page(self, page: Any, handle: str, keyword: str) -> tuple[bool, int]:
         self._print(f"  └─ 🚶 [深度拟人] 决定点击主页链接，进入博主 @{handle} 的主页深读...")
         followed = False
@@ -504,10 +794,7 @@ class XAutomationEngine:
                 await asyncio.sleep(random.uniform(2.5, 4.0))
 
             articles = await page.query_selector_all("article")
-            target_likes = random.randint(1, 2)
-            for art in articles[:4]:
-                if likes >= target_likes:
-                    break
+            for art in articles[:3]:
                 like_btn = await art.query_selector('button[data-testid="like"]')
                 if like_btn and await is_element_fully_loaded(like_btn):
                     btn_label = await like_btn.get_attribute("aria-label") or ""
@@ -536,7 +823,15 @@ class XAutomationEngine:
         custom_config.update(kwargs)
         return await self.run(custom_config=custom_config)
 
-    async def _run_single_batch(self, page: Any, config: AutomationConfig, current_total_exec: int) -> tuple[int, int, int, int]:
+    async def _run_single_batch(
+        self,
+        page: Any,
+        config: AutomationConfig,
+        current_total_exec: int,
+        current_total_likes: int = 0,
+        current_total_follows: int = 0,
+        current_total_views: int = 0,
+    ) -> tuple[int, int, int, int]:
         batch_limit = random.randint(3, 5)
         exec_count = 0
         likes_count = 0
@@ -544,6 +839,10 @@ class XAutomationEngine:
         views_count = 0
         consecutive_follows = 0
         empty_rounds = 0
+
+        # 每个新批次重置 AI 熔断标记，重新给 API 尝试机会
+        self._ai_circuit_broken = False
+        self._consecutive_ai_failures = 0
 
         processed_handles = set()
 
@@ -555,7 +854,14 @@ class XAutomationEngine:
                 break
 
             if exec_count > 0 and random.random() < config.home_browse_ratio:
-                await self._browse_home_feed(page)
+                likes_count += await self._browse_home_feed(page)
+                self._report_progress(
+                    processed_count=current_total_exec + exec_count,
+                    likes=current_total_likes + likes_count,
+                    follows=current_total_follows + follows_count,
+                    comments=self._comments_total,
+                    scanned_posts=current_total_views + views_count,
+                )
                 await self.navigate_to_keyword_search(page, config.keyword)
                 await asyncio.sleep(3.0)
                 continue
@@ -574,6 +880,13 @@ class XAutomationEngine:
                 continue
 
             views_count += len(articles)
+            self._report_progress(
+                processed_count=current_total_exec + exec_count,
+                likes=current_total_likes + likes_count,
+                follows=current_total_follows + follows_count,
+                comments=self._comments_total,
+                scanned_posts=current_total_views + views_count,
+            )
             target_found_in_round = False
 
             for article in articles:
@@ -664,14 +977,20 @@ class XAutomationEngine:
 
                                         await self._dismiss_hover_card(page)
 
-                                        target_likes_num = random.randint(1, 3)
-                                        self._print(f"🔥 [高回关率组合拳] 关注 @{handle} 成功，触发连续点赞 {target_likes_num} 条推文...")
-
-                                        actual_likes = await self._like_multiple_posts_for_account(page, article, target_likes_num)
-                                        likes_count += actual_likes
+                                        # 触发包含点赞、书签、转推、ChatGPT 评论的多维拟人社交组合拳
+                                        engaged_likes = await self._like_and_engage_post(page, article, config)
+                                        likes_count += engaged_likes
                                     else:
                                         self._print(f"⚠️ 关注按钮未就绪，跳过 @{handle}")
                                         await self._dismiss_hover_card(page)
+
+                                self._report_progress(
+                                    processed_count=current_total_exec + exec_count,
+                                    likes=current_total_likes + likes_count,
+                                    follows=current_total_follows + follows_count,
+                                    comments=self._comments_total,
+                                    scanned_posts=current_total_views + views_count,
+                                )
 
                                 cool_down = self.personality.get_cooldown()
                                 self._print(f"⏱️ [{self.personality.p_type}] 降频休息 {cool_down:.1f} 秒...")
@@ -688,7 +1007,7 @@ class XAutomationEngine:
                 empty_rounds += 1
                 await human_discrete_scroll(page, distance=500)
                 if empty_rounds >= 6:
-                    self._print("⚠️ 连续 6 轮未发现新推文，刷新页面...")
+                    self._print("⚠️ 连续 6 輪未发现新推文，刷新页面...")
                     try:
                         await page.reload(wait_until="domcontentloaded", timeout=12000)
                         await asyncio.sleep(4.0)
@@ -701,6 +1020,7 @@ class XAutomationEngine:
     async def run(self, custom_config: dict[str, Any] | None = None) -> dict[str, Any]:
         config = AutomationConfig.from_mapping(custom_config)
         self.tag = config.account_tag
+        self._comments_total = 0
 
         if config.daily_tasks_used >= config.daily_task_limit:
             return {
@@ -709,16 +1029,26 @@ class XAutomationEngine:
                 "reason": "DAILY_TASK_LIMIT_REACHED",
                 "daily_tasks_used": config.daily_tasks_used,
                 "daily_task_limit": config.daily_task_limit,
+                "likes": 0, "like_count": 0, "likes_today": 0,
+                "follows": 0, "follow_count": 0, "follows_today": 0,
+                "comments": 0, "scanned_posts": 0,
             }
 
         jitter_delay = random.uniform(2.0, 4.0)
         self._print(f"⏳ 注入拟人启动延迟: {jitter_delay:.2f} 秒...")
         await asyncio.sleep(jitter_delay)
 
+        # 💡 1. 拆分并解析多关键词（支持中英文逗号分隔）
+        raw_kw = config.keyword
+        keywords_list = [k.strip() for k in re.split(r'[,，]', raw_kw) if k.strip()]
+        if not keywords_list:
+            keywords_list = ["#婚活"]
+
         self._log("started", keyword=config.keyword)
         self._print("==========================================")
         self._print(f"老谷控制中心 2026 协同引擎启动! [CDP端口: {self.personality.port}]")
-        self._print(f"目标关键词: '{config.keyword}' | 单日上限: {config.daily_task_limit} | 批次间隔: {config.batch_interval_minutes} 分钟")
+        self._print(f"目标关键词列表 ({len(keywords_list)} 个): {keywords_list} | 单日上限: {config.daily_task_limit} 人")
+        self._print("⏰ [分时段拓客模式] 仅在东京时间 08-12点 | 14-16点 | 18-22点 随机执行")
         self._print("==========================================\n")
 
         try:
@@ -735,6 +1065,21 @@ class XAutomationEngine:
         page = None
         resp_listener = None
 
+        # 💡 东京时间 (UTC+9) 3 段式允许窗口校验辅助函数
+        def is_in_allowed_time_window() -> tuple[bool, str]:
+            tokyo_tz = timezone(timedelta(hours=9))
+            now_tokyo = datetime.now(tokyo_tz)
+            hour = now_tokyo.hour
+
+            if 8 <= hour < 12:
+                return True, "上午窗口 (08:00 - 12:00)"
+            elif 14 <= hour < 16:
+                return True, "下午窗口 (14:00 - 16:00)"
+            elif 18 <= hour < 22:
+                return True, "晚间窗口 (18:00 - 22:00)"
+            else:
+                return False, f"非执行时段 (当前东京时间: {now_tokyo.strftime('%H:%M')})"
+
         try:
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.connect_over_cdp(self.cdp_url)
@@ -743,39 +1088,58 @@ class XAutomationEngine:
                 valid_pages = [p for p in context.pages if not p.url.startswith("devtools")]
                 page = valid_pages[0] if valid_pages else await context.new_page()
 
-                # 前置登录状态预检：检测目标浏览器上下文是否处于已登录状态
                 if not await self._check_login_status(page):
                     self._print(f"🛑 拦截：账号 [{self.tag}] 未登录！请先在控制中心点击【▶ 运行】打开浏览器窗口并登录账号！")
                     return {
                         "status": "NOT_LOGGED_IN",
                         "error": f"账号 {self.tag} 未登录，请先手动登录 X 账号！",
-                        "processed_count": 0
+                        "processed_count": 0, "likes": 0, "follows": 0, "comments": 0, "scanned_posts": 0,
                     }
 
                 page.on("response", self._response_callback)
                 resp_listener = lambda res: asyncio.create_task(self._handle_response_interception(res))
                 page.on("response", resp_listener)
 
-                if config.keyword:
-                    await self.navigate_to_keyword_search(page, config.keyword)
-                else:
-                    try:
-                        await page.goto(config.target_url, wait_until="domcontentloaded", timeout=12000)
-                    except Exception:
-                        pass
-
                 await self._assert_no_challenge(page)
                 page_ready = await self._wait_for_page_ready(page, timeout_sec=10.0)
                 if not page_ready:
                     self._print("🛑 网页加载卡顿/未正常渲染，准备平滑重试...")
-                    return {"status": "PAGE_NOT_READY", "processed_count": 0}
+                    return {
+                        "status": "PAGE_NOT_READY",
+                        "processed_count": 0, "likes": 0, "follows": 0, "comments": 0, "scanned_posts": 0,
+                    }
 
-                # ------------------- 批次倒计时主循环 -------------------
                 batch_index = 1
                 while total_exec < config.daily_task_limit:
-                    self._print(f"\n🚀 开始执行第 {batch_index} 批次任务 (当前已累计完成: {total_exec}/{config.daily_task_limit})...")
-                    
-                    e_cnt, l_cnt, f_cnt, v_cnt = await self._run_single_batch(page, config, total_exec)
+                    # 💡 2. 轮询选择当前批次对应的关键词
+                    current_keyword = keywords_list[(batch_index - 1) % len(keywords_list)]
+
+                    # 检查时间窗口
+                    is_allowed, win_desc = is_in_allowed_time_window()
+                    if not is_allowed:
+                        self._print(f"🌙 [{win_desc}] 触发非工作时段休息，休眠 10 分钟后重新检测...")
+                        await asyncio.sleep(600)  # 每 10 分钟检测一次时间
+                        continue
+
+                    self._print(f"\n🚀 当前处于 [{win_desc}] - 开始第 {batch_index} 批次任务 | 当前轮询关键词: '{current_keyword}' (进度: {total_exec}/{config.daily_task_limit})...")
+
+                    # 💡 3. 导航切入当前批次的关键词搜索轨道
+                    await self.navigate_to_keyword_search(page, current_keyword)
+
+                    # 构造包含当前关键词的临时配置对象传入单批次执行器
+                    batch_config = AutomationConfig.from_mapping({
+                        **(custom_config or {}),
+                        "keyword": current_keyword
+                    })
+
+                    e_cnt, l_cnt, f_cnt, v_cnt = await self._run_single_batch(
+                        page,
+                        batch_config,
+                        total_exec,
+                        total_likes,
+                        total_follows,
+                        total_views,
+                    )
                     total_exec += e_cnt
                     total_likes += l_cnt
                     total_follows += f_cnt
@@ -791,12 +1155,14 @@ class XAutomationEngine:
                     except Exception:
                         pass
 
-                    interval_min = config.batch_interval_minutes
-                    self._print(f"⏳ 批次结束：开启【{interval_min} 分钟】下一调度周期倒计时...")
-                    
-                    for remain_m in range(interval_min, 0, -1):
+                    # 15~25 分钟随机批次间隔，打破定时间隔特征
+                    random_interval_min = config.batch_interval_minutes + random.randint(-2, 5)
+                    random_interval_min = max(5, random_interval_min)
+
+                    self._print(f"⏳ 批次结束：开启【{random_interval_min} 分钟】拟人随机休息倒计时...")
+
+                    for remain_m in range(random_interval_min, 0, -1):
                         self._print(f"⏱️ [批次倒计时] 距离第 {batch_index + 1} 批次启动还剩 {remain_m} 分钟...")
-                        
                         for _ in range(6):
                             await asyncio.sleep(10)
                             if random.random() < 0.20:
@@ -806,41 +1172,43 @@ class XAutomationEngine:
                                     pass
 
                     batch_index += 1
-                    if config.keyword:
-                        await self.navigate_to_keyword_search(page, config.keyword)
 
                 return {
                     "status": "SUCCESS",
                     "processed_count": total_exec,
-                    "likes": total_likes,
-                    "follows": total_follows,
-                    "views": total_views,
+                    "likes": total_likes, "like_count": total_likes, "likes_today": total_likes,
+                    "follows": total_follows, "follow_count": total_follows, "follows_today": total_follows,
+                    "comments": self._comments_total, "comment_count": self._comments_total,
+                    "scanned_posts": total_views, "views": total_views,
                     "url": "https://x.com/home",
                 }
 
         except NotLoggedInError as log_err:
             self._print(f"🛑 任务中断: {log_err}")
-            return {"status": "NOT_LOGGED_IN", "error": str(log_err), "processed_count": 0}
+            return {
+                "status": "NOT_LOGGED_IN", "error": str(log_err),
+                "processed_count": total_exec, "likes": total_likes, "follows": total_follows,
+                "comments": self._comments_total, "scanned_posts": total_views,
+            }
         except CaptchaChallengeDetected as challenge_err:
             return {
-                "status": "CHALLENGE_REQUIRED",
-                "processed_count": total_exec,
-                "error": str(challenge_err),
-                "url": challenge_err.url,
+                "status": "CHALLENGE_REQUIRED", "processed_count": total_exec, "error": str(challenge_err),
+                "url": challenge_err.url, "likes": total_likes, "follows": total_follows,
+                "comments": self._comments_total, "scanned_posts": total_views,
             }
         except PlaywrightError as pw_err:
             self._print(f"🚨 CDP 通信异常/浏览器已断开: {pw_err}")
             return {
-                "status": "CDP_DISCONNECTED",
-                "processed_count": total_exec,
-                "error": str(pw_err),
+                "status": "CDP_DISCONNECTED", "processed_count": total_exec, "error": str(pw_err),
+                "likes": total_likes, "follows": total_follows,
+                "comments": self._comments_total, "scanned_posts": total_views,
             }
         finally:
             try:
                 if page and resp_listener:
                     page.remove_listener("response", resp_listener)
                 if browser:
-                    await browser.close()
+                    await browser.disconnect()
             except Exception:
                 pass
 
@@ -859,10 +1227,20 @@ class XAutomationEngine:
         return None
 
     @staticmethod
-    def _filter_read_only_snapshot(text: str, *, url: str, title: str, config: AutomationConfig) -> dict[str, Any]:
+    def _filter_read_only_snapshot(
+        text: str,
+        *,
+        url: str,
+        title: str,
+        config: AutomationConfig,
+    ) -> dict[str, Any]:
+        """Preserve the legacy read-only filtering interface for diagnostics."""
         normalized = text.casefold()
         matched = not config.keyword or config.keyword.casefold() in normalized
-        numbers = [int(value.replace(",", "")) for value in re.findall(r"\b\d{1,3}(?:,\d{3})*\b", text)]
+        numbers = [
+            int(value.replace(",", ""))
+            for value in re.findall(r"\b\d{1,3}(?:,\d{3})*\b", text)
+        ]
         follower_value = numbers[0] if numbers else None
         engagement_value = numbers[1] if len(numbers) > 1 else None
         eligible = matched

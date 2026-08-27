@@ -139,8 +139,20 @@ def register_command_routes(
             mode = str((body.payload or {}).get("mode") or "NEXT_RUN").upper()
             if mode not in {"NEXT_RUN", "HOT_UPDATE"}:
                 raise HTTPException(status_code=422, detail="Unsupported runtime config mode")
-            if not isinstance((body.payload or {}).get("values"), (dict, list, str, int, float, bool, type(None))):
+            values = (body.payload or {}).get("values")
+            if not isinstance(values, (dict, list, str, int, float, bool, type(None))):
                 raise HTTPException(status_code=422, detail="Invalid runtime config values")
+            if body.command_type == "UPDATE_PARAMS" and isinstance(values, dict) and "ai_reply_ratio" in values:
+                ratio_value = values.get("ai_reply_ratio")
+                if isinstance(ratio_value, bool):
+                    raise HTTPException(status_code=422, detail="ai_reply_ratio must be between 0.0 and 1.0")
+                try:
+                    ratio = float(ratio_value)
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(status_code=422, detail="ai_reply_ratio must be between 0.0 and 1.0") from exc
+                if not 0.0 <= ratio <= 1.0:
+                    raise HTTPException(status_code=422, detail="ai_reply_ratio must be between 0.0 and 1.0")
+                values["ai_reply_ratio"] = ratio
         if body.command_type == "START_TASK":
             task_type = str((body.payload or {}).get("task_type") or "")
             if task_type not in {"browser.open_url", "x.check_login", "x.read_profile", "x.read_timeline", "x.search"}:

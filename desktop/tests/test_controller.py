@@ -8,10 +8,12 @@ import tempfile
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QPoint
 
 from agent.account_registry import AccountRecord
 from agent.automation_statistics import AutomationStatisticsStore
 from agent.models import AccountStatus, BrowserStatus, LoginStatus
+import desktop.controller as controller_module
 from desktop.controller import DesktopController, account_to_row
 from desktop.main_window import AgentReauthDialog, MainWindow, TaskConfigDialog
 from desktop.workers import FunctionWorker
@@ -295,9 +297,40 @@ def test_controller_persists_profile_task_config():
             agent_service=None,
             runtime_config=runtime,
         )
-        saved = controller.set_profile_task_config("p-11", {"keyword": "Python", "daily_task_limit": 50})
+        saved = controller.set_profile_task_config(
+            "p-11",
+            {"keyword": "Python", "daily_task_limit": 50, "ai_reply_ratio": "0.25"},
+        )
         assert saved["active"]["keyword"] == "Python"
         assert controller.get_profile_task_config("p-11")["active"]["daily_task_limit"] == 50
+        assert controller.get_profile_task_config("p-11")["active"]["ai_reply_ratio"] == 0.25
+
+
+def test_engine_runner_passes_ai_reply_ratio_to_engine_without_changing_constructor(monkeypatch):
+    captured = {}
+
+    class FakeEngine:
+        def __init__(self, cdp_url, logger=None):
+            captured["cdp_url"] = cdp_url
+            captured["logger"] = logger
+
+        async def run(self, custom_config=None):
+            captured["custom_config"] = custom_config
+            return {"status": "SUCCESS"}
+
+    monkeypatch.setattr(
+        controller_module,
+        "_resolve_automation_engine_class",
+        lambda cache_dir, engine_id: FakeEngine,
+    )
+    result = controller_module._run_engine_in_thread(
+        "ws://127.0.0.1:9222/devtools/browser/test",
+        None,
+        {"keyword": "Python", "ai_reply_ratio": 0.0},
+    )
+
+    assert result["status"] == "SUCCESS"
+    assert captured["custom_config"]["ai_reply_ratio"] == 0.0
 
 
 def test_controller_captures_engine_future_into_external_statistics_layer():
@@ -428,6 +461,30 @@ def test_desktop_minimize_surface_reads_new_agent_log_lines(tmp_path):
     app.processEvents()
 
 
+def test_desktop_mini_window_is_resizable_and_can_hide_without_stopping_agent():
+    app = qapp()
+    agent_service = FakeAgentService()
+    window = MainWindow(make_controller(records=[], agent_service=agent_service))
+    mini = window._mini_window
+
+    assert mini.minimumWidth() == 360
+    assert mini.minimumHeight() == 260
+    assert mini.maximumWidth() > mini.minimumWidth()
+    assert mini._edges_at(QPoint(0, 0)) == {"left", "top"}
+    assert mini._edges_at(QPoint(mini.width() - 1, mini.height() - 1)) == {"right", "bottom"}
+
+    window._show_mini_window()
+    app.processEvents()
+    mini.hide_requested.emit()
+    app.processEvents()
+
+    assert mini.isHidden()
+    assert agent_service.metric_flushes == 0
+
+    window.close()
+    app.processEvents()
+
+
 def test_dashboard_refresh_does_not_overwrite_fresh_automation_counts_with_stale_ui_values():
     app = qapp()
     window = MainWindow(make_controller(records=[]))
@@ -472,7 +529,14 @@ def test_task_config_dialog_has_safe_defaults_and_returns_config():
     assert values["daily_task_limit"] == 50
     assert values["max_follower_threshold"] == 150
     assert values["max_engagement_threshold"] == 10_000
+    assert values["ai_reply_ratio"] == 0.15
     assert values["sleep_on_rate_limit"] is True
+
+    dialog.ai_reply_ratio_input.setCurrentIndex(0)
+    assert dialog.config()["ai_reply_ratio"] == 0.0
+
+    dialog.apply_initial({"active": {"ai_reply_ratio": 0.25}})
+    assert dialog.config()["ai_reply_ratio"] == 0.25
     dialog.close()
     app.processEvents()
 

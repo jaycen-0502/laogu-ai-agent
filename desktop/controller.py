@@ -85,6 +85,7 @@ def _run_engine_in_thread(
     config: dict,
     cache_dir: str = "",
     engine_id: str = "default",
+    progress_callback=None,
 ) -> dict:
     """在独立的子线程中直接调用本地 agent.x_automation_engine 脚本"""
     loop = asyncio.new_event_loop()
@@ -101,6 +102,11 @@ def _run_engine_in_thread(
                 "bundled" if str(engine_id or "default").strip() in ("", "default") else "cache",
             )
         engine = engine_class(cdp_url=real_cdp_url, logger=logger)
+        if progress_callback is not None:
+            try:
+                setattr(engine, "progress_callback", progress_callback)
+            except Exception:
+                pass
         return loop.run_until_complete(engine.run(config))
     except Exception as exc:
         if logger:
@@ -307,7 +313,24 @@ class DesktopController:
     def set_profile_task_config(self, profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(config, dict):
             raise ValueError("Profile task config must be an object")
-        return self.runtime_config.update(str(profile_id), dict(config), mode="HOT_UPDATE")
+        normalized = self._normalize_profile_task_config(config)
+        return self.runtime_config.update(str(profile_id), normalized, mode="HOT_UPDATE")
+
+    @staticmethod
+    def _normalize_profile_task_config(config: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(config)
+        if "ai_reply_ratio" in normalized:
+            value = normalized["ai_reply_ratio"]
+            if isinstance(value, bool):
+                raise ValueError("ai_reply_ratio must be a number between 0.0 and 1.0")
+            try:
+                ratio = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ai_reply_ratio must be a number between 0.0 and 1.0") from exc
+            if not 0.0 <= ratio <= 1.0:
+                raise ValueError("ai_reply_ratio must be a number between 0.0 and 1.0")
+            normalized["ai_reply_ratio"] = ratio
+        return normalized
 
     def get_profile_task_config(self, profile_id: str) -> dict[str, Any]:
         return self.runtime_config.snapshot(str(profile_id))
@@ -330,6 +353,7 @@ class DesktopController:
             _RUNNING_PROFILES.add(profile_id)
 
         try:
+            config = self._normalize_profile_task_config(config)
             saved = self.set_profile_task_config(profile_id, config)
             engine_id = str(config.get("engine_id") or "default").strip() or "default"
             engine_name = str(config.get("engine_name") or engine_id).strip()
@@ -381,6 +405,20 @@ class DesktopController:
                 or getattr(account, "profile_name", "")
                 or profile_id
             )
+
+            def report_progress(progress: dict[str, Any]) -> None:
+                if not isinstance(progress, dict):
+                    return
+                self.automation_statistics.record_progress(
+                    run_id=run_id,
+                    profile_id=profile_id,
+                    x_account_id=x_account_id,
+                    account_tag=account_tag,
+                    started_at=started_at,
+                    progress=progress,
+                )
+
+            report_progress({})
             future = _AUTOMATION_EXECUTOR.submit(
                 _run_engine_in_thread,
                 cdp_url,
@@ -388,6 +426,7 @@ class DesktopController:
                 config,
                 str(self.settings.engine_cache_dir),
                 engine_id,
+                report_progress,
             )
             future.add_done_callback(
                 lambda completed: self._automation_result_finished(

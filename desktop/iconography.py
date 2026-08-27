@@ -18,6 +18,9 @@ _PATHS = {
     "search": '<circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4.5 4.5"/>',
     "settings": '<path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/>',
     "update": '<path d="M12 4v10M8 10l4 4 4-4M5 19h14"/>',
+    "minimize": '<path d="M5 12h14"/>',
+    "restore": '<path d="M8 8h11v11H8zM5 5h11v3M5 5v11h3"/>',
+    "close": '<path d="m6 6 12 12M18 6 6 18"/>',
 }
 
 

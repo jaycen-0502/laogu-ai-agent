@@ -33,3 +33,41 @@ def test_automation_statistics_are_idempotent_scoped_and_persistent():
         assert {item["run_id"] for item in store.pending()} == {"run-1", "run-2"}
         store.mark_uploaded("run-1")
         assert [item["run_id"] for item in AutomationStatisticsStore(path).pending()] == ["run-2"]
+
+
+def test_progress_updates_one_run_and_final_result_keeps_highest_counters():
+    with tempfile.TemporaryDirectory() as directory:
+        store = AutomationStatisticsStore(Path(directory) / "agent_state.db")
+        common = {
+            "run_id": "run-live",
+            "profile_id": "profile-live",
+            "x_account_id": "x-live",
+            "started_at": "2026-08-27T10:00:00+08:00",
+        }
+        store.record_progress(
+            **common,
+            progress={"likes": 2, "follows": 1, "comments": 1, "scanned_posts": 8},
+        )
+        store.record_progress(
+            **common,
+            progress={"likes": 1, "follows": 3, "comment_count": 2, "views": 15},
+        )
+        store.record_result(
+            **common,
+            result={
+                "status": "SUCCESS",
+                "likes": 0,
+                "like_count": 4,
+                "follows_today": 3,
+                "comments": 2,
+                "scanned_posts": 15,
+            },
+        )
+
+        summary = store.summary()
+        assert summary["automation_runs"] == 1
+        assert summary["likes"] == 4
+        assert summary["follows"] == 3
+        assert summary["comments"] == 2
+        assert summary["scanned_posts"] == 15
+        assert store.pending()[0]["status"] == "SUCCESS"

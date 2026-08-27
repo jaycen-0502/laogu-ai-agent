@@ -123,6 +123,34 @@ def test_command_workspace_and_role_boundaries():
     assert client.get("/api/commands", headers=auth(member_token)).status_code == 200
 
 
+def test_update_params_accepts_ai_reply_ratio_and_rejects_invalid_values():
+    client, owner, agent = make_env()
+    valid = client.post(
+        "/api/commands",
+        headers=auth(owner),
+        json={
+            "agent_id": agent["agent_id"],
+            "profile_id": "profile-command",
+            "command_type": "UPDATE_PARAMS",
+            "payload": {"mode": "HOT_UPDATE", "values": {"ai_reply_ratio": "0.25"}},
+        },
+    )
+    assert valid.status_code == 200, valid.text
+    assert valid.json()["command"]["payload"]["values"]["ai_reply_ratio"] == 0.25
+
+    invalid = client.post(
+        "/api/commands",
+        headers=auth(owner),
+        json={
+            "agent_id": agent["agent_id"],
+            "profile_id": "profile-command",
+            "command_type": "UPDATE_PARAMS",
+            "payload": {"values": {"ai_reply_ratio": 1.5}},
+        },
+    )
+    assert invalid.status_code == 422
+
+
 def test_command_websocket_push_and_result():
     client, owner, agent = make_env()
     command = client.post(

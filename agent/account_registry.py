@@ -127,8 +127,15 @@ class AccountRegistry:
         )
         new_username = discovered.x_username if verified_mapping else old_username
         new_account_id = discovered.x_account_id if verified_mapping else old_account_id
+        new_login_status = discovered.login_status
+        if (
+            existing is not None
+            and old_status is LoginStatus.LOGGED_IN
+            and discovered.login_status is LoginStatus.UNKNOWN
+        ):
+            new_login_status = old_status
         mapping_changed = (new_username, new_account_id) != (old_username, old_account_id)
-        status_changed = discovered.login_status is not old_status
+        status_changed = new_login_status is not old_status
 
         record = AccountRecord(
             profile_id=discovered.profile_id,
@@ -136,7 +143,7 @@ class AccountRegistry:
             profile_name=discovered.profile_name,
             x_username=new_username,
             x_account_id=new_account_id,
-            login_status=discovered.login_status,
+            login_status=new_login_status,
             browser_status=discovered.browser_status,
             account_status=AccountStatus.UNKNOWN,
             last_checked=discovered.last_checked,

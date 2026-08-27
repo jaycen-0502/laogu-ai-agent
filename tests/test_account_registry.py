@@ -82,11 +82,13 @@ class AccountRegistryTests(unittest.TestCase):
         unknown = self.registry.update(discovered("p1", login=LoginStatus.UNKNOWN))
         self.assertEqual(unknown.x_username, "@known")
         self.assertEqual(unknown.x_account_id, "1001")
+        self.assertEqual(unknown.login_status, LoginStatus.LOGGED_IN)
         logged_out = self.registry.update(
             discovered("p1", login=LoginStatus.NOT_LOGGED_IN)
         )
         self.assertEqual(logged_out.x_username, "@known")
         self.assertEqual(logged_out.x_account_id, "1001")
+        self.assertEqual(logged_out.login_status, LoginStatus.NOT_LOGGED_IN)
         self.assertEqual(logged_out.account_status, AccountStatus.UNKNOWN)
 
     def test_duplicate_account_id_marks_both_profiles(self):

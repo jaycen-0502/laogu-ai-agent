@@ -25,6 +25,15 @@ class FakeBrowserManager:
         return {"probe_version": "1", "browser_reachable": True, "cookie_read_supported": False, "cookie_write_supported": False, "credential_snapshot_allowed": False, "evidence": "NOT_ADVERTISED", "cookie_value": "must-not-leak"}
 
 
+class FakeRuntimeConfig:
+    def __init__(self):
+        self.calls = []
+
+    def update(self, profile_id, values, *, mode):
+        self.calls.append((profile_id, values, mode))
+        return {"active": values}
+
+
 def test_profile_workers_are_isolated_and_lifecycle_calls_are_idempotent():
     browser = FakeBrowserManager()
     manager = ProfileWorkerManager(browser)
@@ -56,3 +65,15 @@ def test_credential_probe_returns_metadata_only():
     assert result["browser_reachable"] is True
     assert result["credential_snapshot_allowed"] is False
     assert "cookie_value" not in result
+
+
+def test_update_params_normalizes_ai_reply_ratio_before_persisting():
+    runtime = FakeRuntimeConfig()
+    manager = ProfileWorkerManager(FakeBrowserManager(), runtime_config=runtime)
+    result = manager.dispatch({
+        "command_type": "UPDATE_PARAMS",
+        "profile_id": "p1",
+        "payload": {"mode": "HOT_UPDATE", "values": {"ai_reply_ratio": "0.10"}},
+    })
+    assert result["runtime_config"]["active"]["ai_reply_ratio"] == 0.10
+    assert runtime.calls == [("p1", {"ai_reply_ratio": 0.10}, "HOT_UPDATE")]

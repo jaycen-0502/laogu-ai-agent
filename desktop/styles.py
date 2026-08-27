@@ -451,6 +451,7 @@ QLabel#miniStatusOnline {
     background: #ECFDF5;
     border: 1px solid #A7E8CE;
 }
+QPushButton#miniWindowActionButton,
 QPushButton#miniWindowCloseButton {
     min-width: 28px;
     max-width: 28px;
@@ -463,6 +464,11 @@ QPushButton#miniWindowCloseButton {
     border-radius: 8px;
     font-size: 17px;
     font-weight: 500;
+}
+QPushButton#miniWindowActionButton:hover {
+    color: #1D4ED8;
+    background: #EFF6FF;
+    border-color: #BFDBFE;
 }
 QPushButton#miniWindowCloseButton:hover {
     color: #DC2626;

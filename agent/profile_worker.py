@@ -124,6 +124,18 @@ class ProfileWorkerManager:
             values = (command.get("payload") or {}).get("values") or {}
             if command_type == "UPDATE_KEYWORDS":
                 values = {"keywords": values}
+            elif isinstance(values, dict) and "ai_reply_ratio" in values:
+                values = dict(values)
+                ratio_value = values.get("ai_reply_ratio")
+                if isinstance(ratio_value, bool):
+                    raise ProfileWorkerError("ai_reply_ratio must be between 0.0 and 1.0")
+                try:
+                    ratio = float(ratio_value)
+                except (TypeError, ValueError) as exc:
+                    raise ProfileWorkerError("ai_reply_ratio must be between 0.0 and 1.0") from exc
+                if not 0.0 <= ratio <= 1.0:
+                    raise ProfileWorkerError("ai_reply_ratio must be between 0.0 and 1.0")
+                values["ai_reply_ratio"] = ratio
             return {"runtime_config": self.runtime_config.update(profile_id, values, mode=mode)}
         if self.task_service is None:
             raise ProfileWorkerError("Command type is not enabled without TaskService")

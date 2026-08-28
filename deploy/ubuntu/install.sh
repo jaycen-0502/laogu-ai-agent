@@ -193,6 +193,7 @@ runuser -u laogu -- bash -c "cd '$APP/web'; npm ci; npm run build"
 test -s "$APP/web/dist/index.html"
 
 echo "=== 9/12 安装后端服务 ==="
+install -d -o laogu -g laogu -m 0750 /var/lib/laogu/agent-data/engine_publish
 install -o root -g root -m 644 "$APP/deploy/ubuntu/laogu-server.service" /etc/systemd/system/laogu-server.service
 install -o root -g root -m 700 "$APP/deploy/ubuntu/laogu-upgrade-from-github" /usr/local/sbin/laogu-upgrade-from-github
 systemctl daemon-reload

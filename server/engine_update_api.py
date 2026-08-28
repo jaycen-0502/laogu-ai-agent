@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 from typing import Callable
@@ -21,7 +22,9 @@ from .models import Agent
 
 
 MAX_ENGINE_BYTES = 2 * 1024 * 1024
-_PUBLISH_DIR = Path(__file__).resolve().parent.parent / "agent_data" / "engine_publish"
+_DEFAULT_PUBLISH_DIR = Path(__file__).resolve().parent.parent / "agent_data" / "engine_publish"
+# Keep mutable engine bundles outside the read-only application checkout in production.
+_PUBLISH_DIR = Path(os.getenv("LAOGU_ENGINE_PUBLISH_DIR", str(_DEFAULT_PUBLISH_DIR)).strip() or str(_DEFAULT_PUBLISH_DIR)).expanduser()
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _BLOCKED_IMPORTS = {

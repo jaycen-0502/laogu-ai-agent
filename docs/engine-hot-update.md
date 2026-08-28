@@ -12,7 +12,8 @@ publish engines from the Web Script Center using an engine ID such as
    version, then upload a Python file exposing `XAutomationEngine`.
 2. The server validates UTF-8, Python syntax and the `XAutomationEngine.run`
    interface, stores it under
-   `agent_data/engine_publish/<engine-id>/`, and exposes a signed-by-HTTPS,
+   `/var/lib/laogu/agent-data/engine_publish/<engine-id>/` in production (or
+   `LAOGU_ENGINE_PUBLISH_DIR` when configured), and exposes a signed-by-HTTPS,
    SHA-256 manifest to authenticated Agents.
 3. The Windows control center lists the available engine names in the
    automation dialog. Selecting one downloads it on demand and caches it under
@@ -36,6 +37,8 @@ publish engines from the Web Script Center using an engine ID such as
 - If the active cache is damaged, the previous cache is selected atomically.
 - The bundled engine remains the final fallback, so a server outage does not
   stop the desktop console.
+- Published engines are persistent server data and are included in the
+  encrypted server backup/restore flow.
 
 ## Configuration
 

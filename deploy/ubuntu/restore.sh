@@ -214,6 +214,9 @@ if [ -s "$WORK/extracted/application-data.tar.gz" ]; then
 else
   echo "提示：这是旧格式备份，不包含 application-data.tar.gz；将创建空的数据目录。"
 fi
+if [ -s "$WORK/extracted/engine-data.tar.gz" ]; then
+  ARCHIVES+=(engine-data.tar.gz)
+fi
 for archive_name in "${ARCHIVES[@]}"; do
   python3 - "$WORK/extracted/$archive_name" <<'PY'
 import sys
@@ -231,9 +234,16 @@ if ! id laogu >/dev/null 2>&1; then
   useradd --system --user-group --home-dir "$APP" --shell /usr/sbin/nologin laogu
 fi
 install -d -o laogu -g laogu -m 750 "$APP"
+install -d -o laogu -g laogu -m 750 /var/lib/laogu/agent-data/engine_publish
 tar -xzf "$WORK/extracted/application-source.tar.gz" -C "$APP"
 if [ -s "$WORK/extracted/application-data.tar.gz" ]; then
   tar -xzf "$WORK/extracted/application-data.tar.gz" -C "$APP"
+fi
+if [ -s "$WORK/extracted/engine-data.tar.gz" ]; then
+  install -d -o laogu -g laogu -m 750 /var/lib/laogu
+  tar -xzf "$WORK/extracted/engine-data.tar.gz" -C /var/lib/laogu
+  chown -R laogu:laogu /var/lib/laogu/agent-data
+  chmod -R o-w /var/lib/laogu/agent-data
 fi
 install -d -o laogu -g laogu -m 750 "$APP/logs" "$APP/data/ai-images"
 chown -R laogu:laogu "$APP"

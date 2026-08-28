@@ -9,6 +9,7 @@ User=laogu
 Group=laogu
 WorkingDirectory=/opt/laogu-ai-agent
 EnvironmentFile=/etc/laogu/server.env
+Environment=LAOGU_ENGINE_PUBLISH_DIR=/var/lib/laogu/agent-data/engine_publish
 ExecStart=/opt/laogu-ai-agent/.venv/bin/uvicorn server.main:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
@@ -18,7 +19,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/laogu-ai-agent/server /opt/laogu-ai-agent/data/ai-images
+ReadWritePaths=/opt/laogu-ai-agent/server /opt/laogu-ai-agent/data/ai-images /var/lib/laogu/agent-data
 
 [Install]
 WantedBy=multi-user.target

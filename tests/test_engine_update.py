@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 
 from fastapi.testclient import TestClient
 
@@ -60,6 +61,16 @@ def test_authenticated_engine_manifest_and_source(monkeypatch, tmp_path):
     source = source_response.content
     assert hashlib.sha256(source).hexdigest() == manifest["sha256"]
     assert source_response.headers["x-laogu-engine-sha256"] == manifest["sha256"]
+
+
+def test_publish_directory_can_be_configured(monkeypatch, tmp_path):
+    target = tmp_path / "persistent-engines"
+    monkeypatch.setenv("LAOGU_ENGINE_PUBLISH_DIR", str(target))
+    module = importlib.import_module("server.engine_update_api")
+    module = importlib.reload(module)
+    assert module._PUBLISH_DIR == target
+    monkeypatch.delenv("LAOGU_ENGINE_PUBLISH_DIR", raising=False)
+    importlib.reload(module)
 
 
 def test_admin_can_publish_and_agent_can_select_named_engine(monkeypatch, tmp_path):

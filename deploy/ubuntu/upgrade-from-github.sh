@@ -96,6 +96,15 @@ chown -R laogu:laogu "$APP/web/dist"
 chmod 755 "$APP" "$APP/web" "$APP/web/dist"
 find "$APP/web/dist" -type d -exec chmod 755 {} +
 find "$APP/web/dist" -type f -exec chmod 644 {} +
+# Engine bundles are mutable application data and must not live in the
+# read-only source checkout protected by systemd.
+install -d -o laogu -g laogu -m 0750 /var/lib/laogu/agent-data/engine_publish
+if [ -d "$APP/agent_data/engine_publish" ] && [ -z "$(find /var/lib/laogu/agent-data/engine_publish -mindepth 1 -print -quit)" ]; then
+  rsync -a "$APP/agent_data/engine_publish/" /var/lib/laogu/agent-data/engine_publish/
+  chown -R laogu:laogu /var/lib/laogu/agent-data/engine_publish
+fi
+install -o root -g root -m 644 "$SRC/deploy/ubuntu/laogu-server.service" /etc/systemd/system/laogu-server.service
+systemctl daemon-reload
 systemctl start laogu-server
 systemctl is-active --quiet laogu-server
 nginx -t

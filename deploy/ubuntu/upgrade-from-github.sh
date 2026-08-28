@@ -104,6 +104,8 @@ if [ -d "$APP/agent_data/engine_publish" ] && [ -z "$(find /var/lib/laogu/agent-
   chown -R laogu:laogu /var/lib/laogu/agent-data/engine_publish
 fi
 install -o root -g root -m 644 "$SRC/deploy/ubuntu/laogu-server.service" /etc/systemd/system/laogu-server.service
+install -d -o root -g root -m 0755 /etc/systemd/system/laogu-server.service.d
+install -o root -g root -m 644 "$SRC/deploy/ubuntu/laogu-engine-data.conf" /etc/systemd/system/laogu-server.service.d/engine-data.conf
 systemctl daemon-reload
 systemctl start laogu-server
 systemctl is-active --quiet laogu-server

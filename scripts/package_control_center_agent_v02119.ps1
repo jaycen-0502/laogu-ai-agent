@@ -1,12 +1,12 @@
 ﻿$ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\")).Path
-$version = "0.21.18"
-$release = Join-Path $root "release\2026-08-28-control-center-agent-persistent-engine-data-v0.21.18"
-$payload = Join-Path $release "01-windows-portable\Laogu-Control-Center-Agent-0.21.18"
+$version = "0.21.19"
+$release = Join-Path $root "release\2026-08-28-control-center-agent-persistent-engine-data-v0.21.19"
+$payload = Join-Path $release "01-windows-portable\Laogu-Control-Center-Agent-0.21.19"
 $checks = Join-Path $release "02-checksums"
 $docs = Join-Path $release "03-build-record"
-$zip = Join-Path $release "01-windows-portable\Laogu-Control-Center-Agent-0.21.18-windows-amd64.zip"
+$zip = Join-Path $release "01-windows-portable\Laogu-Control-Center-Agent-0.21.19-windows-amd64.zip"
 $dist = Join-Path $root "dist\Laogu-Desktop"
 $previousLocation = Get-Location
 Set-Location -LiteralPath $root

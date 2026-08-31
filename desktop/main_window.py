@@ -85,13 +85,29 @@ class TaskConfigDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("配置自动化任务")
         self.setModal(True)
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(560)
         initial = initial or {}
         active = initial.get("active") if isinstance(initial.get("active"), dict) else initial
 
-        form = QFormLayout(self)
-        form.setContentsMargins(24, 20, 24, 16)
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+
+        dialog_header = QFrame(objectName="dialogHeader")
+        dialog_header_layout = QVBoxLayout(dialog_header)
+        dialog_header_layout.setContentsMargins(24, 20, 24, 18)
+        dialog_header_layout.setSpacing(4)
+        dialog_header_layout.addWidget(QLabel("自动化任务配置", objectName="dialogTitle"))
+        dialog_header_layout.addWidget(QLabel("为选中的浏览器档案设置运行方案、时间与安全阈值", objectName="dialogDescription"))
+        shell.addWidget(dialog_header)
+
+        form_surface = QFrame(objectName="dialogFormSurface")
+        form = QFormLayout(form_surface)
+        form.setContentsMargins(24, 20, 24, 20)
+        form.setHorizontalSpacing(20)
         form.setVerticalSpacing(12)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        shell.addWidget(form_surface, 1)
 
         self.engine_input = QComboBox()
         self.engine_input.setMinimumHeight(32)
@@ -163,12 +179,19 @@ class TaskConfigDialog(QDialog):
         self._update_schedule_controls()
         form.addRow("AI 评论回复", self.ai_reply_ratio_input)
 
-        hint = QLabel("自动化引擎将在后台独立运行筛选，不会进行未经许可的违规操作。")
+        hint = QLabel("自动化引擎将在后台独立运行筛选；请在启动前复核方案、检索条件与任务上限。")
         hint.setWordWrap(True)
-        hint.setObjectName("subtitle")
+        hint.setObjectName("dialogHint")
         form.addRow(hint)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        cancel_button = buttons.button(QDialogButtonBox.StandardButton.Cancel)
+        if ok_button:
+            ok_button.setText("保存并运行")
+            ok_button.setObjectName("dialogPrimaryButton")
+        if cancel_button:
+            cancel_button.setText("取消")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -294,9 +317,24 @@ class AgentReauthDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("重新认证运行端")
         self.setModal(True)
-        self.setMinimumWidth(480)
-        form = QFormLayout(self)
-        form.setContentsMargins(22, 20, 22, 16)
+        self.setMinimumWidth(520)
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.setSpacing(0)
+        dialog_header = QFrame(objectName="dialogHeader")
+        dialog_header_layout = QVBoxLayout(dialog_header)
+        dialog_header_layout.setContentsMargins(24, 20, 24, 18)
+        dialog_header_layout.setSpacing(4)
+        dialog_header_layout.addWidget(QLabel("重新认证运行端", objectName="dialogTitle"))
+        dialog_header_layout.addWidget(QLabel("替换失效凭据并恢复与服务器的安全连接", objectName="dialogDescription"))
+        shell.addWidget(dialog_header)
+
+        form_surface = QFrame(objectName="dialogFormSurface")
+        form = QFormLayout(form_surface)
+        form.setContentsMargins(24, 20, 24, 20)
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(12)
+        shell.addWidget(form_surface)
 
         self.agent_id_input = QLineEdit(str(agent_id).strip())
         self.agent_id_input.setReadOnly(True)
@@ -313,13 +351,14 @@ class AgentReauthDialog(QDialog):
 
         hint = QLabel("凭据保存后将通过加密传输，验证通过后系统自动恢复联机。")
         hint.setWordWrap(True)
-        hint.setObjectName("subtitle")
+        hint.setObjectName("dialogHint")
         form.addRow(hint)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         if save_button:
             save_button.setText("保存并验证")
+            save_button.setObjectName("dialogPrimaryButton")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
@@ -359,6 +398,7 @@ class AccountCardWidget(QFrame):
 
         dot = QLabel("●")
         dot.setObjectName("onlineDot" if running else "offlineDot")
+        dot.setToolTip("浏览器运行中" if running else "浏览器已停止")
         top_row.addWidget(dot)
 
         info = QVBoxLayout()
@@ -419,8 +459,7 @@ class AccountCardWidget(QFrame):
         stats_label = QLabel(
             f"数据：粉丝 {own_followers} · 关注 {own_following}  |  今日：赞 {likes} · 关 {follows} · 评 {comments} · 扫 {scanned_posts}"
         )
-        stats_label.setObjectName("accountHandle")
-        stats_label.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 500;")
+        stats_label.setObjectName("accountStats")
         bottom_row.addWidget(stats_label)
         bottom_row.addStretch(1)
 
@@ -851,9 +890,9 @@ class MainWindow(QMainWindow):
         scrollbar.setValue(scrollbar.maximum())
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("老谷自动化控制中心 - 2026 SaaS 版")
+        self.setWindowTitle("老谷自动化控制中心")
         self.setMinimumSize(1160, 800)
-        self.resize(1280, 880)
+        self.resize(1320, 900)
 
         root = QWidget()
         root.setObjectName("rootWidget")  # <--- 重要：限制灰色背景范围，解决白底灰色穿透阴影问题
@@ -863,17 +902,17 @@ class MainWindow(QMainWindow):
 
         header = QFrame(objectName="header")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(24, 14, 24, 14)
-        header_layout.setSpacing(12)
+        header_layout.setContentsMargins(24, 15, 24, 15)
+        header_layout.setSpacing(14)
 
         brand_mark = QLabel(objectName="headerBrandMark")
-        brand_mark.setPixmap(application_icon().pixmap(42, 42))
+        brand_mark.setPixmap(application_icon().pixmap(44, 44))
         header_layout.addWidget(brand_mark)
         
         title_box = QVBoxLayout()
-        title_box.setSpacing(2)
+        title_box.setSpacing(3)
         title_box.addWidget(QLabel("老谷自动化控制中心", objectName="title"))
-        title_box.addWidget(QLabel("统一管理浏览器档案、账号状态与全自动并发引擎", objectName="subtitle"))
+        title_box.addWidget(QLabel("浏览器档案 · 账号状态 · 自动化任务", objectName="subtitle"))
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)
 
@@ -896,13 +935,13 @@ class MainWindow(QMainWindow):
         header_layout.addLayout(status_box)
         root_layout.addWidget(header)
 
-        self.live_status_label = QLabel("● 运行端正在连接服务器…", objectName="liveStatus")
-        self.live_status_label.setContentsMargins(24, 8, 24, 8)
+        self.live_status_label = QLabel("●  运行端正在连接服务器…", objectName="liveStatus")
+        self.live_status_label.setContentsMargins(24, 7, 24, 7)
         root_layout.addWidget(self.live_status_label)
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(20, 16, 20, 16)
+        content_layout.setContentsMargins(20, 18, 20, 18)
         
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -916,13 +955,15 @@ class MainWindow(QMainWindow):
         overview = QFrame(objectName="overviewPanel")
         self._apply_drop_shadow(overview)
         metrics = QGridLayout(overview)
-        metrics.setContentsMargins(14, 12, 14, 12)
-        metrics.setHorizontalSpacing(10)
+        metrics.setContentsMargins(12, 12, 12, 12)
+        metrics.setHorizontalSpacing(8)
         self.stat_labels: dict[str, QLabel] = {}
         for column, (key, text) in enumerate((("total_tasks", "今日任务"), ("success_tasks", "成功"), ("failed_tasks", "失败"), ("timeout_tasks", "超时"))):
             card = QFrame(objectName="metricCard")
+            card.setProperty("tone", key)
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(12, 8, 12, 8)
+            card_layout.setContentsMargins(13, 10, 13, 10)
+            card_layout.setSpacing(2)
             card_layout.addWidget(QLabel(text, objectName="metricCaption"))
             value = QLabel("0", objectName="metricValue")
             card_layout.addWidget(value)
@@ -931,7 +972,11 @@ class MainWindow(QMainWindow):
         left.addWidget(overview)
 
         account_heading = QHBoxLayout()
-        account_heading.addWidget(QLabel("账号资产列表", objectName="sectionTitle"))
+        account_title_box = QVBoxLayout()
+        account_title_box.setSpacing(1)
+        account_title_box.addWidget(QLabel("账号资产", objectName="sectionTitle"))
+        account_title_box.addWidget(QLabel("选择档案后可配置任务或执行运行操作", objectName="sectionHint"))
+        account_heading.addLayout(account_title_box)
         account_heading.addStretch(1)
         self.summary_label = QLabel("0 个账号", objectName="summary")
         account_heading.addWidget(self.summary_label)
@@ -960,12 +1005,13 @@ class MainWindow(QMainWindow):
         action_panel = QFrame(objectName="actionPanel")
         self._apply_drop_shadow(action_panel)
         action_layout = QVBoxLayout(action_panel)
-        action_layout.setContentsMargins(12, 12, 12, 12)
-        action_layout.setSpacing(8)
+        action_layout.setContentsMargins(14, 14, 14, 14)
+        action_layout.setSpacing(10)
+        action_layout.addWidget(QLabel("任务控制", objectName="sectionEyebrow"))
         
         self.automation_button = QPushButton("配置并运行自动化")
         self.automation_button.setObjectName("primaryButton")
-        self.automation_button.setMinimumHeight(40)
+        self.automation_button.setMinimumHeight(42)
         self.automation_button.setToolTip("为选中的档案设置参数并提交自动化任务")
         action_layout.addWidget(self.automation_button)
 
@@ -1005,9 +1051,9 @@ class MainWindow(QMainWindow):
         runtime = QFrame(objectName="runtimePanel")
         self._apply_drop_shadow(runtime)
         runtime_layout = QVBoxLayout(runtime)
-        runtime_layout.setContentsMargins(16, 12, 16, 12)
-        runtime_layout.setSpacing(4)
-        runtime_layout.addWidget(QLabel("当前选中档案信息", objectName="sectionTitle"))
+        runtime_layout.setContentsMargins(16, 14, 16, 14)
+        runtime_layout.setSpacing(5)
+        runtime_layout.addWidget(QLabel("当前档案", objectName="sectionEyebrow"))
         self.selected_profile_label = QLabel("尚未选择档案", objectName="runtimeValue")
         self.selected_runtime_label = QLabel("运行状态：—", objectName="summary")
         runtime_layout.addWidget(self.selected_profile_label)
@@ -1017,9 +1063,11 @@ class MainWindow(QMainWindow):
         tools = QFrame(objectName="toolsPanel")
         self._apply_drop_shadow(tools)
         tools_layout = QGridLayout(tools)
-        tools_layout.setContentsMargins(12, 8, 12, 8)
-        tools_layout.setSpacing(5)
-        tools_layout.addWidget(QLabel("只读工具箱", objectName="sectionTitle"), 0, 0, 1, 2)
+        tools_layout.setContentsMargins(12, 10, 12, 12)
+        tools_layout.setSpacing(6)
+        tools_title = QLabel("只读工具", objectName="sectionEyebrow")
+        tools_title.setToolTip("这些操作仅读取账号与页面状态，不会修改自动化配置")
+        tools_layout.addWidget(tools_title, 0, 0, 1, 2)
         
         self.check_login_button = self._button("登录检查", "check")
         self.read_profile_button = self._button("读取档案", "profile")
@@ -1043,7 +1091,7 @@ class MainWindow(QMainWindow):
         self.search_button.setToolTip("执行只读关键词搜索")
         tools_layout.addWidget(self.search_input, 3, 0)
         tools_layout.addWidget(self.search_button, 3, 1)
-        tools.setMaximumHeight(165)
+        tools.setMaximumHeight(170)
         right.addWidget(tools)
 
         tabs = QTabWidget(objectName="detailsTabs")
@@ -1054,6 +1102,7 @@ class MainWindow(QMainWindow):
         self.log_output.setMinimumHeight(360)
         self.log_output.verticalScrollBar().setSingleStep(20)
         self.log_output.setPlaceholderText("系统控制台日志将在这里实时显示…")
+        self.log_output.setAccessibleName("系统控制台实时日志")
         self.log_output.textChanged.connect(self._scroll_main_log_to_latest)
         tabs.addTab(self.log_output, "系统控制台日志")
 
@@ -1068,12 +1117,15 @@ class MainWindow(QMainWindow):
         self.activity_table.verticalHeader().setVisible(False)
         self.activity_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.activity_table.horizontalHeader().setStretchLastSection(True)
+        self.activity_table.setObjectName("activityTable")
         tabs.addTab(self.activity_table, "近期活动记录")
 
         right.addWidget(tabs, 1)
         splitter.addWidget(right_panel)
 
-        splitter.setSizes([800, 480])
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([820, 480])
         content_layout.addWidget(splitter, 1)
         root_layout.addWidget(content, 1)
         self.setCentralWidget(root)

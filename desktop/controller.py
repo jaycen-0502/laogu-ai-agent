@@ -447,6 +447,13 @@ class DesktopController:
             engine_id = str(config.get("engine_id") or "default").strip() or "default"
             engine_name = str(config.get("engine_name") or engine_id).strip()
             engine_client = getattr(self.agent_service, "server_client", None) if self.agent_service is not None else None
+            if engine_client is not None and self.server_agent_status().get("server") == "ONLINE":
+                permitted_engine_ids = {
+                    str(item.get("engine_id") or "")
+                    for item in self.list_automation_engines()
+                }
+                if engine_id not in permitted_engine_ids:
+                    raise RuntimeError(f"当前运行端未获授权使用自动化方案“{engine_name}”。请联系管理员分配脚本权限。")
             cached_engine = get_cached_automation_engine_class(self.settings.engine_cache_dir, engine_id) if engine_id != "default" else XAutomationEngine
             if cached_engine is None and engine_id != "default":
                 if engine_client is None or (self.server_agent_status().get("server") != "ONLINE"):
@@ -823,11 +830,22 @@ class DesktopController:
         if client is None or not hasattr(client, "list_engines"):
             return local or [default]
         try:
-            items = client.list_engines()
+            if hasattr(client, "list_engines_with_policy"):
+                response = client.list_engines_with_policy()
+                items = response.get("items", []) if isinstance(response, dict) else []
+                authorization_enforced = bool(isinstance(response, dict) and response.get("authorization_enforced"))
+            else:
+                items = client.list_engines()
+                authorization_enforced = False
         except Exception:
             return local or [default]
         normalized = [item for item in items if isinstance(item, dict) and item.get("enabled", True)]
         by_id = {str(item.get("engine_id") or ""): item for item in normalized}
+        if authorization_enforced:
+            # Preserve the server's explicit authorization state all the way to
+            # the dialog.  A saved local config must not make a revoked engine
+            # reappear in the chooser.
+            return [item | {"authorization_enforced": True} for item in by_id.values() if item.get("engine_id")]
         for item in local:
             by_id.setdefault(str(item.get("engine_id") or ""), item)
         normalized = [item for item in by_id.values() if item.get("engine_id")]

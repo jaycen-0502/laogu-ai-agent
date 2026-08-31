@@ -111,9 +111,17 @@ class TaskConfigDialog(QDialog):
 
         self.engine_input = QComboBox()
         self.engine_input.setMinimumHeight(32)
+        # The engine list and the saved task config arrive on separate
+        # background requests. Keep the last successful list so applying a
+        # saved config cannot reset the combobox to its default-only state.
+        self._engine_choices: list[dict[str, Any]] = []
+        self.engine_access_notice = QLabel()
+        self.engine_access_notice.setWordWrap(True)
+        self.engine_access_notice.setObjectName("dialogHint")
         selected_engine = str(active.get("engine_id") or "default")
         self.set_engines(engines, selected_engine)
         form.addRow("自动化方案", self.engine_input)
+        form.addRow(self.engine_access_notice)
 
         self.schedule_mode_input = QComboBox()
         self.schedule_mode_input.setMinimumHeight(32)
@@ -199,9 +207,17 @@ class TaskConfigDialog(QDialog):
     def set_engines(self, engines: list[dict[str, Any]] | None, selected_engine: str | None = None) -> None:
         current = self.engine_input.currentData() or {}
         target_id = str(selected_engine or current.get("engine_id") or "default")
-        choices = engines or [{"engine_id": "default", "name": "默认自动化引擎", "description": "内置 x_automation_engine.py"}]
-        if target_id and not any(str(item.get("engine_id") or "") == target_id for item in choices):
+        if engines is not None:
+            self._engine_choices = [dict(item) for item in engines if isinstance(item, dict)]
+        choices = self._engine_choices or [{"engine_id": "default", "name": "默认自动化引擎", "description": "内置 x_automation_engine.py"}]
+        authorization_enforced = any(bool(item.get("authorization_enforced")) for item in choices)
+        selected_is_available = any(str(item.get("engine_id") or "") == target_id for item in choices)
+        if target_id and not selected_is_available and not authorization_enforced:
             choices = [{"engine_id": target_id, "name": str(current.get("engine_name") or target_id)}] + list(choices)
+        if authorization_enforced and target_id and not selected_is_available:
+            self.engine_access_notice.setText("已保存的自动化方案已不再获管理员授权，已切换为可用方案；请保存后再运行。")
+        else:
+            self.engine_access_notice.setText("")
         self.engine_input.blockSignals(True)
         self.engine_input.clear()
         for engine in choices:
@@ -233,6 +249,9 @@ class TaskConfigDialog(QDialog):
                 widget.setValue(default)
         self._set_ai_reply_ratio(active.get("ai_reply_ratio", 0.15))
         self._apply_schedule(active)
+        # Do not discard the server/cached choices already loaded by the
+        # parallel engine-list request. This used to make a published engine
+        # flash briefly, then disappear when the task config callback arrived.
         self.set_engines(None, str(active.get("engine_id") or "default"))
 
     def _apply_schedule(self, active: dict[str, Any]) -> None:

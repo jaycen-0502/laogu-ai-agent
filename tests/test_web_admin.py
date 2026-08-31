@@ -101,6 +101,25 @@ def test_agent_list_and_detail(web_env):
     assert len(detail["profiles"]) == 1 and len(detail["accounts"]) == 1
 
 
+def test_agent_name_can_be_updated_without_changing_runtime_identity(web_env):
+    agent_id = web_env["agent_a"]["agent_id"]
+    changed = web_env["client"].patch(
+        f"/api/agents/{agent_id}",
+        headers=auth(web_env["owner_a"]),
+        json={"agent_name": "运营一组 · Windows 01"},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["agent_id"] == agent_id
+    assert changed.json()["agent_name"] == "运营一组 · Windows 01"
+    assert web_env["client"].patch(
+        f"/api/agents/{agent_id}",
+        headers=auth(web_env["member_a"]),
+        json={"agent_name": "不允许"},
+    ).status_code == 403
+    audit = web_env["client"].get("/api/audit?paged=true&page_size=100", headers=auth(web_env["owner_a"])).json()
+    assert any(item["action"] == "AGENT_RENAMED" and item["agent_id"] == agent_id for item in audit["items"])
+
+
 def test_account_list(web_env):
     data = web_env["client"].get("/api/accounts?paged=true", headers=auth(web_env["owner_a"])).json()
     assert data["total"] == 1 and data["items"][0]["x_username"] == "@webtest"

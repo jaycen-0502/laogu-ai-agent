@@ -4,6 +4,9 @@ import { javascript } from "@codemirror/lang-javascript";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiClient, ApiError, jsonBody, uploadEngine } from "../api/client";
 import type {
+  Agent,
+  AgentEngineAssignment,
+  EngineManifest,
   Page,
   Profile,
   Script,
@@ -88,8 +91,14 @@ export function ScriptsPage({ user }: { user: User }) {
   const [engineId, setEngineId] = useState("default");
   const [engineName, setEngineName] = useState("默认自动化引擎");
   const [engineDescription, setEngineDescription] = useState("");
-  const [publishedEngines, setPublishedEngines] = useState<Array<{ engine_id: string; name: string; description?: string; version: string; enabled?: boolean }>>([]);
+  const [publishedEngines, setPublishedEngines] = useState<EngineManifest[]>([]);
   const [engineMessage, setEngineMessage] = useState("");
+  const [runtimeAgents, setRuntimeAgents] = useState<Agent[]>([]);
+  const [selectedRuntimeId, setSelectedRuntimeId] = useState("");
+  const [engineAssignment, setEngineAssignment] = useState<AgentEngineAssignment | null>(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [assignmentMessage, setAssignmentMessage] = useState("");
   const engineInput = useRef<HTMLInputElement>(null);
   const [data, setData] = useState<Page<Script> | null>(null);
   const [error, setError] = useState("");
@@ -107,10 +116,61 @@ export function ScriptsPage({ user }: { user: User }) {
   }, [page, q, status]);
   useEffect(() => {
     if (user.role !== "ADMIN") return;
-    apiClient<{ items: Array<{ engine_id: string; name: string; description?: string; version: string; enabled?: boolean }> }>("/admin/engines")
+    apiClient<{ items: EngineManifest[] }>("/admin/engines")
       .then((value) => setPublishedEngines(value.items || []))
       .catch(() => setPublishedEngines([]));
   }, [user.role, engineMessage]);
+  useEffect(() => {
+    if (user.role !== "ADMIN") return;
+    apiClient<Page<Agent>>("/agents?paged=true&page=1&page_size=100")
+      .then((value) => setRuntimeAgents(value.items || []))
+      .catch(() => setRuntimeAgents([]));
+  }, [user.role]);
+  useEffect(() => {
+    if (user.role !== "ADMIN" || !selectedRuntimeId) {
+      setEngineAssignment(null);
+      return;
+    }
+    setAssignmentLoading(true);
+    setAssignmentMessage("");
+    apiClient<AgentEngineAssignment>(`/admin/agents/${selectedRuntimeId}/engines`)
+      .then(setEngineAssignment)
+      .catch((exc) => {
+        setEngineAssignment(null);
+        setAssignmentMessage(messageOf(exc));
+      })
+      .finally(() => setAssignmentLoading(false));
+  }, [user.role, selectedRuntimeId]);
+  const setEngineAssigned = (engineId: string, assigned: boolean) => {
+    setEngineAssignment((current) => current ? {
+      ...current,
+      items: current.items.map((item) => item.engine_id === engineId ? { ...item, assigned } : item),
+    } : current);
+  };
+  const saveEngineAssignment = async () => {
+    if (!engineAssignment) return;
+    const engineIds = engineAssignment.items
+      .filter((item) => item.enabled !== false && item.assigned)
+      .map((item) => item.engine_id);
+    if (engineAssignment.engine_access_mode === "ASSIGNED" && !engineIds.length) {
+      setAssignmentMessage("限制运行端模式至少需要选择一个可用的自动化方案。");
+      return;
+    }
+    setAssignmentSaving(true);
+    setAssignmentMessage("");
+    try {
+      const updated = await apiClient<AgentEngineAssignment>(`/admin/agents/${engineAssignment.agent_id}/engines`, {
+        method: "PUT",
+        body: JSON.stringify({ mode: engineAssignment.engine_access_mode, engine_ids: engineIds }),
+      });
+      setEngineAssignment(updated);
+      setAssignmentMessage("运行端脚本授权已保存；控制中心下次刷新方案列表后生效。");
+    } catch (exc) {
+      setAssignmentMessage(messageOf(exc));
+    } finally {
+      setAssignmentSaving(false);
+    }
+  };
   return (
     <>
       <div className="page-title">
@@ -151,6 +211,37 @@ export function ScriptsPage({ user }: { user: User }) {
           {publishedEngines.map((engine) => <tr key={engine.engine_id}><td>{engine.name}</td><td className="mono">{engine.engine_id}</td><td>{engine.version}</td><td>{engine.enabled === false ? "已禁用" : "可用"}</td><td>{engine.description || "-"}</td></tr>)}
         </tbody></table></div>
       </div>}
+      {user.role === "ADMIN" && <section className="panel engine-assignment-panel">
+        <div className="detail-title-row">
+          <div>
+            <h2>运行端自动化方案授权</h2>
+            <p className="muted">以不可变的运行端 ID 授权；运行端名称仅用于识别和分类。</p>
+          </div>
+        </div>
+        <label className="engine-assignment-runtime">
+          选择运行端
+          <select value={selectedRuntimeId} onChange={(event) => setSelectedRuntimeId(event.target.value)}>
+            <option value="">请选择运行端</option>
+            {runtimeAgents.map((agent) => <option key={agent.agent_id} value={agent.agent_id}>{agent.agent_name} · {agent.agent_id.slice(0, 12)}…</option>)}
+          </select>
+        </label>
+        {assignmentLoading && <p className="muted" aria-live="polite">正在读取该运行端的脚本授权…</p>}
+        {engineAssignment && <div className="engine-assignment-content">
+          <fieldset disabled={assignmentSaving}>
+            <legend>可用范围</legend>
+            <label className="engine-access-mode"><input type="radio" name="engine-access-mode" checked={engineAssignment.engine_access_mode === "ALL"} onChange={() => setEngineAssignment({ ...engineAssignment, engine_access_mode: "ALL" })} />兼容模式：可使用全部已启用方案</label>
+            <label className="engine-access-mode"><input type="radio" name="engine-access-mode" checked={engineAssignment.engine_access_mode === "ASSIGNED"} onChange={() => setEngineAssignment({ ...engineAssignment, engine_access_mode: "ASSIGNED" })} />限制模式：仅使用下方已选择方案</label>
+          </fieldset>
+          <div className="engine-assignment-list" role="group" aria-label="自动化方案授权列表">
+            {engineAssignment.items.map((engine) => <label key={engine.engine_id} className={`engine-assignment-option${engine.enabled === false ? " disabled" : ""}`}>
+              <input type="checkbox" checked={engine.assigned === true} disabled={assignmentSaving || engine.enabled === false} onChange={(event) => setEngineAssigned(engine.engine_id, event.target.checked)} />
+              <span><strong>{engine.name}</strong><small>{engine.engine_id} · {engine.version}{engine.enabled === false ? " · 已禁用" : ""}{engine.description ? ` · ${engine.description}` : ""}</small></span>
+            </label>)}
+          </div>
+          <button type="button" className="primary" disabled={assignmentSaving} onClick={() => void saveEngineAssignment()}>{assignmentSaving ? "保存中…" : "保存运行端授权"}</button>
+        </div>}
+        {assignmentMessage && <p className="form-message block-message" aria-live="polite">{assignmentMessage}</p>}
+      </section>}
       <div className="toolbar">
         <input
           value={q}

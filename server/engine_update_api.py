@@ -15,10 +15,14 @@ import re
 from typing import Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from common.release import VERSION
 
-from .models import Agent
+from .models import Agent, AgentEngineGrant, now
+from .schemas import AgentEngineAssignmentUpdate
+from .security import audit
 
 
 MAX_ENGINE_BYTES = 2 * 1024 * 1024
@@ -137,50 +141,143 @@ def _engine_manifest(engine_id: str) -> dict:
     }
 
 
-def register_engine_update_routes(app: FastAPI, *, current_user: Callable, current_agent: Callable) -> None:
+def _all_engine_manifests() -> list[dict]:
+    items = [_engine_manifest("default")]
+    if _PUBLISH_DIR.is_dir():
+        for path in sorted(_PUBLISH_DIR.iterdir()):
+            if path.is_dir() and path.name != "default" and _ID.fullmatch(path.name):
+                try:
+                    items.append(_engine_manifest(path.name))
+                except HTTPException:
+                    continue
+    return items
+
+
+def _agent_engine_allowed(agent: Agent, engine_id: str, db: Session) -> bool:
+    if str(getattr(agent, "engine_access_mode", "ALL") or "ALL").upper() != "ASSIGNED":
+        return True
+    return db.scalar(
+        select(AgentEngineGrant.id).where(
+            AgentEngineGrant.agent_id == agent.id,
+            AgentEngineGrant.engine_id == _engine_id(engine_id),
+        )
+    ) is not None
+
+
+def _assignment_payload(agent: Agent, db: Session) -> dict:
+    assigned = {
+        str(item)
+        for item in db.scalars(
+            select(AgentEngineGrant.engine_id).where(AgentEngineGrant.agent_id == agent.id)
+        )
+    }
+    return {
+        "agent_id": agent.id,
+        "agent_name": agent.agent_name,
+        "engine_access_mode": str(getattr(agent, "engine_access_mode", "ALL") or "ALL").upper(),
+        "items": [item | {"assigned": item["engine_id"] in assigned} for item in _all_engine_manifests()],
+    }
+
+
+def register_engine_update_routes(app: FastAPI, *, get_db: Callable, current_user: Callable, current_agent: Callable) -> None:
     @app.get("/api/admin/engines")
     def admin_engine_list(user=Depends(current_user)):
         if user.role != "ADMIN":
             raise HTTPException(status_code=403, detail="仅系统管理员可以查看自动化脚本")
-        items = [_engine_manifest("default")]
-        if _PUBLISH_DIR.is_dir():
-            for path in sorted(_PUBLISH_DIR.iterdir()):
-                if path.is_dir() and path.name != "default" and _ID.fullmatch(path.name):
-                    try:
-                        items.append(_engine_manifest(path.name))
-                    except HTTPException:
-                        continue
-        return {"items": items}
+        return {"items": _all_engine_manifests()}
+
+    @app.get("/api/admin/agents/{agent_id}/engines")
+    def get_agent_engine_assignment(agent_id: str, user=Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "ADMIN":
+            raise HTTPException(status_code=403, detail="仅系统管理员可以分配自动化脚本")
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return _assignment_payload(agent, db)
+
+    @app.put("/api/admin/agents/{agent_id}/engines")
+    def update_agent_engine_assignment(
+        agent_id: str,
+        body: AgentEngineAssignmentUpdate,
+        request: Request,
+        user=Depends(current_user),
+        db: Session = Depends(get_db),
+    ):
+        if user.role != "ADMIN":
+            raise HTTPException(status_code=403, detail="仅系统管理员可以分配自动化脚本")
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        mode = body.mode.upper()
+        engine_ids = list(dict.fromkeys(_engine_id(item) for item in body.engine_ids))
+        available = {item["engine_id"]: item for item in _all_engine_manifests()}
+        missing = [item for item in engine_ids if item not in available]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Automation engine not found: {missing[0]}")
+        disabled = [item for item in engine_ids if available[item].get("enabled") is False]
+        if disabled:
+            raise HTTPException(status_code=422, detail=f"不能分配已禁用的自动化脚本: {disabled[0]}")
+        if mode == "ASSIGNED" and not engine_ids:
+            raise HTTPException(status_code=422, detail="限制运行端模式至少需要分配一个自动化脚本")
+
+        db.execute(delete(AgentEngineGrant).where(AgentEngineGrant.agent_id == agent.id))
+        timestamp = now()
+        for engine_id in engine_ids:
+            db.add(
+                AgentEngineGrant(
+                    agent_id=agent.id,
+                    engine_id=engine_id,
+                    granted_by=user.id,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+        agent.engine_access_mode = mode
+        db.commit()
+        audit(
+            db,
+            request,
+            action="AGENT_ENGINE_ASSIGNMENTS_UPDATED",
+            result="SUCCESS",
+            user_id=user.id,
+            workspace_id=agent.workspace_id,
+            agent_id=agent.id,
+            resource_type="agent_engine_grant",
+            resource_id=agent.id,
+            message=f"mode={mode}; engines={','.join(engine_ids)[:450]}",
+        )
+        return _assignment_payload(agent, db)
 
     @app.get("/api/agent/engines")
-    def engine_list(agent: Agent = Depends(current_agent)):
-        del agent
-        items = [_engine_manifest("default")]
-        if _PUBLISH_DIR.is_dir():
-            for path in sorted(_PUBLISH_DIR.iterdir()):
-                if path.is_dir() and path.name != "default" and _ID.fullmatch(path.name):
-                    try:
-                        item = _engine_manifest(path.name)
-                    except HTTPException:
-                        continue
-                    if item.get("enabled") is not False:
-                        items.append(item)
-        return {"items": items}
+    def engine_list(agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
+        mode = str(getattr(agent, "engine_access_mode", "ALL") or "ALL").upper()
+        items = [
+            item
+            for item in _all_engine_manifests()
+            if item.get("enabled") is not False and _agent_engine_allowed(agent, item["engine_id"], db)
+        ]
+        return {
+            "items": items,
+            "engine_access_mode": mode,
+            "authorization_enforced": mode == "ASSIGNED",
+        }
 
     @app.get("/api/agent/engines/{engine_id}/manifest")
-    def engine_manifest_named(engine_id: str, agent: Agent = Depends(current_agent)):
-        del agent
+    def engine_manifest_named(engine_id: str, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         item = _engine_manifest(engine_id)
         if item.get("enabled") is False:
             raise HTTPException(status_code=404, detail="Automation engine is disabled")
+        if not _agent_engine_allowed(agent, engine_id, db):
+            raise HTTPException(status_code=403, detail="当前运行端未获授权使用此自动化脚本")
         return item
 
     @app.get("/api/agent/engines/{engine_id}/source")
-    def engine_source_named(engine_id: str, agent: Agent = Depends(current_agent)):
-        del agent
+    def engine_source_named(engine_id: str, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         item = _engine_manifest(engine_id)
         if item.get("enabled") is False:
             raise HTTPException(status_code=404, detail="Automation engine is disabled")
+        if not _agent_engine_allowed(agent, engine_id, db):
+            raise HTTPException(status_code=403, detail="当前运行端未获授权使用此自动化脚本")
         path = _source_path(engine_id)
         if engine_id == "default" and not path.is_file():
             path = Path(__file__).resolve().parent.parent / "agent" / "x_automation_engine.py"
@@ -193,12 +290,26 @@ def register_engine_update_routes(app: FastAPI, *, current_user: Callable, curre
 
     # Backward-compatible default-engine endpoints.
     @app.get("/api/agent/engine/manifest")
-    def engine_manifest(agent: Agent = Depends(current_agent)):
-        return engine_manifest_named("default", agent)
+    def engine_manifest(agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
+        item = _engine_manifest("default")
+        if not _agent_engine_allowed(agent, "default", db):
+            raise HTTPException(status_code=403, detail="当前运行端未获授权使用此自动化脚本")
+        return item
 
     @app.get("/api/agent/engine/source")
-    def engine_source(agent: Agent = Depends(current_agent)):
-        return engine_source_named("default", agent)
+    def engine_source(agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
+        item = _engine_manifest("default")
+        if not _agent_engine_allowed(agent, "default", db):
+            raise HTTPException(status_code=403, detail="当前运行端未获授权使用此自动化脚本")
+        path = _source_path("default")
+        if not path.is_file():
+            path = Path(__file__).resolve().parent.parent / "agent" / "x_automation_engine.py"
+        source = path.read_bytes()
+        return Response(content=source, media_type="text/x-python; charset=utf-8", headers={
+            "Cache-Control": "no-store",
+            "X-Laogu-Engine-SHA256": item["sha256"],
+            "X-Laogu-Engine-Version": item["version"],
+        })
 
     @app.post("/api/admin/engine/publish")
     async def publish_engine(request: Request, user=Depends(current_user)):

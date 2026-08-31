@@ -413,6 +413,9 @@ function AgentsPage({ current }: { current: User }) {
   const [registerForm, setRegisterForm] = useState({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
   const [registerResult, setRegisterResult] = useState<{ agent_id: string; agent_token: string; workspace_id: string } | null>(null);
   const [registerMessage, setRegisterMessage] = useState("");
+  const [editingAgentName, setEditingAgentName] = useState(false);
+  const [agentNameDraft, setAgentNameDraft] = useState("");
+  const [renamingAgent, setRenamingAgent] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const result = usePage<Agent>(
     `/agents?paged=true&page=${page}&page_size=20&q=${encodeURIComponent(q)}`,
@@ -518,8 +521,32 @@ if ($setupSucceeded) {
     link.click();
     URL.revokeObjectURL(url);
   };
-  const open = async (item: Agent) =>
-    setSelected(await apiClient(`/agents/${item.agent_id}`));
+  const open = async (item: Agent) => {
+    const detail = await apiClient<typeof selected>(`/agents/${item.agent_id}`);
+    setSelected(detail);
+    setAgentNameDraft(detail?.agent_name || item.agent_name);
+    setEditingAgentName(false);
+  };
+  const renameAgent = async () => {
+    if (!selected || !agentNameDraft.trim()) return;
+    setRenamingAgent(true);
+    setRegisterMessage("");
+    try {
+      const updated = await apiClient<Agent>(`/agents/${selected.agent_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ agent_name: agentNameDraft.trim() }),
+      });
+      setSelected((current) => current ? { ...current, ...updated } : current);
+      setAgentNameDraft(updated.agent_name);
+      setEditingAgentName(false);
+      setRegisterMessage("运行端名称已更新；运行端 ID、Token、设备绑定和任务不受影响。");
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    } finally {
+      setRenamingAgent(false);
+    }
+  };
   return (
     <>
       <PageTitle title="运行端" description="注册 Windows 运行端，查看心跳、浏览器环境和运行状态" />
@@ -594,7 +621,16 @@ if ($setupSucceeded) {
       {!result.data.items.length && !result.loading && <Empty />}
       {selected && (
         <div className="panel detail">
-          <h2>{selected.agent_name}</h2>
+          <div className="detail-title-row">
+            <h2>{selected.agent_name}</h2>
+            {current.role !== "MEMBER" && !editingAgentName && <button type="button" onClick={() => { setAgentNameDraft(selected.agent_name); setEditingAgentName(true); }}>修改名称</button>}
+          </div>
+          {editingAgentName && (
+            <div className="agent-name-editor">
+              <label>运行端名称<input value={agentNameDraft} maxLength={120} onChange={(event) => setAgentNameDraft(event.target.value)} autoFocus /></label>
+              <div className="modal-actions"><button type="button" className="primary" disabled={renamingAgent || !agentNameDraft.trim()} onClick={() => void renameAgent()}>{renamingAgent ? "保存中…" : "保存名称"}</button><button type="button" disabled={renamingAgent} onClick={() => { setAgentNameDraft(selected.agent_name); setEditingAgentName(false); }}>取消</button></div>
+            </div>
+          )}
           <p>
             运行端ID：<span className="mono">{selected.agent_id}</span>
           </p>

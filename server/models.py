@@ -81,12 +81,26 @@ class Agent(Base):
     ip_country: Mapped[str] = mapped_column(String(8), default="UNKNOWN")
     bound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     registered_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    engine_access_mode: Mapped[str] = mapped_column(String(20), default="ALL", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="OFFLINE")
     last_heartbeat: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     profile_count: Mapped[int] = mapped_column(Integer, default=0)
     running_task_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     __table_args__ = (UniqueConstraint("workspace_id", "machine_name", name="uq_agent_machine_workspace"),)
+
+
+class AgentEngineGrant(Base):
+    """Explicit Python automation-engine permission bound to a runtime ID."""
+
+    __tablename__ = "agent_engine_grants"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), index=True)
+    engine_id: Mapped[str] = mapped_column(String(48), index=True)
+    granted_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("agent_id", "engine_id", name="uq_agent_engine_grant"),)
 
 
 class AgentToken(Base):

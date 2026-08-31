@@ -43,7 +43,7 @@ from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_comma
 from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
 from .offline_access import issue_agent_offline_access
-from .schemas import AccountSync, AgentRegister, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
+from .schemas import AccountSync, AgentRegister, AgentUpdate, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
 from .security_diagnostics import configuration_diagnostics, database_diagnostic
 from .script_api import register_script_routes
@@ -999,6 +999,32 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         audit(db, request, action="AGENT_TOKEN_ROTATE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent_token", resource_id=token.token_id)
         return {"agent_id": agent.id, "token_id": token.token_id, "agent_token": raw_token, "expires_at": _dt(token.expires_at)}
 
+    @app.patch("/api/agents/{agent_id}")
+    def update_agent(agent_id: str, body: AgentUpdate, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        agent = db.get(Agent, agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        require_agent_manager(request, db, user, agent)
+        agent_name = body.agent_name.strip()
+        if not agent_name:
+            raise HTTPException(status_code=422, detail="运行端名称不能为空")
+        previous_name = agent.agent_name
+        agent.agent_name = agent_name
+        db.commit()
+        audit(
+            db,
+            request,
+            action="AGENT_RENAMED",
+            result="SUCCESS",
+            user_id=user.id,
+            workspace_id=agent.workspace_id,
+            agent_id=agent.id,
+            resource_type="agent",
+            resource_id=agent.id,
+            message=f"from={previous_name[:120]}; to={agent_name[:120]}",
+        )
+        return _agent_dict(agent, settings)
+
     @app.post("/api/agents/{agent_id}/token/revoke")
     def revoke_token(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
         agent = db.get(Agent, agent_id)
@@ -1329,6 +1355,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     )
     register_engine_update_routes(
         app,
+        get_db=get_db,
         current_user=current_user,
         current_agent=current_agent,
     )

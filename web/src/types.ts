@@ -64,6 +64,20 @@ export type Agent = {
   last_ip?: string | null;
   ip_country?: string;
 };
+export type EngineManifest = {
+  engine_id: string;
+  name: string;
+  description?: string;
+  version: string;
+  enabled?: boolean;
+  assigned?: boolean;
+};
+export type AgentEngineAssignment = {
+  agent_id: string;
+  agent_name: string;
+  engine_access_mode: "ALL" | "ASSIGNED";
+  items: EngineManifest[];
+};
 export type Account = {
   id: string;
   workspace_id: string;

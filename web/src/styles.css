@@ -670,6 +670,120 @@ label {
 .detail {
   margin-top: 15px;
 }
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.agent-name-editor {
+  max-width: 520px;
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid #d4dde4;
+  border-radius: 8px;
+  background: #f8fbfc;
+}
+.agent-name-editor label {
+  display: grid;
+  gap: 6px;
+  color: #334e68;
+  font-size: 13px;
+  font-weight: 600;
+}
+.agent-name-editor .modal-actions {
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+.engine-assignment-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 15px;
+}
+.engine-assignment-panel h2,
+.engine-assignment-panel p {
+  margin: 0;
+}
+.engine-assignment-runtime {
+  display: grid;
+  gap: 6px;
+  max-width: 540px;
+  color: #334e68;
+  font-size: 13px;
+  font-weight: 600;
+}
+.engine-assignment-content {
+  display: grid;
+  gap: 12px;
+}
+.engine-assignment-content fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 11px 12px;
+  border: 1px solid #d4dde4;
+  border-radius: 8px;
+  background: #f8fbfc;
+}
+.engine-assignment-content legend {
+  padding: 0 5px;
+  color: #486581;
+  font-size: 12px;
+  font-weight: 700;
+}
+.engine-access-mode,
+.engine-assignment-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #243b53;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.engine-access-mode input,
+.engine-assignment-option input {
+  min-height: 18px;
+  width: 18px;
+  margin: 1px 0 0;
+  padding: 0;
+}
+.engine-assignment-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px;
+}
+.engine-assignment-option {
+  min-height: 68px;
+  padding: 10px;
+  border: 1px solid #d4dde4;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+.engine-assignment-option:hover {
+  border-color: #0f766e;
+  box-shadow: 0 1px 3px rgba(15, 118, 110, .12);
+}
+.engine-assignment-option:has(input:focus-visible) {
+  outline: 2px solid #99f6e4;
+  outline-offset: 2px;
+}
+.engine-assignment-option strong,
+.engine-assignment-option small {
+  display: block;
+}
+.engine-assignment-option small {
+  margin-top: 3px;
+  color: #718096;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.engine-assignment-option.disabled {
+  color: #718096;
+  background: #f6f8fa;
+  cursor: not-allowed;
+}
 .json-view {
   padding: 14px;
   overflow: auto;

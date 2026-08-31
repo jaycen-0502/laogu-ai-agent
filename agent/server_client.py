@@ -164,10 +164,17 @@ class ServerClient:
     def fetch_engine_manifest(self) -> dict[str, Any]:
         return self._agent_request("GET", "/api/agent/engine/manifest", None)
 
-    def list_engines(self) -> list[dict[str, Any]]:
+    def list_engines_with_policy(self) -> dict[str, Any]:
         response = self._agent_request("GET", "/api/agent/engines", None)
         items = response.get("items", [])
-        return items if isinstance(items, list) else []
+        return {
+            "items": items if isinstance(items, list) else [],
+            "engine_access_mode": str(response.get("engine_access_mode") or "ALL"),
+            "authorization_enforced": response.get("authorization_enforced") is True,
+        }
+
+    def list_engines(self) -> list[dict[str, Any]]:
+        return self.list_engines_with_policy()["items"]
 
     def fetch_engine_manifest_by_id(self, engine_id: str) -> dict[str, Any]:
         engine_id = str(engine_id or "default").strip() or "default"

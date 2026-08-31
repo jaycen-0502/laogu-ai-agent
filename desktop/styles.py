@@ -3,7 +3,7 @@
 APP_STYLE = """
 /* ================= 全局基础配置 ================= */
 QMainWindow, QWidget {
-    background: #F1F5F9;
+    background: #F5F7FB;
     color: #1E293B;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei UI", sans-serif;
     font-size: 13px;
@@ -59,11 +59,31 @@ QLabel#subtitle {
 QLabel#statusBadge {
     background: #F8FAFC;
     border: 1px solid #DCE3ED;
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 6px 11px;
     color: #334155;
     font-size: 12px;
     font-weight: 600;
+}
+QLabel#statusBadge[state="online"] {
+    color: #047857;
+    background: #ECFDF5;
+    border-color: #A7F3D0;
+}
+QLabel#statusBadge[state="offline"] {
+    color: #64748B;
+    background: #F8FAFC;
+    border-color: #DCE3ED;
+}
+QLabel#statusBadge[state="warning"] {
+    color: #A16207;
+    background: #FFFBEB;
+    border-color: #FDE68A;
+}
+QLabel#statusBadge[state="neutral"] {
+    color: #475569;
+    background: #FFFFFF;
+    border-color: #DCE3ED;
 }
 
 QLabel#liveStatus, QLabel#liveStatusOnline, QLabel#liveStatusError {
@@ -80,7 +100,7 @@ QLabel#liveStatusError { color: #DC2626; background: #FEF2F2; }
 
 /* ================= 通用按钮样式 ================= */
 QPushButton {
-    min-height: 34px;
+    min-height: 36px;
     padding: 0 16px;
     color: #334155;
     border: 1px solid #CBD5E1;
@@ -142,7 +162,7 @@ QPushButton#stopAllButton:hover {
     background: #F87171;
 }
 
-/* 🔑 重新认证按钮（警示琥珀橙 - 永远醒目） */
+/* 重新认证按钮 */
 QPushButton#reauthButton {
     color: #FFFFFF;
     font-weight: 700;
@@ -267,13 +287,13 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
 QFrame#overviewPanel, QFrame#actionPanel, QFrame#toolsPanel, QFrame#runtimePanel {
     background: #FFFFFF;
     border: 1px solid #DDE5EF;
-    border-radius: 12px;
+    border-radius: 8px;
 }
 
 QFrame#metricCard {
-    background: #F8FAFC;
+    background: #FFFFFF;
     border: 1px solid #E3EAF3;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 QLabel#metricCaption { color: #64748B; font-size: 12px; font-weight: 500; }
@@ -286,7 +306,7 @@ QLabel#summary { color: #64748B; font-size: 12px; font-weight: 600; }
 QFrame#accountCard {
     background: #FFFFFF;
     border: 1px solid #E2E8F0;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 QFrame#accountCard:hover {
@@ -297,7 +317,7 @@ QFrame#accountCard:hover {
 QFrame#accountCard_selected {
     background: #EFF6FF;
     border: 1px solid #60A5FA;
-    border-radius: 10px;
+    border-radius: 8px;
 }
 
 QFrame#accountCard_selected:hover {
@@ -344,7 +364,7 @@ QTableWidget QTableCornerButton::section { background: transparent; border: none
 QTabWidget#detailsTabs::pane {
     background: #FFFFFF;
     border: 1px solid #DDE5EF;
-    border-radius: 11px;
+    border-radius: 8px;
     top: -1px;
 }
 
@@ -412,9 +432,9 @@ QFormLayout QLabel { color: #475569; font-weight: 600; }
 
 /* ================= 最小化日志浮窗 ================= */
 QWidget#miniLogWindow {
-    background: #F8FAFC;
+    background: #F5F7FB;
     border: 1px solid #D7E0EC;
-    border-radius: 14px;
+    border-radius: 10px;
 }
 QLabel#miniBrandMark {
     min-width: 34px;
@@ -498,12 +518,12 @@ QLabel#miniAutoFollow {
     font-weight: 600;
 }
 QPlainTextEdit#miniLogOutput {
-    color: #CBD5E1;
-    background: #0F172A;
-    selection-color: #FFFFFF;
-    selection-background-color: #2563EB;
-    border: 1px solid #1E293B;
-    border-radius: 10px;
+    color: #334155;
+    background: #FFFFFF;
+    selection-color: #1E3A8A;
+    selection-background-color: #DBEAFE;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
     padding: 10px;
     font-size: 11px;
 }
@@ -518,7 +538,7 @@ QPushButton#miniDangerButton {
 }
 QPushButton#miniPrimaryButton {
     color: #FFFFFF;
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2563EB, stop:1 #3B82F6);
+    background: #2563EB;
     border: 1px solid #1D4ED8;
 }
 QPushButton#miniPrimaryButton:hover {

@@ -209,6 +209,11 @@ class AutomationConfig:
     ai_reply_ratio: float = 0.15       # 15% 概率执行 AI 评论回复（可由控制中心传 0.0 关闭）[cite: 4]
     bookmark_ratio: float = 0.25       # 25% 概率执行保存书签[cite: 4]
     retweet_ratio: float = 0.10        # 10% 偶发转推概率[cite: 4]
+    schedule_mode: str = "smart"
+
+    @property
+    def bypass_time_window(self) -> bool:
+        return self.schedule_mode in {"immediate", "scheduled"}
 
     @classmethod
     def from_mapping(cls, values: dict[str, Any] | None) -> "AutomationConfig":
@@ -238,6 +243,10 @@ class AutomationConfig:
         kw = str(values.get("keyword") or values.get("keywords") or values.get("search_keyword") or "").strip()[:500]
         tag = str(values.get("account_tag") or values.get("profile_name") or values.get("profile_id") or "默认").strip()
 
+        schedule_mode = str(values.get("schedule_mode") or "smart").strip().lower()
+        if schedule_mode not in {"smart", "immediate", "scheduled"}:
+            schedule_mode = "smart"
+
         return cls(
             keyword=kw,
             daily_task_limit=integer("daily_task_limit", 15, 1, 10_000),
@@ -253,6 +262,7 @@ class AutomationConfig:
             ai_reply_ratio=ratio("ai_reply_ratio", 0.15),
             bookmark_ratio=ratio("bookmark_ratio", 0.25),
             retweet_ratio=ratio("retweet_ratio", 0.10),
+            schedule_mode=schedule_mode,
         )
 
 
@@ -1132,7 +1142,12 @@ class XAutomationEngine:
                     current_keyword = keywords_list[(batch_index - 1) % len(keywords_list)]
 
                     # 💡 校验时间窗口并获取当前窗口的【阶段目标上限】
-                    is_allowed, win_desc, stage_limit = get_time_window_status(total_exec, config.daily_task_limit)
+                    if config.bypass_time_window:
+                        is_allowed = True
+                        win_desc = "立即执行" if config.schedule_mode == "immediate" else "自定义定时"
+                        stage_limit = config.daily_task_limit
+                    else:
+                        is_allowed, win_desc, stage_limit = get_time_window_status(total_exec, config.daily_task_limit)
 
                     if not is_allowed:
                         self._print(f"🌙 [{win_desc}] 触发休眠，每 10 分钟自动检测下一阶段...")

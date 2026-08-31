@@ -187,7 +187,7 @@ func (m *XrayManager) launchBridgeAttempt(log *logger.Logger, key string, binary
 	}
 	cmd := exec.Command(binaryPath, "run", "-c", cfgPath)
 	hideWindow(cmd)
-	cmd.Dir = filepath.Dir(cfgPath)
+	cmd.Dir = xrayProcessWorkDir(binaryPath, cfgPath)
 
 	stderrFile, _ := os.Create(stderrPath)
 	if stderrFile != nil {
@@ -358,7 +358,7 @@ func (m *XrayManager) isRetryableBridgeReadyError(err error, cfgPath string, std
 func (m *XrayManager) testRuntimeConfig(binaryPath string, cfgPath string, stderrPath string) error {
 	cmd := exec.Command(binaryPath, "run", "-test", "-c", cfgPath)
 	hideWindow(cmd)
-	cmd.Dir = filepath.Dir(cfgPath)
+	cmd.Dir = xrayProcessWorkDir(binaryPath, cfgPath)
 	stderrFile, _ := os.Create(stderrPath)
 	if stderrFile != nil {
 		defer stderrFile.Close()
@@ -375,6 +375,18 @@ func (m *XrayManager) testRuntimeConfig(binaryPath string, cfgPath string, stder
 		err:       fmt.Errorf("Xray 配置错误：%s", m.describeBridgeReadyError(err, cfgPath, stderrPath)),
 		retryable: false,
 	}
+}
+
+// xrayProcessWorkDir keeps Windows' current-directory path short and makes
+// bundled geoip/geosite assets discoverable next to the selected executable.
+// The config and log paths are absolute, so they do not depend on this cwd.
+func xrayProcessWorkDir(binaryPath string, cfgPath string) string {
+	if dir := filepath.Dir(strings.TrimSpace(binaryPath)); dir != "" && dir != "." {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return filepath.Dir(cfgPath)
 }
 
 func (m *XrayManager) waitBridgeSocksReady(bridge *XrayBridge, timeout time.Duration) error {

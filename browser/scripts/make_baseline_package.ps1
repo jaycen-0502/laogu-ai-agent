@@ -1,3 +1,7 @@
+param(
+    [switch]$IncludeProxyRuntime
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..\")).Path
@@ -18,18 +22,14 @@ if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
 }
 Copy-Item -LiteralPath $exe -Destination (Join-Path $exeDir "Laogu-Browser.exe") -Force
 
-# Runtime binaries come from the verified local Ant Browser working tree. Do not
-# copy its data, config.yaml, logs, or profile state into a distributable package.
-$sourceRuntime = "D:\Ant-Browser-master (2)\Ant-Browser-master\bin"
-if (Test-Path -LiteralPath $sourceRuntime -PathType Container) {
+# Runtime files come from this browser source tree. Do not copy data, config.yaml,
+# logs, or profile state into a distributable package.
+$sourceRuntime = Join-Path $root "bin"
+if ($IncludeProxyRuntime -and (Test-Path -LiteralPath $sourceRuntime -PathType Container)) {
     $targetRuntime = Join-Path $exeDir "bin"
     New-Item -ItemType Directory -Force -Path $targetRuntime | Out-Null
-    foreach ($runtimeName in @("xray.exe", "sing-box.exe", "README.md")) {
-        $runtimePath = Join-Path $sourceRuntime $runtimeName
-        if (Test-Path -LiteralPath $runtimePath -PathType Leaf) {
-            Copy-Item -LiteralPath $runtimePath -Destination (Join-Path $targetRuntime $runtimeName) -Force
-        }
-    }
+    Get-ChildItem -LiteralPath $sourceRuntime -Force |
+        Copy-Item -Destination $targetRuntime -Recurse -Force
 }
 
 $chromeReadme = Join-Path $root "chrome\README.md"
@@ -47,7 +47,7 @@ $readme = @(
     ""
     "Contents:"
     "- Laogu-Browser.exe: Windows build from current source"
-    "- bin: verified Xray / sing-box runtimes"
+    "- bin: empty by default; add your own proxy runtime when needed"
     "- config.init.yaml: release configuration template"
     "- data, logs: empty runtime directories"
     "- chrome-README.md: Chromium runtime availability note"

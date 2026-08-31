@@ -40,6 +40,11 @@ class TaskManager:
         self._tasks: dict[str, Task] = {}
         self._futures: dict[str, Future[Task]] = {}
         self._lock = threading.RLock()
+        self._profile_locks: dict[str, threading.Lock] = {}
+
+    def _profile_lock(self, profile_id: str) -> threading.Lock:
+        with self._lock:
+            return self._profile_locks.setdefault(str(profile_id), threading.Lock())
 
     def create_task(
         self,
@@ -101,26 +106,55 @@ class TaskManager:
             url=task.url,
             timeout=f"{task.timeout_seconds}s",
         )
+        profile_lock = self._profile_lock(task.profile_id)
+        if not profile_lock.acquire(blocking=False):
+            log_task_event(
+                self.logger,
+                task_id=task.task_id,
+                profile_id=task.profile_id,
+                profile_name=task.profile_name,
+                status="WAITING_PROFILE_LOCK",
+                operation=task.task_type,
+            )
+            profile_lock.acquire()
         try:
-            if self.task_executor is not None:
-                task.result = self.task_executor.execute(task)
-            else:
-                task.result = self.browser_manager.run_automation(
-                    profile_id=task.profile_id,
-                    url=task.url,
-                    timeout_seconds=task.timeout_seconds,
-                )
-            task.status = TaskStatus.SUCCESS
-        except Exception as exc:  # Task failures must not escape the worker.
-            task.error = str(exc)
-            lowered = task.error.lower()
-            if "cancelled" in lowered or "canceled" in lowered:
-                task.status = TaskStatus.CANCELLED
-            elif "timed out" in lowered or "timeout" in type(exc).__name__.lower():
-                task.status = TaskStatus.TIMEOUT
-            else:
-                task.status = TaskStatus.FAILED
+            log_task_event(
+                self.logger,
+                task_id=task.task_id,
+                profile_id=task.profile_id,
+                profile_name=task.profile_name,
+                status="PROFILE_LOCK_ACQUIRED",
+                operation=task.task_type,
+            )
+            try:
+                if self.task_executor is not None:
+                    task.result = self.task_executor.execute(task)
+                else:
+                    task.result = self.browser_manager.run_automation(
+                        profile_id=task.profile_id,
+                        url=task.url,
+                        timeout_seconds=task.timeout_seconds,
+                    )
+                task.status = TaskStatus.SUCCESS
+            except Exception as exc:  # Task failures must not escape the worker.
+                task.error = str(exc)
+                lowered = task.error.lower()
+                if "cancelled" in lowered or "canceled" in lowered:
+                    task.status = TaskStatus.CANCELLED
+                elif "timed out" in lowered or "timeout" in type(exc).__name__.lower():
+                    task.status = TaskStatus.TIMEOUT
+                else:
+                    task.status = TaskStatus.FAILED
         finally:
+            profile_lock.release()
+            log_task_event(
+                self.logger,
+                task_id=task.task_id,
+                profile_id=task.profile_id,
+                profile_name=task.profile_name,
+                status="PROFILE_LOCK_RELEASED",
+                operation=task.task_type,
+            )
             task.elapsed_time = round(time.monotonic() - started, 3)
             task.finished_at = datetime.now().astimezone()
 

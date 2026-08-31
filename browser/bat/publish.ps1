@@ -2,7 +2,8 @@
     [string]$Target,
     [string]$Version,
     [ValidateSet("INSTALLER", "PORTABLE", "BOTH")]
-    [string]$WindowsFormat
+    [string]$WindowsFormat,
+    [switch]$IncludeProxyRuntime
 )
 
 Set-StrictMode -Version Latest
@@ -511,14 +512,30 @@ function New-WindowsStaging {
     $stagingBinDir = Join-Path $stagingDir "bin"
     New-Item -ItemType Directory -Path $stagingBinDir -Force | Out-Null
 
-    foreach ($required in @("xray.exe", "sing-box.exe")) {
-        $source = Join-Path $binDir $required
-        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-            throw "缺少运行时文件: bin\$required"
+    if ($IncludeProxyRuntime) {
+        foreach ($required in @("xray.exe", "sing-box.exe")) {
+            $source = Join-Path $binDir $required
+            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+                throw "缺少运行时文件: bin\$required"
+            }
+            Copy-Item -LiteralPath $source -Destination (Join-Path $stagingBinDir $required) -Force
         }
-        Copy-Item -LiteralPath $source -Destination (Join-Path $stagingBinDir $required) -Force
+        foreach ($optional in @("geoip.dat", "geosite.dat", "wintun.dll")) {
+            $source = Join-Path $binDir $optional
+            if (Test-Path -LiteralPath $source -PathType Leaf) {
+                Copy-Item -LiteralPath $source -Destination (Join-Path $stagingBinDir $optional) -Force
+            }
+        }
+        Write-Host "✓ 复制自定义代理运行时 bin\"
     }
-    Write-Host "✓ 复制 bin\（xray.exe, sing-box.exe）"
+    else {
+        @(
+            "Proxy runtime is not bundled by default.",
+            "Add your own compatible xray.exe and/or sing-box.exe here.",
+            "Place geoip.dat, geosite.dat, and wintun.dll beside xray.exe when required."
+        ) | Set-Content -LiteralPath (Join-Path $stagingBinDir "README.txt") -Encoding UTF8
+        Write-Host "✓ 默认不打包 Xray/sing-box，保留可自定义 bin\"
+    }
 
     Copy-WindowsChromePayload -ChromeRoot $chromeRoot -StagingDir $stagingDir
 
@@ -678,12 +695,17 @@ function Publish-Windows {
     if ($Format -in @("INSTALLER", "BOTH")) {
         $makensisPath = Resolve-NsisPath
     }
-    Assert-RuntimeHashes -Target "windows-amd64"
+    if ($IncludeProxyRuntime) {
+        Assert-RuntimeHashes -Target "windows-amd64"
+    }
+    else {
+        Write-Host "✓ 跳过代理运行时校验（按需由用户自行放入 bin\）"
+    }
     Build-WindowsBinary
 
     $stagingDir = $null
     try {
-        $stagingDir = New-WindowsStaging
+        $stagingDir = New-WindowsStaging -IncludeProxyRuntime:$IncludeProxyRuntime
         if ($Format -in @("INSTALLER", "BOTH")) {
             Invoke-WindowsPackaging -MakensisPath $makensisPath -StagingDir $stagingDir
             $script:WindowsInstallerDone = $true

@@ -8,13 +8,14 @@ import socket
 import sys
 from typing import Any, Callable
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QThread, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QDateTime, QEvent, QObject, QPoint, Qt, QThread, QThreadPool, QTime, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QMouseEvent, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDateTimeEdit,
     QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
     QSystemTrayIcon,
+    QTimeEdit,
 )
 
 from .controller import AccountRow, DesktopController
@@ -97,6 +99,36 @@ class TaskConfigDialog(QDialog):
         self.set_engines(engines, selected_engine)
         form.addRow("自动化方案", self.engine_input)
 
+        self.schedule_mode_input = QComboBox()
+        self.schedule_mode_input.setMinimumHeight(32)
+        self.schedule_mode_input.addItem("智能时段（保持现有规则）", "smart")
+        self.schedule_mode_input.addItem("立即执行", "immediate")
+        self.schedule_mode_input.addItem("自定义定时", "scheduled")
+        form.addRow("运行模式", self.schedule_mode_input)
+
+        self.schedule_type_input = QComboBox()
+        self.schedule_type_input.setMinimumHeight(32)
+        self.schedule_type_input.addItem("单次执行", "once")
+        self.schedule_type_input.addItem("每天执行", "daily")
+        form.addRow("定时类型", self.schedule_type_input)
+
+        self.scheduled_at_input = QDateTimeEdit(QDateTime.currentDateTime().addSecs(300))
+        self.scheduled_at_input.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.scheduled_at_input.setCalendarPopup(True)
+        self.scheduled_at_input.setMinimumDateTime(QDateTime.currentDateTime())
+        self.scheduled_at_input.setMinimumHeight(32)
+        form.addRow("单次执行时间", self.scheduled_at_input)
+
+        self.scheduled_time_input = QTimeEdit(QTime.currentTime().addSecs(300))
+        self.scheduled_time_input.setDisplayFormat("HH:mm")
+        self.scheduled_time_input.setMinimumHeight(32)
+        form.addRow("每日执行时间", self.scheduled_time_input)
+
+        self.schedule_timezone_label = QLabel("Asia/Shanghai（北京时间）")
+        form.addRow("定时时区", self.schedule_timezone_label)
+        self.schedule_mode_input.currentIndexChanged.connect(self._update_schedule_controls)
+        self.schedule_type_input.currentIndexChanged.connect(self._update_schedule_controls)
+
         raw_kw = str(active.get("keyword") or active.get("keywords") or "")
         self.keyword_input = QLineEdit(raw_kw)
         self.keyword_input.setMaxLength(500)
@@ -127,6 +159,8 @@ class TaskConfigDialog(QDialog):
         ):
             self.ai_reply_ratio_input.addItem(label, ratio)
         self._set_ai_reply_ratio(active.get("ai_reply_ratio", 0.15))
+        self._apply_schedule(active)
+        self._update_schedule_controls()
         form.addRow("AI 评论回复", self.ai_reply_ratio_input)
 
         hint = QLabel("自动化引擎将在后台独立运行筛选，不会进行未经许可的违规操作。")
@@ -175,7 +209,39 @@ class TaskConfigDialog(QDialog):
             except (TypeError, ValueError):
                 widget.setValue(default)
         self._set_ai_reply_ratio(active.get("ai_reply_ratio", 0.15))
+        self._apply_schedule(active)
         self.set_engines(None, str(active.get("engine_id") or "default"))
+
+    def _apply_schedule(self, active: dict[str, Any]) -> None:
+        mode = str(active.get("schedule_mode") or "smart").lower()
+        mode_index = self.schedule_mode_input.findData(mode)
+        self.schedule_mode_input.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+
+        schedule_type = str(active.get("schedule_type") or "once").lower()
+        type_index = self.schedule_type_input.findData(schedule_type)
+        self.schedule_type_input.setCurrentIndex(type_index if type_index >= 0 else 0)
+
+        scheduled_at = str(active.get("scheduled_at") or "").strip()
+        # The scheduler is explicitly Beijing time, independent of the Windows
+        # system timezone used to render this dialog.
+        parsed = QDateTime.fromString(scheduled_at[:16], "yyyy-MM-ddTHH:mm") if scheduled_at else QDateTime()
+        if parsed.isValid() and parsed >= QDateTime.currentDateTime():
+            self.scheduled_at_input.setDateTime(parsed)
+        else:
+            self.scheduled_at_input.setDateTime(QDateTime.currentDateTime().addSecs(300))
+
+        scheduled_time = QTime.fromString(str(active.get("scheduled_time") or ""), "HH:mm")
+        if scheduled_time.isValid():
+            self.scheduled_time_input.setTime(scheduled_time)
+        self._update_schedule_controls()
+
+    def _update_schedule_controls(self) -> None:
+        scheduled = self.schedule_mode_input.currentData() == "scheduled"
+        daily = self.schedule_type_input.currentData() == "daily"
+        self.schedule_type_input.setEnabled(scheduled)
+        self.scheduled_at_input.setEnabled(scheduled and not daily)
+        self.scheduled_time_input.setEnabled(scheduled and daily)
+        self.schedule_timezone_label.setEnabled(scheduled)
 
     def _set_ai_reply_ratio(self, value: Any) -> None:
         try:
@@ -206,6 +272,11 @@ class TaskConfigDialog(QDialog):
         return {
             "engine_id": str(engine.get("engine_id") or "default"),
             "engine_name": str(engine.get("engine_name") or "默认自动化引擎"),
+            "schedule_mode": str(self.schedule_mode_input.currentData() or "smart"),
+            "schedule_type": str(self.schedule_type_input.currentData() or "once"),
+            "scheduled_at": self.scheduled_at_input.dateTime().toString("yyyy-MM-ddTHH:mm:00+08:00"),
+            "scheduled_time": self.scheduled_time_input.time().toString("HH:mm"),
+            "schedule_timezone": "Asia/Shanghai",
             "keyword": raw_kw,
             "daily_task_limit": self.daily_limit_input.value(),
             "batch_interval_minutes": self.batch_interval_input.value(),
@@ -221,7 +292,7 @@ class AgentReauthDialog(QDialog):
 
     def __init__(self, agent_id: str = "", parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("🔑 重新认证运行端")
+        self.setWindowTitle("重新认证运行端")
         self.setModal(True)
         self.setMinimumWidth(480)
         form = QFormLayout(self)
@@ -623,6 +694,7 @@ class MainWindow(QMainWindow):
         self._log_flush_scheduled = False
         settings = getattr(self.controller, "settings", None)
         self._log_tail_path = os.fspath(getattr(settings, "log_file", ""))
+        self._log_tail_active_path = self._log_tail_path
         self._log_tail_offset = 0
         self._log_tail_partial = ""
         self._log_tail_timer = QTimer(self)
@@ -638,6 +710,8 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._setup_stdout_redirect()
+        self._read_log_file_tail(seed=True)
+        self._log_tail_timer.start()
         self._wire_events()
         self._load_registry()
         self._load_local_statistics()
@@ -717,6 +791,10 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
+            if path != self._log_tail_active_path:
+                self._log_tail_active_path = path
+                self._log_tail_offset = 0
+                self._log_tail_partial = ""
             size = os.path.getsize(path)
             if size < self._log_tail_offset:
                 self._log_tail_offset = 0
@@ -734,8 +812,8 @@ class MainWindow(QMainWindow):
                 lines = [line.strip() for line in text.splitlines() if line.strip()][-8:]
                 if lines:
                     recent = list(self._recent_log_lines)
-                    merged = lines + [line for line in recent if line not in lines]
-                    self._mini_window.seed_logs(merged[-8:])
+                    merged = [line for line in recent if line not in lines] + lines
+                    self._mini_window.seed_logs(merged[-20:])
                     self._recent_log_lines.clear()
                     self._recent_log_lines.extend(merged[-20:])
                 return
@@ -751,13 +829,12 @@ class MainWindow(QMainWindow):
             for line in chunks:
                 clean = line.strip()
                 if clean:
-                    self._recent_log_lines.append(clean)
-                    self._mini_window.append_log(clean)
+                    self._queue_log(clean)
         except (OSError, UnicodeError):
             return
 
     def _poll_log_file(self) -> None:
-        if self._closing or not self._mini_window.isVisible():
+        if self._closing:
             return
         self._read_log_file_tail()
 
@@ -1122,6 +1199,8 @@ class MainWindow(QMainWindow):
 
         self.server_state_label.setText(f"服务器：{server_text}")
         self.agent_state_label.setText(f"运行端：{agent_text}")
+        self.server_state_label.setProperty("state", "online" if server == "ONLINE" else "offline")
+        self.agent_state_label.setProperty("state", "online" if agent == "ONLINE" else ("warning" if agent == "REAUTH_REQUIRED" else "offline"))
 
         needs_reauth = agent in {"UNCONFIGURED", "UNREGISTERED", "REAUTH_REQUIRED"}
         self.reauth_button.setVisible(needs_reauth)
@@ -1153,6 +1232,10 @@ class MainWindow(QMainWindow):
 
         heartbeat = str(status.get("last_heartbeat") or "—").replace("T", " ")[:19]
         self.heartbeat_label.setText(f"最近心跳：{heartbeat}")
+        self.heartbeat_label.setProperty("state", "neutral")
+        for label in (self.server_state_label, self.agent_state_label, self.heartbeat_label):
+            label.style().unpolish(label)
+            label.style().polish(label)
         self._mini_window.set_connection(
             "● 服务在线" if online else f"● {agent_text}",
             online,
@@ -1543,17 +1626,20 @@ class MainWindow(QMainWindow):
         status = result.get("status", "SUCCESS") if isinstance(result, dict) else "SUCCESS"
         error_msg = str(result.get("error", "")) if isinstance(result, dict) else ""
         target_url = str(result.get("url", "")) if isinstance(result, dict) else ""
+        self._log(f"[自动化状态] profile={profile_id} state={status}")
+        if error_msg:
+            self._log(f"[自动化状态] profile={profile_id} error={error_msg[:300]}")
 
         if status == "CHALLENGE_REQUIRED" or "account/access" in error_msg or "account/access" in target_url:
-            self.statusBar().showMessage(f"⚠️ 档案 {profile_id} 触发人机验证，任务已自动终止！")
-            self._log(f"🚨 风控警报  档案 {profile_id} 遇到人机验证 (account/access)，自动化已强行停止！")
+            self.statusBar().showMessage(f"档案 {profile_id} 触发人机验证，任务已自动终止")
+            self._log(f"风控警报：档案 {profile_id} 遇到人机验证 (account/access)，自动化已停止")
 
             QMessageBox.warning(
                 self,
-                "⚠️ 触发 X 平台人机验证",
+                "触发 X 平台人机验证",
                 f"档案【{profile_id}】在运行时触发了 Cloudflare / X 平台人机验证。\n\n"
                 f"出于账号安全保护，自动化任务已【强制终止】。\n\n"
-                f"👉 请切到对应的浏览器窗口手动点一下验证框，完成后即可重新启动。"
+                f"请切到对应的浏览器窗口手动完成验证，完成后即可重新启动。"
             )
             self._load_local_statistics()
             return
@@ -1631,10 +1717,8 @@ class MainWindow(QMainWindow):
         self._update_mini_metrics()
         self.hide()
         self._mini_window.show_at_bottom_right(screen.availableGeometry())
-        self._log_tail_timer.start()
 
     def _restore_from_mini_window(self) -> None:
-        self._log_tail_timer.stop()
         self._mini_window.hide()
         self.showNormal()
         self.raise_()
@@ -1670,7 +1754,6 @@ class MainWindow(QMainWindow):
 
     def _hide_mini_window(self) -> None:
         """隐藏监控浮窗，但不停止后台 Agent 或主窗口生命周期。"""
-        self._log_tail_timer.stop()
         self._mini_window.hide()
         if self._tray_icon is not None:
             self._tray_icon.showMessage(

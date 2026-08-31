@@ -60,11 +60,45 @@ const roleNames: Record<string, string> = {
   MEMBER: "成员",
 };
 
+const iconPaths: Record<string, React.ReactNode> = {
+  ai: <><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/><path d="m9.8 12 1.5 1.5 3-3"/></>,
+  control: <><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><path d="M14 4v6M6 14v6"/></>,
+  ops: <><path d="M4 13h3l2-6 4 10 2-6h5"/><path d="M4 20h16"/></>,
+  license: <><path d="M12 3 5 6v5c0 4.4 2.9 8.4 7 10 4.1-1.6 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/></>,
+  message: <><path d="M5 5h14v11H9l-4 4z"/><path d="M8 9h8M8 12h5"/></>,
+  provider: <><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M19 9h3M2 15h3M19 15h3"/></>,
+  dashboard: <><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></>,
+  workspace: <><path d="M4 20h16M6 20V8l6-4 6 4v12"/><path d="M9 11h2M13 11h2M9 15h2M13 15h2"/></>,
+  users: <><circle cx="9" cy="8" r="3"/><path d="M3.5 20c.6-4 2.5-6 5.5-6s4.9 2 5.5 6"/><path d="M16 5.5a3 3 0 0 1 0 5.5M17 14c2.2.6 3.5 2.6 3.8 5"/></>,
+  agent: <><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></>,
+  account: <><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-5 3.4-7 8-7s7.2 2 8 7"/></>,
+  profile: <><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M7 16c.6-2 3.4-2 4 0M14 9h3M14 13h3"/></>,
+  task: <><path d="M9 6h11M9 12h11M9 18h11"/><path d="m4 6 1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></>,
+  activity: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+  stats: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
+  script: <><path d="m9 7-5 5 5 5M15 7l5 5-5 5M13 4l-2 16"/></>,
+  settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
+  menu: <><path d="M4 7h16M4 12h16M4 17h16"/></>,
+  close: <><path d="m6 6 12 12M18 6 6 18"/></>,
+};
+
+const navIcons: Record<string, string> = {
+  "/control-center": "control", "/ops": "ops", "/licenses": "license", "/telegram-translation": "message",
+  "/ai-providers": "provider", "/dashboard": "dashboard", "/workspaces": "workspace", "/users": "users",
+  "/agents": "agent", "/accounts": "account", "/profiles": "profile", "/tasks": "task", "/activity": "activity",
+  "/statistics": "stats", "/scripts": "script", "/script-runs": "activity", "/settings": "settings",
+};
+
+function Icon({ name, className = "" }: { name: string; className?: string }) {
+  return <svg className={`ui-icon ${className}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{iconPaths[name] || iconPaths.dashboard}</svg>;
+}
+
 function Layout({ user }: { user: User }) {
   const location = useLocation();
   const navigate = useNavigate();
   const aiMenuPaths = new Set(["/ai/chat", "/ai/translation", "/ai/images", "/ai/analysis", "/ai/writing", "/ai/tasks"]);
   const [aiExpanded, setAiExpanded] = useState(() => location.pathname.startsWith("/ai/"));
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const isPlatformAdmin = user.role === "ADMIN";
   const logout = () => {
     authStore.clear();
@@ -78,22 +112,22 @@ function Layout({ user }: { user: User }) {
     const feature = path === "/ai/chat" ? "CHAT" : path === "/ai/translation" ? "TRANSLATE" : path === "/ai/images" ? "IMAGES" : path === "/ai/writing" ? "WRITING" : path === "/ai/analysis" ? "ANALYSIS" : path === "/ai/tasks" ? "TASKS" : "";
     return !feature || user.permissions?.[feature] !== false;
   };
+  useEffect(() => setSidebarOpen(false), [location.pathname]);
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside id="primary-navigation" className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div className="brand">
-          <span className="brand-mark">L</span>
-          <span>{isPlatformAdmin ? "老谷平台管理" : "老谷用户工作台"}</span>
+          <span className="brand-mark"><img src="/laogu-control-center-logo.svg" alt="" /></span>
+          <span className="brand-copy"><strong>{isPlatformAdmin ? "老谷平台管理" : "老谷用户工作台"}</strong><small>Operations Console</small></span>
         </div>
         <div className="workspace-card">
           <span className="workspace-label">当前工作区</span>
           <strong>{user.workspace_name || (isPlatformAdmin ? "平台全局" : "未分配工作区")}</strong>
           <small>ID：{user.workspace_id || "全局管理"}</small>
-          工作区：{user.workspace_id || "全局"}
         </div>
         <nav>
           <button type="button" className={`nav-group-toggle ${location.pathname.startsWith("/ai/") ? "active" : ""}`} onClick={() => setAiExpanded((value) => !value)}>
-            <span>AI 功能</span><span>{aiExpanded ? "−" : "+"}</span>
+            <span className="nav-label"><Icon name="ai" />AI 功能</span><span className="nav-chevron" aria-hidden="true">{aiExpanded ? "−" : "+"}</span>
           </button>
           {aiExpanded && <div className="nav-group-items">
             {menu.filter(([path, , roles]) => aiMenuPaths.has(path) && canSee(path, roles)).map(([path, label]) => (
@@ -102,14 +136,14 @@ function Layout({ user }: { user: User }) {
                 className={location.pathname === path || location.pathname.startsWith(`${path}/`) ? "active" : ""}
                 to={path}
               >
-                {label}
+                <Icon name="ai" />{label}
               </Link>
             ))}
           </div>}
           {menu
             .filter(([path, , roles]) => !aiMenuPaths.has(path) && canSee(path, roles))
             .map(([path, label]) => (
-              <Link key={path} className={location.pathname === path || location.pathname.startsWith(`${path}/`) ? "active" : ""} to={path}>{label}</Link>
+              <Link key={path} className={location.pathname === path || location.pathname.startsWith(`${path}/`) ? "active" : ""} to={path}><Icon name={navIcons[path] || "dashboard"} />{label}</Link>
             ))}
         </nav>
         <div className="sidebar-bottom">
@@ -119,9 +153,11 @@ function Layout({ user }: { user: User }) {
           </button>
         </div>
       </aside>
+      {sidebarOpen && <button className="sidebar-scrim" type="button" aria-label="关闭导航菜单" onClick={() => setSidebarOpen(false)} />}
       <main className="main-area">
         <header className="topbar">
-          <div>
+          <button className="mobile-menu-button" type="button" aria-label={sidebarOpen ? "关闭导航菜单" : "打开导航菜单"} aria-expanded={sidebarOpen} aria-controls="primary-navigation" onClick={() => setSidebarOpen((value) => !value)}><Icon name={sidebarOpen ? "close" : "menu"} /></button>
+          <div className="topbar-title">
             <strong>
               {menu.find(([path]) => location.pathname === path || location.pathname.startsWith(`${path}/`))?.[1] ||
                 "管理后台"}
@@ -271,7 +307,7 @@ export function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
     <div className="login-page">
       <div className="login-card">
         <div className="brand login-brand">
-          <span className="brand-mark">L</span>
+          <span className="brand-mark"><img src="/laogu-control-center-logo.svg" alt="" /></span>
           <span>老谷 AI 工作台</span>
         </div>
         <h1>欢迎回来</h1>
@@ -352,7 +388,7 @@ function InvitePage({ onAccepted }: { onAccepted: (user: User, token: string) =>
     <div className="login-page">
       <div className="login-card invite-card">
         <div className="brand login-brand">
-          <span className="brand-mark">L</span>
+          <span className="brand-mark"><img src="/laogu-control-center-logo.svg" alt="" /></span>
           <span>老谷 AI 工作台</span>
         </div>
         <h1>加入工作区</h1>

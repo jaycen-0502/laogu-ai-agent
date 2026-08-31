@@ -1,4 +1,5 @@
-from typing import Any
+from typing import Any, Callable
+import time
 
 from .laogu_api import LaoguApi, LaoguApiError
 
@@ -28,6 +29,77 @@ class BrowserManager:
             return self.api.start_profile(profile_id, timeout_seconds)
         except LaoguApiError as exc:
             raise BrowserManagerError(f"Failed to start profile {profile_id}: {exc}") from exc
+
+    def start_profile_ready(
+        self,
+        profile_id: str,
+        timeout_seconds: int = 30,
+        *,
+        retries: int = 2,
+        progress: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Start one Profile and wait until its runtime reports usable state."""
+        profile_id = str(profile_id)
+        last_error: Exception | None = None
+        for attempt in range(max(0, int(retries)) + 1):
+            if progress:
+                progress(f"PROFILE_STARTING attempt={attempt + 1}/{max(0, int(retries)) + 1}")
+            try:
+                response = self.start_profile(profile_id, timeout_seconds)
+                if self._is_ready(response):
+                    if progress:
+                        progress("PROFILE_READY source=start_response")
+                    return response
+                deadline = time.monotonic() + max(1, int(timeout_seconds))
+                while time.monotonic() < deadline:
+                    time.sleep(0.5)
+                    status = self.check_status(profile_id)
+                    if self._is_ready(status):
+                        merged = dict(response)
+                        merged.update(status)
+                        if progress:
+                            progress("PROFILE_READY source=status_poll")
+                        return merged
+                raise BrowserManagerError(
+                    f"Profile [{profile_id}] did not become ready within {timeout_seconds}s"
+                )
+            except Exception as exc:
+                last_error = exc
+                if progress:
+                    progress(f"PROFILE_START_FAILED attempt={attempt + 1} error={exc}")
+                if attempt < max(0, int(retries)):
+                    time.sleep(min(3.0, 1.0 + attempt))
+        raise BrowserManagerError(
+            f"Profile [{profile_id}] failed to start after {max(0, int(retries)) + 1} attempts: {last_error}"
+        ) from last_error
+
+    @staticmethod
+    def _is_ready(payload: Any) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        for key in ("cdpUrl", "cdp_url", "debuggerUrl", "debugger_url", "webSocketDebuggerUrl"):
+            if str(payload.get(key) or "").strip():
+                return True
+        # Older Browser API versions expose only the debugging port. Treat a
+        # valid port as ready; the controller normalizes it to a local CDP URL.
+        for key in ("port", "cdpPort", "cdp_port", "debuggerPort", "debugger_port"):
+            value = payload.get(key)
+            if isinstance(value, int) and 1 <= value <= 65535:
+                return True
+        for key in ("debugReady", "debug_ready", "ready"):
+            if payload.get(key) is True:
+                return True
+        status = str(payload.get("status") or payload.get("browserStatus") or "").upper()
+        if status == "READY":
+            return True
+        # Laogu responses may wrap runtime data under ``data`` or ``result``.
+        # Inspect nested objects without changing the response contract.
+        for value in payload.values():
+            if isinstance(value, dict) and BrowserManager._is_ready(value):
+                return True
+            if isinstance(value, list) and any(BrowserManager._is_ready(item) for item in value):
+                return True
+        return False
 
     def check_status(self, profile_id: str) -> dict[str, Any]:
         try:

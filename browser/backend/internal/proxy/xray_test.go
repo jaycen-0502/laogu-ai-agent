@@ -74,6 +74,19 @@ func TestXrayLaunchErrorRetryClassification(t *testing.T) {
 	}
 }
 
+func TestXrayProcessWorkDirUsesBinaryDirectory(t *testing.T) {
+	t.Parallel()
+
+	binaryPath := filepath.Join(t.TempDir(), "bin", "xray.exe")
+	cfgPath := filepath.Join(t.TempDir(), "very", "long", "data", "xray-config.json")
+	if err := os.MkdirAll(filepath.Dir(binaryPath), 0o755); err != nil {
+		t.Fatalf("create binary directory: %v", err)
+	}
+	if got, want := xrayProcessWorkDir(binaryPath, cfgPath), filepath.Dir(binaryPath); got != want {
+		t.Fatalf("process workdir = %q, want binary directory %q", got, want)
+	}
+}
+
 func TestXrayBridgeReadyErrorRetryPolicy(t *testing.T) {
 	t.Parallel()
 

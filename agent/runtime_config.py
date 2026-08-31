@@ -43,3 +43,8 @@ class RuntimeConfig:
 
     def snapshot(self, profile_id: str) -> dict[str, Any]:
         return self.get(profile_id)
+
+    def all(self) -> dict[str, dict[str, Any]]:
+        """Return a detached snapshot for restoring persisted schedules."""
+        with self._lock:
+            return json.loads(json.dumps(self._items, ensure_ascii=False))

@@ -4,7 +4,7 @@
   "files": [
     {
       "path": "bin/xray.exe",
-      "sha256": "103da2750f4348a266ae61632c322f95cf3e18dce99eb588e685379f041e97c5",
+      "sha256": "1d9674327972a21afd4c906a7a72bb0856935aa9e0227c87f34f03d11a88bddf",
       "targets": [
         "windows-amd64"
       ],

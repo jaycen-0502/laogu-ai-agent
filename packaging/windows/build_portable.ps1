@@ -52,6 +52,16 @@ try {
     python -m PyInstaller --noconfirm --distpath (Join-Path $Project "dist") --workpath $Work $Spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 
+    # Qt6Core on Windows uses the operating system ICU. PyInstaller can pick
+    # up an incompatible icuuc.dll from an unrelated PATH entry (for example
+    # Poppler), which makes QtWidgets fail with WinError 127 at startup.
+    $InternalRuntime = Join-Path $Dist "_internal"
+    Get-ChildItem -LiteralPath $InternalRuntime -File -Filter "icu*.dll" -ErrorAction SilentlyContinue |
+        Remove-Item -Force
+    Get-ChildItem -LiteralPath $InternalRuntime -File -Filter "api-ms-win-*.dll" -ErrorAction SilentlyContinue |
+        Remove-Item -Force
+    Remove-Item -LiteralPath (Join-Path $InternalRuntime "ucrtbase.dll") -Force -ErrorAction SilentlyContinue
+
     New-Item -ItemType Directory -Force -Path (Join-Path $Dist "config"), (Join-Path $Dist "logs"), (Join-Path $Dist "agent_data") | Out-Null
     Copy-Item -LiteralPath (Join-Path $Project "packaging\windows\laogu.env.example") -Destination (Join-Path $Dist "config\laogu.env.example") -Force
     Copy-Item -LiteralPath (Join-Path $Project "packaging\windows\README.txt") -Destination (Join-Path $Dist "README.txt") -Force

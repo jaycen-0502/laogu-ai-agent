@@ -233,8 +233,12 @@ SectionEnd
 Section "Proxy Runtime (xray / sing-box)" SecRuntime
   SectionIn RO
   SetOutPath "$INSTDIR\bin"
-  File "${STAGINGDIR}\bin\xray.exe"
-  File "${STAGINGDIR}\bin\sing-box.exe"
+  File /nonfatal "${STAGINGDIR}\bin\README.txt"
+  File /nonfatal "${STAGINGDIR}\bin\xray.exe"
+  File /nonfatal "${STAGINGDIR}\bin\sing-box.exe"
+  File /nonfatal "${STAGINGDIR}\bin\geoip.dat"
+  File /nonfatal "${STAGINGDIR}\bin\geosite.dat"
+  File /nonfatal "${STAGINGDIR}\bin\wintun.dll"
 SectionEnd
 
 Section /o "Desktop Shortcut" SecDesktop
@@ -243,7 +247,7 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecMain}    "Laogu Browser main program and default config (required)"
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecRuntime} "xray and sing-box proxy tools (vless/vmess/hysteria2)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecRuntime} "Optional proxy runtime; add your own xray/sing-box files under bin"
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "Create a shortcut on the desktop"
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 

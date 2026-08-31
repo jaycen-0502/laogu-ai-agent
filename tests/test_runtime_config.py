@@ -12,3 +12,4 @@ def test_runtime_config_versions_and_modes(tmp_path: Path):
     assert second["version"] == 2
     assert second["active"]["query"] == "b"
     assert config.snapshot("profile-1")["next_run"]["query"] == "a"
+    assert config.all()["profile-1"]["active"]["query"] == "b"

@@ -461,6 +461,23 @@ def test_desktop_minimize_surface_reads_new_agent_log_lines(tmp_path):
     app.processEvents()
 
 
+def test_desktop_main_log_reads_new_agent_lines_while_mini_window_is_hidden(tmp_path):
+    app = qapp()
+    window = MainWindow(make_controller(records=[]))
+    window._log_tail_path = str(tmp_path / "agent.log")
+    window._log_tail_offset = 0
+    (tmp_path / "agent.log").write_text("[12:10:00] state=WAITING_SCHEDULE\n", encoding="utf-8")
+    window._poll_log_file()
+    app.processEvents()
+    window._flush_log_buffer()
+
+    assert window._mini_window.isHidden()
+    assert "state=WAITING_SCHEDULE" in window.log_output.toPlainText()
+
+    window.close()
+    app.processEvents()
+
+
 def test_desktop_mini_window_is_resizable_and_can_hide_without_stopping_agent():
     app = qapp()
     agent_service = FakeAgentService()
@@ -531,12 +548,22 @@ def test_task_config_dialog_has_safe_defaults_and_returns_config():
     assert values["max_engagement_threshold"] == 10_000
     assert values["ai_reply_ratio"] == 0.15
     assert values["sleep_on_rate_limit"] is True
+    assert values["schedule_mode"] == "smart"
+    assert values["schedule_type"] == "once"
+    assert values["schedule_timezone"] == "Asia/Shanghai"
 
     dialog.ai_reply_ratio_input.setCurrentIndex(0)
     assert dialog.config()["ai_reply_ratio"] == 0.0
 
     dialog.apply_initial({"active": {"ai_reply_ratio": 0.25}})
     assert dialog.config()["ai_reply_ratio"] == 0.25
+    dialog.apply_initial({"active": {"schedule_mode": "immediate"}})
+    assert dialog.config()["schedule_mode"] == "immediate"
+    assert not dialog.schedule_type_input.isEnabled()
+    dialog.apply_initial({"active": {"schedule_mode": "scheduled", "schedule_type": "daily", "scheduled_time": "18:30"}})
+    assert dialog.config()["schedule_mode"] == "scheduled"
+    assert dialog.config()["scheduled_time"] == "18:30"
+    assert dialog.scheduled_time_input.isEnabled()
     dialog.close()
     app.processEvents()
 

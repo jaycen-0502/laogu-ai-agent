@@ -24,6 +24,13 @@ def test_automation_config_disables_ai_replies_and_clamps_invalid_ratios():
     assert AutomationConfig.from_mapping({"ai_reply_ratio": True}).ai_reply_ratio == 0.15
 
 
+def test_schedule_mode_preserves_smart_default_and_controls_time_window_bypass():
+    assert AutomationConfig.from_mapping({}).bypass_time_window is False
+    assert AutomationConfig.from_mapping({"schedule_mode": "immediate"}).bypass_time_window is True
+    assert AutomationConfig.from_mapping({"schedule_mode": "scheduled"}).bypass_time_window is True
+    assert AutomationConfig.from_mapping({"schedule_mode": "invalid"}).schedule_mode == "smart"
+
+
 def test_read_only_snapshot_filters_keyword_and_thresholds():
     config = AutomationConfig.from_mapping({"keyword": "python", "max_follower_threshold": 150})
     result = XAutomationEngine._filter_read_only_snapshot(

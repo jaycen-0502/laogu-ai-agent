@@ -57,6 +57,17 @@ project-export/
 *.tar
 *.tar.gz
 *.zip
+/release/
+/browser/release/
+/browser/.tmp-build/
+/exports/
+
+# Local source copies and UI review captures
+*副本*
+/desktop/main_windowpy1
+/desktop-control-center.png
+/desktop-live-run.png
+/laogu.env.backup
 
 # Editors and operating systems
 .vscode/

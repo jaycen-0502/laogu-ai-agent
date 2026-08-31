@@ -25,7 +25,7 @@ import { useLayoutStore } from "../../store/layoutStore";
 import { projectConfig, navigationConfig } from "../../config";
 
 // 导入应用logo
-import logoImage from "../../resources/images/logo.png";
+import logoImage from "../../resources/images/logo-v2.svg";
 
 const iconMap: Record<string, LucideIcon> = {
   LayoutDashboard,

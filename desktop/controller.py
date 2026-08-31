@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import asyncio
 import json
 from pathlib import Path
@@ -44,6 +44,49 @@ _AUTOMATION_EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="XA
 # 运行状态互锁集合，防止同一 Profile 被并发重复启动
 _RUNNING_PROFILES: set[str] = set()
 _RUNNING_LOCK = threading.Lock()
+
+# Serialize browser creation only. Once CDP is ready, different Profiles run
+# in parallel and the slot is released.
+_BROWSER_START_LOCK = threading.Lock()
+
+_SCHEDULE_MODES = {"smart", "immediate", "scheduled"}
+_SCHEDULE_TYPES = {"once", "daily"}
+
+
+def _schedule_timezone(name: str):
+    normalized = str(name or "Asia/Shanghai").strip()
+    if normalized not in {"Asia/Shanghai", "UTC+08:00"}:
+        raise ValueError(f"Unsupported schedule timezone: {name}")
+    return timezone(timedelta(hours=8), name="Asia/Shanghai")
+
+
+def _next_schedule_at(config: dict[str, Any], *, now: datetime | None = None) -> datetime:
+    timezone = _schedule_timezone(str(config.get("schedule_timezone") or "Asia/Shanghai"))
+    current = now.astimezone(timezone) if now is not None else datetime.now(timezone)
+    schedule_type = str(config.get("schedule_type") or "once").lower()
+    if schedule_type == "daily":
+        raw_time = str(config.get("scheduled_time") or "").strip()
+        try:
+            hour, minute = (int(part) for part in raw_time.split(":", 1))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Daily schedule time must use HH:mm") from exc
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError("Daily schedule time must use HH:mm")
+        candidate = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= current:
+            candidate += timedelta(days=1)
+        return candidate
+
+    raw_at = str(config.get("scheduled_at") or "").strip()
+    if not raw_at:
+        raise ValueError("One-time schedule requires scheduled_at")
+    try:
+        candidate = datetime.fromisoformat(raw_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("One-time schedule time must be an ISO date-time") from exc
+    if candidate.tzinfo is None:
+        candidate = candidate.replace(tzinfo=timezone)
+    return candidate.astimezone(timezone)
 
 
 def _resolve_automation_engine_class(cache_dir: str | Path, engine_id: str) -> type:
@@ -260,6 +303,10 @@ class DesktopController:
         )
         self._profiles_lock = threading.RLock()
         self._profiles_by_id: dict[str, dict[str, Any]] = {}
+        self._schedule_lock = threading.RLock()
+        self._scheduled_timers: dict[str, threading.Timer] = {}
+        self._scheduled_tokens: dict[str, str] = {}
+        self._stopping = False
         self.agent_service = (
             build_agent_service(
                 self.task_service,
@@ -271,6 +318,7 @@ class DesktopController:
         )
         if self.agent_service is not None:
             self.agent_service.start()
+        self._restore_scheduled_tasks()
 
     def health(self) -> dict[str, Any]:
         return self.api.health()
@@ -305,10 +353,12 @@ class DesktopController:
             "local.browser.control",
             "当前授权不允许启动浏览器档案。请连接服务器完成认证，或在离线授权有效期内重试。",
         )
-        return self.browser_manager.start_profile(str(profile_id))
+        return self._start_profile_serialized(str(profile_id))
 
     def stop_profile(self, profile_id: str) -> dict[str, Any]:
-        return self.browser_manager.stop_profile(str(profile_id))
+        profile_id = str(profile_id)
+        self._cancel_scheduled_task(profile_id, state="CANCELLED_BY_USER")
+        return self.browser_manager.stop_profile(profile_id)
 
     def set_profile_task_config(self, profile_id: str, config: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(config, dict):
@@ -319,6 +369,24 @@ class DesktopController:
     @staticmethod
     def _normalize_profile_task_config(config: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(config)
+        schedule_mode = str(normalized.get("schedule_mode") or "smart").strip().lower()
+        if schedule_mode not in _SCHEDULE_MODES:
+            raise ValueError("schedule_mode must be smart, immediate or scheduled")
+        schedule_type = str(normalized.get("schedule_type") or "once").strip().lower()
+        if schedule_type not in _SCHEDULE_TYPES:
+            raise ValueError("schedule_type must be once or daily")
+        normalized["schedule_mode"] = schedule_mode
+        normalized["schedule_type"] = schedule_type
+        normalized["schedule_timezone"] = str(normalized.get("schedule_timezone") or "Asia/Shanghai")
+        _schedule_timezone(normalized["schedule_timezone"])
+        if schedule_mode == "scheduled":
+            scheduled_for = _next_schedule_at(normalized)
+            if schedule_type == "once" and scheduled_for <= datetime.now(scheduled_for.tzinfo):
+                raise ValueError("单次执行时间必须晚于当前时间")
+            if schedule_type == "daily":
+                normalized["scheduled_time"] = scheduled_for.strftime("%H:%M")
+            else:
+                normalized["scheduled_at"] = scheduled_for.isoformat(timespec="minutes")
         if "ai_reply_ratio" in normalized:
             value = normalized["ai_reply_ratio"]
             if isinstance(value, bool):
@@ -341,6 +409,28 @@ class DesktopController:
             "当前授权不允许启动自动化任务。请连接服务器完成认证，或在离线授权有效期内重试。",
         )
         profile_id = str(profile_id)
+        config = self._normalize_profile_task_config(config)
+        saved = self.set_profile_task_config(profile_id, config)
+        self.logger.info(
+            "[自动化调度] profile=%s state=REQUESTED mode=%s type=%s",
+            profile_id,
+            config["schedule_mode"],
+            config["schedule_type"],
+        )
+        if config["schedule_mode"] == "scheduled":
+            return self._schedule_automation_task(profile_id, config)
+
+        self._cancel_scheduled_task(profile_id, state="REPLACED_BY_MANUAL_RUN")
+        return self._start_automation_now(profile_id, config, saved=saved)
+
+    def _start_automation_now(
+        self,
+        profile_id: str,
+        config: dict[str, Any],
+        *,
+        saved: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        profile_id = str(profile_id)
 
         with _RUNNING_LOCK:
             if profile_id in _RUNNING_PROFILES:
@@ -353,8 +443,7 @@ class DesktopController:
             _RUNNING_PROFILES.add(profile_id)
 
         try:
-            config = self._normalize_profile_task_config(config)
-            saved = self.set_profile_task_config(profile_id, config)
+            saved = saved or self.set_profile_task_config(profile_id, config)
             engine_id = str(config.get("engine_id") or "default").strip() or "default"
             engine_name = str(config.get("engine_name") or engine_id).strip()
             engine_client = getattr(self.agent_service, "server_client", None) if self.agent_service is not None else None
@@ -363,7 +452,7 @@ class DesktopController:
                 if engine_client is None or (self.server_agent_status().get("server") != "ONLINE"):
                     raise RuntimeError(f"自定义自动化引擎“{engine_name}”尚未下载，当前服务器不可用。")
                 sync_engine_from_server(engine_client, self.settings.engine_cache_dir, engine_id)
-            started = self.browser_manager.start_profile(profile_id)
+            started = self._start_profile_serialized(profile_id)
             
             # 强化 CDP 端点获取逻辑，加入最多 5 次轮询重试
             cdp_url = ""
@@ -373,6 +462,8 @@ class DesktopController:
                     try:
                         status = self.browser_manager.check_status(profile_id)
                         cdp_url = self._extract_cdp_url(status)
+                    except AttributeError:
+                        break
                     except Exception:
                         pass
                 if cdp_url:
@@ -453,6 +544,268 @@ class DesktopController:
                 _RUNNING_PROFILES.discard(profile_id)
             raise
 
+    def _schedule_automation_task(
+        self,
+        profile_id: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        scheduled_for = _next_schedule_at(config)
+        saved = self._arm_scheduled_timer(
+            profile_id,
+            config,
+            scheduled_for,
+            state="WAITING_SCHEDULE",
+        )
+        self.logger.info(
+            "[自动化调度] profile=%s state=WAITING_SCHEDULE type=%s run_at=%s timezone=%s",
+            profile_id,
+            config["schedule_type"],
+            scheduled_for.isoformat(timespec="minutes"),
+            config["schedule_timezone"],
+        )
+        return {
+            "status": "SCHEDULED",
+            "profile_id": profile_id,
+            "schedule_type": config["schedule_type"],
+            "scheduled_for": scheduled_for.isoformat(timespec="minutes"),
+            "runtime_config": saved,
+            "message": "定时任务已保存；到点后才会启动浏览器，不会提前占用 Profile",
+        }
+
+    def _arm_scheduled_timer(
+        self,
+        profile_id: str,
+        config: dict[str, Any],
+        scheduled_for: datetime,
+        *,
+        state: str,
+    ) -> dict[str, Any]:
+        profile_id = str(profile_id)
+        token = uuid4().hex
+        delay = max(0.05, (scheduled_for - datetime.now(scheduled_for.tzinfo)).total_seconds())
+        timer = threading.Timer(
+            delay,
+            self._scheduled_task_due,
+            args=(profile_id, token, dict(config)),
+        )
+        timer.daemon = True
+        with self._schedule_lock:
+            previous = self._scheduled_timers.pop(profile_id, None)
+            if previous is not None:
+                previous.cancel()
+            self._scheduled_tokens[profile_id] = token
+            self._scheduled_timers[profile_id] = timer
+            saved = self.runtime_config.update(
+                profile_id,
+                {
+                    "schedule_status": state,
+                    "schedule_next_run": scheduled_for.isoformat(timespec="minutes"),
+                },
+                mode="HOT_UPDATE",
+            )
+            if not self._stopping:
+                timer.start()
+        return saved
+
+    def _scheduled_task_due(self, profile_id: str, token: str, config: dict[str, Any]) -> None:
+        with self._schedule_lock:
+            if self._stopping or self._scheduled_tokens.get(profile_id) != token:
+                return
+            self._scheduled_tokens.pop(profile_id, None)
+            self._scheduled_timers.pop(profile_id, None)
+
+        self.logger.info("[自动化调度] profile=%s state=TRIGGERED", profile_id)
+        with _RUNNING_LOCK:
+            profile_busy = profile_id in _RUNNING_PROFILES
+        if profile_busy:
+            retry_at = datetime.now(_schedule_timezone(config.get("schedule_timezone", "Asia/Shanghai"))) + timedelta(seconds=60)
+            self.logger.info(
+                "[自动化调度] profile=%s state=DELAYED_PROFILE_BUSY retry_at=%s",
+                profile_id,
+                retry_at.isoformat(timespec="minutes"),
+            )
+            self._arm_scheduled_timer(
+                profile_id,
+                config,
+                retry_at,
+                state="DELAYED_PROFILE_BUSY",
+            )
+            return
+
+        try:
+            self._require_capability(
+                "automation.run",
+                "定时任务到点，但当前授权不允许启动自动化任务。",
+            )
+            result = self._start_automation_now(
+                profile_id,
+                config,
+                saved=self.runtime_config.snapshot(profile_id),
+            )
+            if result.get("status") == "SKIPPED":
+                retry_at = datetime.now(_schedule_timezone(config.get("schedule_timezone", "Asia/Shanghai"))) + timedelta(seconds=60)
+                self._arm_scheduled_timer(
+                    profile_id,
+                    config,
+                    retry_at,
+                    state="DELAYED_PROFILE_BUSY",
+                )
+                return
+            self.logger.info(
+                "[自动化调度] profile=%s state=STARTED run_id=%s",
+                profile_id,
+                result.get("run_id", ""),
+            )
+            if config.get("schedule_type") == "daily":
+                next_run = _next_schedule_at(config)
+                self._arm_scheduled_timer(
+                    profile_id,
+                    config,
+                    next_run,
+                    state="WAITING_SCHEDULE",
+                )
+            else:
+                self.runtime_config.update(
+                    profile_id,
+                    {"schedule_status": "TRIGGERED", "schedule_next_run": ""},
+                    mode="HOT_UPDATE",
+                )
+        except Exception as exc:
+            self.logger.error(
+                "[自动化调度] profile=%s state=FAILED error=%s",
+                profile_id,
+                exc,
+            )
+            self.runtime_config.update(
+                profile_id,
+                {"schedule_status": "FAILED", "schedule_next_run": ""},
+                mode="HOT_UPDATE",
+            )
+            if config.get("schedule_type") == "daily" and not self._stopping:
+                next_run = _next_schedule_at(config)
+                self._arm_scheduled_timer(
+                    profile_id,
+                    config,
+                    next_run,
+                    state="WAITING_SCHEDULE",
+                )
+
+    def _cancel_scheduled_task(self, profile_id: str, *, state: str) -> bool:
+        profile_id = str(profile_id)
+        with self._schedule_lock:
+            timer = self._scheduled_timers.pop(profile_id, None)
+            self._scheduled_tokens.pop(profile_id, None)
+            if timer is None:
+                return False
+            timer.cancel()
+        self.runtime_config.update(
+            profile_id,
+            {"schedule_status": state, "schedule_next_run": ""},
+            mode="HOT_UPDATE",
+        )
+        self.logger.info("[自动化调度] profile=%s state=%s", profile_id, state)
+        return True
+
+    def _restore_scheduled_tasks(self) -> None:
+        if not hasattr(self.runtime_config, "all"):
+            return
+        for profile_id, snapshot in self.runtime_config.all().items():
+            active = snapshot.get("active") if isinstance(snapshot, dict) else None
+            if not isinstance(active, dict) or active.get("schedule_mode") != "scheduled":
+                continue
+            schedule_type = str(active.get("schedule_type") or "once").lower()
+            schedule_status = str(active.get("schedule_status") or "")
+            if schedule_status in {"CANCELLED_BY_USER", "REPLACED_BY_MANUAL_RUN"}:
+                continue
+            if schedule_type == "once" and schedule_status in {"TRIGGERED", "FAILED", "MISSED"}:
+                continue
+            try:
+                scheduled_for = _next_schedule_at(active)
+            except (TypeError, ValueError) as exc:
+                self.logger.info(
+                    "[自动化调度] profile=%s state=RESTORE_SKIPPED error=%s",
+                    profile_id,
+                    exc,
+                )
+                continue
+            now = datetime.now(scheduled_for.tzinfo)
+            if schedule_type == "once" and scheduled_for <= now:
+                self.runtime_config.update(
+                    profile_id,
+                    {"schedule_status": "MISSED", "schedule_next_run": ""},
+                    mode="HOT_UPDATE",
+                )
+                self.logger.info("[自动化调度] profile=%s state=MISSED", profile_id)
+                continue
+            self._arm_scheduled_timer(
+                profile_id,
+                active,
+                scheduled_for,
+                state="WAITING_SCHEDULE",
+            )
+            self.logger.info(
+                "[自动化调度] profile=%s state=RESTORED run_at=%s",
+                profile_id,
+                scheduled_for.isoformat(timespec="minutes"),
+            )
+
+    def _start_profile_serialized(self, profile_id: str) -> dict[str, Any]:
+        """Serialize Profile creation and wait for a usable startup response."""
+        profile_id = str(profile_id)
+        self.logger.info("[启动队列] profile=%s state=WAITING_START_SLOT", profile_id)
+        with _BROWSER_START_LOCK:
+            self.logger.info("[启动队列] profile=%s state=STARTING", profile_id)
+            try:
+                if hasattr(self.browser_manager, "start_profile_ready"):
+                    started = self.browser_manager.start_profile_ready(
+                        profile_id,
+                        max(1, int(self.settings.default_timeout_seconds)),
+                        retries=2,
+                        progress=lambda state: self.logger.info(
+                            "[启动队列] profile=%s state=%s", profile_id, state
+                        ),
+                    )
+                else:
+                    started = self.browser_manager.start_profile(profile_id)
+                if not isinstance(started, dict):
+                    raise BrowserManagerError("Browser start returned an invalid response")
+                if not hasattr(self.browser_manager, "check_status") and not hasattr(self.browser_manager, "start_profile_ready"):
+                    self.logger.info("[启动队列] profile=%s state=START_RESPONSE", profile_id)
+                    return started
+                cdp_url = self._extract_cdp_url(started)
+                deadline = time.monotonic() + max(1, int(self.settings.default_timeout_seconds))
+                attempt = 0
+                while not cdp_url and time.monotonic() < deadline:
+                    attempt += 1
+                    self.logger.info(
+                        "[启动队列] profile=%s state=WAITING_CDP attempt=%s",
+                        profile_id, attempt,
+                    )
+                    try:
+                        status = self.browser_manager.check_status(profile_id)
+                        cdp_url = self._extract_cdp_url(status)
+                        if cdp_url:
+                            started = dict(started)
+                            started.update(status)
+                    except Exception as exc:
+                        self.logger.info(
+                            "[启动队列] profile=%s state=CDP_CHECK_FAILED error=%s",
+                            profile_id, exc,
+                        )
+                    if not cdp_url:
+                        time.sleep(0.5)
+                if not cdp_url:
+                    raise BrowserManagerError(
+                        f"Profile [{profile_id}] did not expose a usable CDP endpoint"
+                    )
+                self.logger.info("[启动队列] profile=%s state=READY cdp=%s", profile_id, cdp_url)
+                return started
+            except Exception as exc:
+                self.logger.error("[启动队列] profile=%s state=FAILED error=%s", profile_id, exc)
+                raise
+            finally:
+                self.logger.info("[启动队列] profile=%s state=RELEASE_START_SLOT", profile_id)
+
     def list_automation_engines(self) -> list[dict[str, Any]]:
         """Return server-published engine choices, keeping the bundled default available."""
         default = {
@@ -501,6 +854,12 @@ class DesktopController:
             result = {"status": "ERROR", "error": str(exc)}
         if not isinstance(result, dict):
             result = {"status": "ERROR", "error": "Automation engine returned an invalid result"}
+        self.logger.info(
+            "[自动化状态] profile=%s state=FINISHED result=%s error=%s",
+            profile_id,
+            str(result.get("status") or "UNKNOWN"),
+            str(result.get("error") or "")[:300],
+        )
         try:
             self.automation_statistics.record_result(
                 run_id=run_id,
@@ -755,5 +1114,12 @@ class DesktopController:
         return self.browser_manager.check_status(str(profile_id))
 
     def stop_agent_service(self) -> None:
+        with self._schedule_lock:
+            self._stopping = True
+            timers = list(self._scheduled_timers.values())
+            self._scheduled_timers.clear()
+            self._scheduled_tokens.clear()
+        for timer in timers:
+            timer.cancel()
         if self.agent_service is not None:
             self.agent_service.stop()

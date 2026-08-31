@@ -26,7 +26,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(project / "packaging" / "windows" / "qt_runtime_hook.py")],
     excludes=["pytest", "alembic", "sqlalchemy", "fastapi", "uvicorn"],
     noarchive=False,
     optimize=1,

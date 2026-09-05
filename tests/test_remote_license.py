@@ -241,3 +241,23 @@ def test_remote_license_admin_views_mask_sensitive_device_metadata():
     checks = client.get("/api/license/lic_masked/checks", headers=_auth(boot["access_token"])).json()
     assert checks[0]["device_id"] == "01234567...abcdef"
     assert checks[0]["ip"] != "203.0.113.42"
+
+
+def test_remote_license_status_reports_online_device_and_admin_can_delete():
+    client, private_key = _client()
+    boot = client.post("/api/auth/bootstrap", json={"workspace_name": "Studio", "username": "admin", "password": "password123"}).json()
+    code = _code(private_key, license_id="lic_delete")
+    assert client.post("/api/license/register", headers=_auth(boot["access_token"]), json={"activation_code": code}).status_code == 200
+    assert client.post("/api/license/check", json={"activation_code": code, "device_id": "device-1", "install_public_key": "install-key-1", "app_version": "1.0"}).status_code == 200
+
+    listed = client.get("/api/license/status", headers=_auth(boot["access_token"])).json()
+    item = next(value for value in listed if value["license_id"] == "lic_delete")
+    assert item["device_count"] == 1
+    assert item["online_device_count"] == 1
+    devices = client.get("/api/license/lic_delete/devices", headers=_auth(boot["access_token"])).json()
+    assert devices[0]["online"] is True
+
+    assert client.request("DELETE", "/api/license/lic_delete", headers=_auth(boot["access_token"]), json={"confirm": False}).status_code == 400
+    deleted = client.request("DELETE", "/api/license/lic_delete", headers=_auth(boot["access_token"]), json={"confirm": True, "reason": "cleanup"})
+    assert deleted.status_code == 200
+    assert client.get("/api/license/status", headers=_auth(boot["access_token"])).json() == []

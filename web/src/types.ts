@@ -303,6 +303,7 @@ export type License = {
   updated_at: string;
   revoked_at: string | null;
   device_count: number;
+  online_device_count: number;
   last_check: string | null;
 };
 
@@ -314,6 +315,7 @@ export type LicenseDevice = {
   last_seen_at: string;
   last_ip: string;
   status: string;
+  online: boolean;
 };
 
 export type LicenseCheck = {

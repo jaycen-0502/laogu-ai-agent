@@ -559,6 +559,9 @@ tbody tr:hover {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.license-online-hint {
+  line-height: 1.6;
+}
 .proxy-paste-box {
   margin: 0 0 18px;
   padding: 14px;

@@ -14,13 +14,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .models import License, LicenseCheck, LicenseDevice, LicenseRevocation, User, now
-from .schemas import LicenseCheckRequest, LicenseIssue, LicenseRegister, LicenseRenew, LicenseRevoke
+from .schemas import LicenseCheckRequest, LicenseDelete, LicenseIssue, LicenseRegister, LicenseRenew, LicenseRevoke
 from .security import audit, client_ip, redact
 
 
 ACTIVATION_PREFIX = "LGACT1."
 REQUEST_PREFIX = "LGREQ1."
 LICENSE_CHECK_CLEANUP_INTERVAL = timedelta(hours=1)
+LICENSE_DEVICE_ONLINE_WINDOW = timedelta(minutes=2)
 
 
 def _decode_b64(value: str) -> bytes:
@@ -135,7 +136,7 @@ def _b64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
-def _license_dict(item: License, device_count: int = 0, last_check: datetime | None = None) -> dict:
+def _license_dict(item: License, device_count: int = 0, online_device_count: int = 0, last_check: datetime | None = None) -> dict:
     return {
         "id": item.id,
         "license_id": item.license_id,
@@ -150,6 +151,7 @@ def _license_dict(item: License, device_count: int = 0, last_check: datetime | N
         "updated_at": item.updated_at.isoformat(),
         "revoked_at": item.revoked_at.isoformat() if item.revoked_at else None,
         "device_count": device_count,
+        "online_device_count": online_device_count,
         "last_check": last_check.isoformat() if last_check else None,
     }
 
@@ -312,6 +314,24 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
         audit(db, request, action="LICENSE_REVOKE", result="SUCCESS", user_id=user.id, resource_type="license", resource_id=item.license_id, message="License revoked")
         return {"ok": True, "license": _license_dict(item)}
 
+    @app.delete("/api/license/{license_id}")
+    def delete_license(license_id: str, body: LicenseDelete, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role != "ADMIN":
+            deny(request, db, action="LICENSE_DELETE", user=user)
+        if not body.confirm:
+            raise HTTPException(status_code=400, detail="Deletion requires explicit confirmation")
+        item = db.scalar(select(License).where(License.license_id == license_id.strip()))
+        if not item:
+            raise HTTPException(status_code=404, detail="License not found")
+        license_pk = item.id
+        audit(db, request, action="LICENSE_DELETE", result="SUCCESS", user_id=user.id, resource_type="license", resource_id=item.license_id, message="License metadata and registered devices deleted")
+        db.execute(delete(LicenseCheck).where(LicenseCheck.license_id == license_pk))
+        db.execute(delete(LicenseDevice).where(LicenseDevice.license_id == license_pk))
+        db.execute(delete(LicenseRevocation).where(LicenseRevocation.license_id == license_pk))
+        db.delete(item)
+        db.commit()
+        return {"ok": True, "license_id": license_id.strip()}
+
     @app.get("/api/license/status")
     def license_status(license_id: str | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
         if user.role != "ADMIN":
@@ -323,8 +343,9 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
         output = []
         for item in items:
             count = int(db.scalar(select(func.count()).select_from(LicenseDevice).where(LicenseDevice.license_id == item.id)) or 0)
+            online_count = int(db.scalar(select(func.count()).select_from(LicenseDevice).where(LicenseDevice.license_id == item.id, LicenseDevice.last_seen_at >= now() - LICENSE_DEVICE_ONLINE_WINDOW)) or 0)
             last = db.scalar(select(LicenseCheck.checked_at).where(LicenseCheck.license_id == item.id).order_by(LicenseCheck.checked_at.desc()).limit(1))
-            output.append(_license_dict(item, count, last))
+            output.append(_license_dict(item, count, online_count, last))
         if license_id:
             if not output:
                 raise HTTPException(status_code=404, detail="License not found")
@@ -348,6 +369,7 @@ def register_remote_license_routes(app, *, get_db: Callable, current_user: Calla
                 "last_seen_at": _aware(device.last_seen_at).isoformat(),
                 "last_ip": _masked_ip(device.last_ip),
                 "status": device.status,
+                "online": bool(_aware(device.last_seen_at) >= datetime.now(timezone.utc) - LICENSE_DEVICE_ONLINE_WINDOW),
             }
             for device in devices
         ]

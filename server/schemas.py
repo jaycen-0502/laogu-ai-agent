@@ -40,6 +40,11 @@ class LicenseRevoke(BaseModel):
     reason: str = Field(default="", max_length=300)
 
 
+class LicenseDelete(BaseModel):
+    confirm: bool = False
+    reason: str = Field(default="", max_length=300)
+
+
 class LicenseIssue(BaseModel):
     request_code: str = Field(min_length=32, max_length=20000)
     days: int = Field(default=30, ge=1, le=3650)

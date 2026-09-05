@@ -13,6 +13,8 @@ export function LicensesPage() {
   const [checks, setChecks] = useState<LicenseCheck[]>([]);
   const [reason, setReason] = useState("");
   const [revokeTarget, setRevokeTarget] = useState<License | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<License | null>(null);
+  const [deleteReason, setDeleteReason] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -84,6 +86,28 @@ export function LicensesPage() {
     }
   };
 
+  const remove = async () => {
+    if (!deleteTarget) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiClient(`/license/${encodeURIComponent(deleteTarget.license_id)}`, jsonBody({ confirm: true, reason: deleteReason }));
+      setMessage(`授权 ${deleteTarget.license_id} 已删除`);
+      setDeleteTarget(null);
+      setDeleteReason("");
+      if (selected?.license_id === deleteTarget.license_id) {
+        setSelected(null);
+        setDevices([]);
+        setChecks([]);
+      }
+      await load();
+    } catch (exc) {
+      setError(errorText(exc));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const issue = async () => {
     setBusy(true);
     setError("");
@@ -110,7 +134,12 @@ export function LicensesPage() {
     setMessage("激活码已复制。不要把它发送到聊天、工单或日志中。");
   };
 
-  useEffect(() => { void load(); void loadIssuerStatus(); }, []);
+  useEffect(() => {
+    void load();
+    void loadIssuerStatus();
+    const timer = window.setInterval(() => void load(), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   return <>
     <div className="page-title">
@@ -118,30 +147,32 @@ export function LicensesPage() {
       <div className="row-actions"><button onClick={() => { void load(); void loadIssuerStatus(); }} disabled={loading}>{loading ? "刷新中…" : "刷新"}</button><button className="primary" onClick={() => { setIssueOpen(true); setIssuedCode(""); }} disabled={!issuerAvailable}>在线生成激活码</button></div>
     </div>
     {!issuerAvailable && <div className="alert">{issuerConfigured ? "服务器签名密钥不可用，请检查文件权限、密码文件或密钥匹配；离线授权终端仍可使用。" : "在线签发尚未配置。请继续使用授权终端离线签发；配置服务器私钥后此按钮会自动启用。"}</div>}
+    <div className="alert license-online-hint">设备在线数依据最近 2 分钟内的授权检查统计，不等同于 Agent 心跳。若设备正在使用但仍显示 0，请确认浏览器配置中的授权服务器地址已设置为 <span className="mono">https://api.jaycwl.org</span>。</div>
     {error && <div className="alert error">{error}</div>}
     {message && <div className="alert">{message}</div>}
     <section className="panel">
       <div className="toolbar"><strong>授权列表</strong><span className="muted">共 {items.length} 个</span></div>
       {loading && !items.length ? <div className="loading">正在加载授权…</div> : !items.length ? <div className="empty">暂无授权记录</div> :
-        <div className="table-wrap"><table><thead><tr><th>授权编号</th><th>客户</th><th>状态</th><th>有效期</th><th>设备</th><th>最近检查</th><th>操作</th></tr></thead>
+        <div className="table-wrap"><table><thead><tr><th>授权编号</th><th>客户</th><th>状态</th><th>有效期</th><th>设备在线</th><th>最近检查</th><th>操作</th></tr></thead>
           <tbody>{items.map((item) => <tr key={item.id}>
             <td className="mono">{item.license_id}</td>
             <td>{item.customer || "—"}</td>
             <td><span className={`state state-${item.status.toLowerCase()}`}>{stateLabel(item.status)}</span></td>
             <td>{formatDate(item.issued_at)}<br /><span className="muted">至 {formatDate(item.expires_at)}</span></td>
-            <td>{item.device_count}</td>
+            <td><strong>{item.online_device_count ?? 0}</strong><span className="muted"> / {item.device_count}</span></td>
             <td>{formatDate(item.last_check)}</td>
-            <td><div className="row-actions"><button onClick={() => void openDetails(item)}>详情</button>{item.status === "ACTIVE" && <button className="danger-button" onClick={() => setRevokeTarget(item)}>撤销</button>}</div></td>
+            <td><div className="row-actions"><button onClick={() => void openDetails(item)}>详情</button>{item.status === "ACTIVE" && <button className="danger-button" onClick={() => setRevokeTarget(item)}>撤销</button>}<button className="danger-button" onClick={() => setDeleteTarget(item)}>删除</button></div></td>
           </tr>)}</tbody>
         </table></div>}
     </section>
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><section className="modal-panel" onClick={(event) => event.stopPropagation()}>
       <div className="modal-header"><div><h2>授权详情</h2><p className="muted mono">{selected.license_id}</p></div><button onClick={() => setSelected(null)}>关闭</button></div>
-      <div className="license-detail-grid"><div><span>状态</span><strong>{stateLabel(selected.status)}</strong></div><div><span>有效期至</span><strong>{formatDate(selected.expires_at)}</strong></div><div><span>离线宽限</span><strong>{selected.offline_grace_days} 天</strong></div><div><span>设备数量</span><strong>{selected.device_count}</strong></div></div>
-      <h3>已登记设备</h3>{devices.length ? <div className="table-wrap"><table><thead><tr><th>设备</th><th>版本</th><th>最后在线</th><th>IP（已打码）</th></tr></thead><tbody>{devices.map((device) => <tr key={device.id}><td className="mono">{device.device_id}</td><td>{device.app_version || "—"}</td><td>{formatDate(device.last_seen_at)}</td><td>{device.last_ip || "—"}</td></tr>)}</tbody></table></div> : <div className="empty">暂无设备在线记录</div>}
+      <div className="license-detail-grid"><div><span>状态</span><strong>{stateLabel(selected.status)}</strong></div><div><span>有效期至</span><strong>{formatDate(selected.expires_at)}</strong></div><div><span>离线宽限</span><strong>{selected.offline_grace_days} 天</strong></div><div><span>设备在线</span><strong>{selected.online_device_count ?? 0} / {selected.device_count}</strong></div></div>
+      <h3>已登记设备</h3>{devices.length ? <div className="table-wrap"><table><thead><tr><th>设备</th><th>版本</th><th>在线状态</th><th>最后在线</th><th>IP（已打码）</th></tr></thead><tbody>{devices.map((device) => <tr key={device.id}><td className="mono">{device.device_id}</td><td>{device.app_version || "—"}</td><td><span className={`state ${device.online ? "state-active" : "state-expired"}`}>{device.online ? "在线" : "离线"}</span></td><td>{formatDate(device.last_seen_at)}</td><td>{device.last_ip || "—"}</td></tr>)}</tbody></table></div> : <div className="empty">暂无设备检查记录</div>}
       <h3>最近检查</h3>{checks.length ? <div className="table-wrap"><table><thead><tr><th>时间</th><th>结果</th><th>原因</th><th>设备</th></tr></thead><tbody>{checks.map((check) => <tr key={check.id}><td>{formatDate(check.checked_at)}</td><td><span className={`state state-${check.result.toLowerCase()}`}>{check.result}</span></td><td>{check.reason || "—"}</td><td className="mono">{check.device_id}</td></tr>)}</tbody></table></div> : <div className="empty">暂无检查记录</div>}
     </section></div>}
     {revokeTarget && <div className="modal-backdrop" onClick={() => setRevokeTarget(null)}><section className="modal-panel narrow" onClick={(event) => event.stopPropagation()}><h2>撤销授权</h2><p>确定撤销 <span className="mono">{revokeTarget.license_id}</span> 吗？已连接的浏览器将在下一次在线检查时收到撤销状态。</p><label>撤销原因（可选）<textarea rows={3} maxLength={300} value={reason} onChange={(event) => setReason(event.target.value)} /></label><div className="modal-actions"><button onClick={() => setRevokeTarget(null)}>取消</button><button className="danger-button" onClick={() => void revoke()} disabled={busy}>{busy ? "处理中…" : "确认撤销"}</button></div></section></div>}
+    {deleteTarget && <div className="modal-backdrop" onClick={() => setDeleteTarget(null)}><section className="modal-panel narrow" onClick={(event) => event.stopPropagation()}><h2>永久删除授权</h2><p>将删除 <span className="mono">{deleteTarget.license_id}</span> 的授权元数据、设备记录和检查记录，删除后无法在后台恢复。已安装设备会在下一次在线检查时收到未登记状态。</p><label>删除原因（可选）<textarea rows={3} maxLength={300} value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} /></label><div className="modal-actions"><button onClick={() => setDeleteTarget(null)}>取消</button><button className="danger-button" onClick={() => void remove()} disabled={busy}>{busy ? "删除中…" : "确认永久删除"}</button></div></section></div>}
     {issueOpen && <div className="modal-backdrop" onClick={() => setIssueOpen(false)}><section className="modal-panel narrow" onClick={(event) => event.stopPropagation()}><div className="modal-header"><div><h2>在线生成激活码</h2><p className="muted">仅管理员可用。服务器不会保存完整激活码。</p></div><button onClick={() => setIssueOpen(false)}>关闭</button></div><label>浏览器请求码（LGREQ1）<textarea rows={5} value={requestCode} onChange={(event) => setRequestCode(event.target.value)} placeholder="粘贴浏览器生成的 LGREQ1 请求码" /></label><div className="form-grid"><label>有效天数<input type="number" min={1} max={3650} value={issueDays} onChange={(event) => setIssueDays(event.target.value)} /></label><label>客户备注<input value={issueCustomer} maxLength={200} onChange={(event) => setIssueCustomer(event.target.value)} placeholder="可选" /></label><label>许可证编号<input value={issueLicenseId} maxLength={120} onChange={(event) => setIssueLicenseId(event.target.value)} placeholder="留空自动生成" /></label></div><div className="modal-actions"><button onClick={() => setIssueOpen(false)}>取消</button><button className="primary" onClick={() => void issue()} disabled={busy || requestCode.trim().length < 32}>{busy ? "生成中…" : "生成激活码"}</button></div>{issuedCode && <><h3>本次生成的激活码</h3><textarea rows={7} readOnly value={issuedCode} /><div className="modal-actions"><button className="primary" onClick={() => void copyIssuedCode()}>复制激活码</button></div><p className="muted">复制后粘贴到对应浏览器。关闭窗口后页面不会再次读取这串激活码。</p></>}</section></div>}
   </>;
 }

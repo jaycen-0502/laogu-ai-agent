@@ -559,6 +559,56 @@ tbody tr:hover {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.proxy-paste-box {
+  margin: 0 0 18px;
+  padding: 14px;
+  border: 1px solid #d9e4e5;
+  border-radius: 10px;
+  background: #f8fbfc;
+}
+.proxy-paste-box > label {
+  display: block;
+  margin-bottom: 8px;
+  color: #183b3b;
+  font-weight: 650;
+}
+.proxy-paste-box textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  box-sizing: border-box;
+  border: 1px solid #cbd9dc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+  color: #24383d;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.proxy-paste-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+}
+.proxy-paste-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #bfd0d4;
+  border-radius: 7px;
+  background: #fff;
+  color: #24545a;
+  cursor: pointer;
+}
+.proxy-paste-actions button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+.form-inline-error {
+  margin-top: 8px;
+  color: #b42318;
+  font-size: 12px;
+}
 @media (max-width: 760px) {
   .policy-row,
   .policy-header,

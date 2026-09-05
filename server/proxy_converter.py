@@ -28,20 +28,28 @@ def render_vless_reality_yaml(payload) -> str:
     network = str(payload.network).strip().lower() or "tcp"
     if network not in {"tcp", "ws", "grpc", "h2"}:
         raise ValueError("network 仅支持 tcp、ws、grpc 或 h2")
+    flow = str(getattr(payload, "flow", "") or "").strip()
+    if len(flow) > 80 or any(char in flow for char in "\r\n"):
+        raise ValueError("flow 参数格式不正确")
     fingerprint = str(payload.client_fingerprint).strip() or "chrome"
     lines = [
-        f"- name: {_quote(payload.name.strip())}",
-        "  type: vless",
-        f"  server: {_quote(server)}",
-        f"  port: {int(payload.port)}",
-        f"  uuid: {_quote(payload.uuid.strip())}",
-        f"  udp: {'true' if payload.udp else 'false'}",
-        f"  tls: {'true' if payload.tls else 'false'}",
-        f"  network: {_quote(network)}",
-        f"  servername: {_quote(payload.servername.strip())}",
-        "  reality-opts:",
-        f"    public-key: {_quote(payload.public_key.strip())}",
-        f"    short-id: {_quote(payload.short_id.strip())}",
-        f"  client-fingerprint: {_quote(fingerprint)}",
+        "proxies:",
+        f"  - name: {_quote(payload.name.strip())}",
+        "    type: vless",
+        f"    server: {_quote(server)}",
+        f"    port: {int(payload.port)}",
+        f"    uuid: {_quote(payload.uuid.strip())}",
+        f"    udp: {'true' if payload.udp else 'false'}",
+        f"    tls: {'true' if payload.tls else 'false'}",
+        f"    network: {_quote(network)}",
     ]
+    if flow:
+        lines.append(f"    flow: {_quote(flow)}")
+    lines.extend([
+        f"    servername: {_quote(payload.servername.strip())}",
+        "    reality-opts:",
+        f"      public-key: {_quote(payload.public_key.strip())}",
+        f"      short-id: {_quote(payload.short_id.strip())}",
+        f"    client-fingerprint: {_quote(fingerprint)}",
+    ])
     return "\n".join(lines) + "\n"

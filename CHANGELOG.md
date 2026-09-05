@@ -6,6 +6,8 @@
 - 控制中心与 Web 后台显示代理节点名称、ID、协议、主机和端口等脱敏元数据。
 - 增加代理元数据服务器字段及数据库迁移 `0021_proxy_metadata`。
 - 管理员/工作区所有者可在 Web 后台将 VLESS Reality 参数转换为便携 YAML 模板；输入的 UUID、密钥不会保存或写入日志。
+- 代理节点转换页支持直接粘贴 `vless://` Reality 链接，自动解析节点名称、UUID、Flow、SNI、Public Key 和 Short ID。
+- 转换预览输出完整 `proxies:` 配置块，方便直接复制到 Clash/Xray 配置文件。
 
 ## v0.21.22 - 2026-08-31
 

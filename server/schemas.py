@@ -158,6 +158,7 @@ class VlessRealityConvertRequest(BaseModel):
     udp: bool = True
     tls: bool = True
     network: str = Field(default="tcp", max_length=20)
+    flow: str = Field(default="", max_length=80)
     servername: str = Field(min_length=1, max_length=255)
     public_key: str = Field(min_length=1, max_length=200)
     short_id: str = Field(min_length=1, max_length=100)

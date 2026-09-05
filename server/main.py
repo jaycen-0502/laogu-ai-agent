@@ -43,7 +43,8 @@ from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_comma
 from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
 from .offline_access import issue_agent_offline_access
-from .schemas import AccountSync, AgentRegister, AgentUpdate, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, WorkspaceCreate, WorkspaceUpdate
+from .proxy_converter import render_vless_reality_yaml
+from .schemas import AccountSync, AgentRegister, AgentUpdate, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, VlessRealityConvertRequest, WorkspaceCreate, WorkspaceUpdate
 from .security import InMemoryRateLimiter, audit, audit_dict, client_ip, redact, redact_payload
 from .security_diagnostics import configuration_diagnostics, database_diagnostic
 from .script_api import register_script_routes
@@ -90,7 +91,7 @@ def _agent_ip_allowed(country: str) -> bool:
 
 
 def _account_dict(item: Account) -> dict:
-    return {key: getattr(item, key) for key in ("id", "workspace_id", "agent_id", "profile_id", "instance_id", "x_username", "x_account_id", "login_status", "browser_status", "account_status")} | {"last_checked": _dt(item.last_checked), "mapping_updated_at": _dt(item.mapping_updated_at)}
+    return {key: getattr(item, key) for key in ("id", "workspace_id", "agent_id", "profile_id", "instance_id", "x_username", "x_account_id", "login_status", "browser_status", "account_status", "proxy_id", "proxy_name", "proxy_protocol", "proxy_host", "proxy_port", "proxy_status", "exit_ip")} | {"last_checked": _dt(item.last_checked), "mapping_updated_at": _dt(item.mapping_updated_at), "proxy_checked_at": _dt(item.proxy_checked_at)}
 
 
 def _task_dict(item: Task) -> dict:
@@ -172,6 +173,14 @@ def _profile_dict(item: Profile, account: Account | None = None) -> dict:
         "login_status": account.login_status if account else "UNKNOWN",
         "account_status": account.account_status if account else "UNKNOWN",
         "last_checked": _dt(account.last_checked if account else None),
+        "proxy_id": item.proxy_id,
+        "proxy_name": item.proxy_name,
+        "proxy_protocol": item.proxy_protocol,
+        "proxy_host": item.proxy_host,
+        "proxy_port": item.proxy_port,
+        "proxy_status": item.proxy_status,
+        "exit_ip": item.exit_ip,
+        "proxy_checked_at": _dt(item.proxy_checked_at),
     }
 
 
@@ -1130,6 +1139,17 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             "recent_activities": [_activity_dict(activity) for activity in db.scalars(select(Activity).where(Activity.agent_id == item.id).order_by(Activity.timestamp.desc()).limit(20))],
         }
 
+    @app.post("/api/proxy/convert/vless-reality")
+    def convert_vless_reality(body: VlessRealityConvertRequest, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        if user.role not in {"ADMIN", "OWNER"}:
+            deny(request, db, action="PROXY_CONVERT", user=user, message="Only administrators and workspace owners may convert proxy nodes")
+        try:
+            output = render_vless_reality_yaml(body)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        audit(db, request, action="PROXY_CONVERT", result="SUCCESS", user_id=user.id, workspace_id=user.workspace_id, resource_type="proxy_node", message="Converted VLESS Reality node to YAML template")
+        return {"format": "clash-vless-reality", "yaml": output}
+
     @app.post("/api/accounts/sync")
     def sync_accounts(request: Request, body: AccountSync, agent: Agent = Depends(current_agent), db: Session = Depends(get_db)):
         if body.agent_id != agent.id: deny(request, db, action="ACCOUNT_SYNC", agent=agent)
@@ -1137,6 +1157,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             profile = db.scalar(select(Profile).where(Profile.agent_id == agent.id, Profile.profile_id == incoming.profile_id))
             if profile is None: profile = Profile(workspace_id=agent.workspace_id, agent_id=agent.id, profile_id=incoming.profile_id); db.add(profile)
             profile.instance_id = incoming.instance_id; profile.x_username = incoming.x_username; profile.x_account_id = incoming.x_account_id; profile.status = incoming.browser_status
+            profile.proxy_id = incoming.proxy_id; profile.proxy_name = incoming.proxy_name; profile.proxy_protocol = incoming.proxy_protocol; profile.proxy_host = incoming.proxy_host; profile.proxy_port = incoming.proxy_port; profile.proxy_status = incoming.proxy_status; profile.exit_ip = incoming.exit_ip; profile.proxy_checked_at = incoming.proxy_checked_at
             account = db.scalar(select(Account).where(Account.agent_id == agent.id, Account.profile_id == incoming.profile_id))
             if account is None: account = Account(workspace_id=agent.workspace_id, agent_id=agent.id, profile_id=incoming.profile_id); db.add(account)
             for key, value in incoming.model_dump().items(): setattr(account, key, value)

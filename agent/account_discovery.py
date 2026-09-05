@@ -4,9 +4,53 @@ import json
 import logging
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import urlsplit
 
 from .browser_manager import BrowserManager
 from .models import BrowserStatus, DiscoveredAccount, LoginStatus
+
+
+def _proxy_metadata(profile: dict[str, Any]) -> dict[str, Any]:
+    """Extract safe proxy labels from a Laogu Profile response.
+
+    The raw proxy URL may contain credentials or VLESS secrets, so only the
+    protocol, host and port are retained.  This metadata is for identification
+    in the console and is not a proxy credential store.
+    """
+    proxy_id = str(profile.get("proxyId") or profile.get("proxy_id") or "").strip()
+    proxy_name = str(
+        profile.get("proxyBindName")
+        or profile.get("proxyName")
+        or profile.get("proxy_name")
+        or ""
+    ).strip()
+    raw = str(profile.get("proxyConfig") or profile.get("proxy_config") or "").strip()
+    if not raw or raw.lower() in {"direct://", "direct"}:
+        return {
+            "proxy_id": proxy_id,
+            "proxy_name": proxy_name or ("直连" if raw else ""),
+            "proxy_protocol": "direct" if raw else "",
+            "proxy_host": "",
+            "proxy_port": "",
+            "proxy_status": "DIRECT" if raw else "UNKNOWN",
+            "proxy_checked_at": None,
+        }
+    try:
+        parsed = urlsplit(raw)
+        protocol = (parsed.scheme or "custom").lower()
+        host = parsed.hostname or ""
+        port = str(parsed.port or "")
+    except ValueError:
+        protocol, host, port = "custom", "", ""
+    return {
+        "proxy_id": proxy_id,
+        "proxy_name": proxy_name,
+        "proxy_protocol": protocol,
+        "proxy_host": host,
+        "proxy_port": port,
+        "proxy_status": "CONFIGURED",
+        "proxy_checked_at": None,
+    }
 
 
 class AccountDiscovery:
@@ -106,6 +150,7 @@ class AccountDiscovery:
                 x_account_id=account_id,
                 last_checked=checked_at,
                 error=reason,
+                **_proxy_metadata(profile),
             )
         except Exception as exc:
             record = self._unknown_record(profile, str(exc), checked_at=checked_at)
@@ -140,6 +185,7 @@ class AccountDiscovery:
             x_account_id="",
             last_checked=checked_at or datetime.now().astimezone(),
             error=error,
+            **_proxy_metadata(profile),
         )
 
     @classmethod

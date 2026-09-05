@@ -125,6 +125,14 @@ class Profile(Base):
     x_username: Mapped[str] = mapped_column(String(30), default="")
     x_account_id: Mapped[str] = mapped_column(String(40), default="")
     status: Mapped[str] = mapped_column(String(30), default="UNKNOWN")
+    proxy_id: Mapped[str] = mapped_column(String(120), default="")
+    proxy_name: Mapped[str] = mapped_column(String(120), default="")
+    proxy_protocol: Mapped[str] = mapped_column(String(30), default="")
+    proxy_host: Mapped[str] = mapped_column(String(255), default="")
+    proxy_port: Mapped[str] = mapped_column(String(10), default="")
+    proxy_status: Mapped[str] = mapped_column(String(30), default="UNKNOWN")
+    exit_ip: Mapped[str] = mapped_column(String(64), default="")
+    proxy_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint("agent_id", "profile_id", name="uq_agent_profile"),)
 
 
@@ -142,6 +150,14 @@ class Account(Base):
     account_status: Mapped[str] = mapped_column(String(30), default="UNKNOWN")
     last_checked: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     mapping_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    proxy_id: Mapped[str] = mapped_column(String(120), default="")
+    proxy_name: Mapped[str] = mapped_column(String(120), default="")
+    proxy_protocol: Mapped[str] = mapped_column(String(30), default="")
+    proxy_host: Mapped[str] = mapped_column(String(255), default="")
+    proxy_port: Mapped[str] = mapped_column(String(10), default="")
+    proxy_status: Mapped[str] = mapped_column(String(30), default="UNKNOWN")
+    exit_ip: Mapped[str] = mapped_column(String(64), default="")
+    proxy_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (UniqueConstraint("agent_id", "profile_id", name="uq_account_agent_profile"),)
 
 

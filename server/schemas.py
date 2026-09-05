@@ -133,11 +133,35 @@ class AccountSyncItem(BaseModel):
     account_status: str = "UNKNOWN"
     last_checked: datetime | None = None
     mapping_updated_at: datetime | None = None
+    proxy_id: str = Field(default="", max_length=120)
+    proxy_name: str = Field(default="", max_length=120)
+    proxy_protocol: str = Field(default="", max_length=30)
+    proxy_host: str = Field(default="", max_length=255)
+    proxy_port: str = Field(default="", max_length=10)
+    proxy_status: str = Field(default="UNKNOWN", max_length=30)
+    exit_ip: str = Field(default="", max_length=64)
+    proxy_checked_at: datetime | None = None
 
 
 class AccountSync(BaseModel):
     agent_id: str
     items: list[AccountSyncItem]
+
+
+class VlessRealityConvertRequest(BaseModel):
+    """Ephemeral, admin-facing VLESS Reality -> portable YAML conversion."""
+
+    name: str = Field(min_length=1, max_length=120)
+    server: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    uuid: str = Field(min_length=1, max_length=100)
+    udp: bool = True
+    tls: bool = True
+    network: str = Field(default="tcp", max_length=20)
+    servername: str = Field(min_length=1, max_length=255)
+    public_key: str = Field(min_length=1, max_length=200)
+    short_id: str = Field(min_length=1, max_length=100)
+    client_fingerprint: str = Field(default="chrome", max_length=40)
 
 
 class AutomationMetricSync(BaseModel):

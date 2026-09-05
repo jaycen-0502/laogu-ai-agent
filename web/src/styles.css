@@ -533,6 +533,32 @@ tbody tr:hover {
   color: #718096;
   font-size: 12px;
 }
+.form-checks {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 40px;
+  color: #53636c;
+}
+.form-checks label {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.code-preview {
+  min-height: 360px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  border: 1px solid #d9e4e5;
+  border-radius: 10px;
+  background: #f7fbfb;
+  color: #183b3b;
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 @media (max-width: 760px) {
   .policy-row,
   .policy-header,

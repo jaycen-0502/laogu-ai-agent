@@ -91,6 +91,14 @@ export type Account = {
   account_status: string;
   last_checked: string | null;
   mapping_updated_at: string | null;
+  proxy_id: string;
+  proxy_name: string;
+  proxy_protocol: string;
+  proxy_host: string;
+  proxy_port: string;
+  proxy_status: string;
+  exit_ip: string;
+  proxy_checked_at: string | null;
 };
 export type Profile = {
   profile_id: string;
@@ -102,6 +110,14 @@ export type Profile = {
   login_status: string;
   account_status: string;
   last_checked: string | null;
+  proxy_id: string;
+  proxy_name: string;
+  proxy_protocol: string;
+  proxy_host: string;
+  proxy_port: string;
+  proxy_status: string;
+  exit_ip: string;
+  proxy_checked_at: string | null;
 };
 export type Task = {
   task_id: string;

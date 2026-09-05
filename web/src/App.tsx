@@ -27,6 +27,7 @@ const ControlCenterPage = lazy(() => import("./pages/control_center").then((modu
 const OpsMetricsPage = lazy(() => import("./pages/ops_metrics").then((module) => ({ default: module.OpsMetricsPage })));
 const LicensesPage = lazy(() => import("./pages/licenses").then((module) => ({ default: module.LicensesPage })));
 const TelegramTranslationPage = lazy(() => import("./pages/telegram_translation").then((module) => ({ default: module.TelegramTranslationPage })));
+const ProxyNodesPage = lazy(() => import("./pages/proxy_nodes").then((module) => ({ default: module.ProxyNodesPage })));
 
 const menu = [
   ["/ai/chat", "AI 聊天", ["ADMIN", "OWNER", "MEMBER"]],
@@ -46,6 +47,7 @@ const menu = [
   ["/agents", "运行端", ["ADMIN", "OWNER", "MEMBER"]],
   ["/accounts", "账号", ["ADMIN", "OWNER", "MEMBER"]],
   ["/profiles", "浏览器环境", ["ADMIN", "OWNER", "MEMBER"]],
+  ["/proxy-nodes", "代理节点", ["ADMIN", "OWNER"]],
   ["/tasks", "任务", ["ADMIN", "OWNER", "MEMBER"]],
   ["/activity", "活动记录", ["ADMIN", "OWNER", "MEMBER"]],
   ["/statistics", "数据统计", ["ADMIN", "OWNER", "MEMBER"]],
@@ -78,6 +80,7 @@ const iconPaths: Record<string, React.ReactNode> = {
   stats: <><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></>,
   script: <><path d="m9 7-5 5 5 5M15 7l5 5-5 5M13 4l-2 16"/></>,
   settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
+  proxy: <><path d="M7 7h10M7 12h10M7 17h6"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/></>,
   menu: <><path d="M4 7h16M4 12h16M4 17h16"/></>,
   close: <><path d="m6 6 12 12M18 6 6 18"/></>,
 };
@@ -86,7 +89,7 @@ const navIcons: Record<string, string> = {
   "/control-center": "control", "/ops": "ops", "/licenses": "license", "/telegram-translation": "message",
   "/ai-providers": "provider", "/dashboard": "dashboard", "/workspaces": "workspace", "/users": "users",
   "/agents": "agent", "/accounts": "account", "/profiles": "profile", "/tasks": "task", "/activity": "activity",
-  "/statistics": "stats", "/scripts": "script", "/script-runs": "activity", "/settings": "settings",
+  "/statistics": "stats", "/scripts": "script", "/script-runs": "activity", "/settings": "settings", "/proxy-nodes": "proxy",
 };
 
 function Icon({ name, className = "" }: { name: string; className?: string }) {
@@ -249,6 +252,7 @@ export default function App() {
         <Route path="ops" element={<Suspense fallback={<div className="loading">正在加载运维监控…</div>}><OpsMetricsPage /></Suspense>} />
         <Route path="licenses" element={<Suspense fallback={<div className="loading">正在加载远程授权…</div>}><LicensesPage /></Suspense>} />
         <Route path="telegram-translation" element={<Suspense fallback={<div className="loading">正在加载 Telegram 翻译…</div>}><TelegramTranslationPage /></Suspense>} />
+        <Route path="proxy-nodes" element={<Suspense fallback={<div className="loading">正在加载代理节点工具…</div>}><ProxyNodesPage /></Suspense>} />
         <Route path="ai-providers" element={<Suspense fallback={<div className="loading">正在加载 AI 服务商…</div>}><AIProvidersPage user={user!} /></Suspense>} />
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />

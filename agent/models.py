@@ -81,6 +81,16 @@ class DiscoveredAccount:
     last_checked: datetime
     profile_name: str = ""
     error: str = ""
+    # Proxy metadata is deliberately descriptive only.  Credentials and raw
+    # proxy URLs are never persisted or sent to the coordination server.
+    proxy_id: str = ""
+    proxy_name: str = ""
+    proxy_protocol: str = ""
+    proxy_host: str = ""
+    proxy_port: str = ""
+    proxy_status: str = "UNKNOWN"
+    exit_ip: str = ""
+    proxy_checked_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

@@ -17,6 +17,7 @@ from .server_client import ServerClient, ServerClientError
 from common.release import VERSION
 from .script_updater import sync_engine_from_server
 from .offline_access import ALWAYS_ALLOWED_CAPABILITIES, OfflineAccessStore
+from .x_tasks import ProfileSnapshotStore
 
 
 LOGGER = logging.getLogger("laogu-ai-agent.service")
@@ -84,6 +85,7 @@ class AgentService:
         engine_auto_update: bool = False,
         automation_statistics=None,
         offline_access_store: OfflineAccessStore | None = None,
+        profile_snapshot_store=None,
     ):
         self.server_client = server_client
         self.task_service = task_service
@@ -98,6 +100,7 @@ class AgentService:
         self.engine_auto_update = engine_auto_update
         self.automation_statistics = automation_statistics
         self.offline_access_store = offline_access_store
+        self.profile_snapshot_store = profile_snapshot_store
         self.server_status = "OFFLINE"
         self.agent_status = "UNREGISTERED" if not server_client.agent_id else "OFFLINE"
         self.last_heartbeat = ""
@@ -143,6 +146,13 @@ class AgentService:
         return True
 
     def sync_accounts_once(self) -> bool:
+        # Prefer identity data produced by an already-running Profile task. It
+        # avoids opening a second page and keeps scheduled engine runs isolated.
+        if self.profile_snapshot_store is not None:
+            try:
+                self.account_registry.merge_profile_snapshots(self.profile_snapshot_store.all())
+            except Exception as exc:
+                LOGGER.info("Profile snapshot merge deferred: %s", exc)
         items = [item.to_dict() for item in self.account_registry.list()]
         self.server_client.sync_accounts(items)
         self.server_status = "ONLINE"
@@ -427,4 +437,5 @@ def build_agent_service(task_service, account_registry, *, automation_statistics
         engine_auto_update=settings.engine_auto_update,
         automation_statistics=automation_statistics,
         offline_access_store=OfflineAccessStore(settings.offline_access_file),
+        profile_snapshot_store=ProfileSnapshotStore(settings.profile_snapshot_file),
     )

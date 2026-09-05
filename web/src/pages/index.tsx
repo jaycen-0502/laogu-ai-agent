@@ -683,6 +683,7 @@ function AccountsPage() {
           <tr>
             <th>X用户名</th>
             <th>X账号ID</th>
+            <th>代理节点</th>
             <th>浏览器环境</th>
             <th>运行端</th>
             <th>工作区</th>
@@ -697,6 +698,7 @@ function AccountsPage() {
             <tr key={item.id}>
               <td>{item.x_username || "-"}</td>
               <td className="mono">{item.x_account_id || "-"}</td>
+              <td>{item.proxy_name || item.proxy_id || "直连/未配置"}<div className="muted mono">{item.proxy_host ? `${item.proxy_host}${item.proxy_port ? `:${item.proxy_port}` : ""}` : "-"}</div></td>
               <td className="mono">{item.profile_id}</td>
               <td className="mono">{item.agent_id.slice(0, 8)}…</td>
               <td className="mono">{item.workspace_id.slice(0, 8)}…</td>
@@ -764,6 +766,7 @@ function ProfilesPage() {
             <th>浏览器状态</th>
             <th>X用户名</th>
             <th>X账号ID</th>
+            <th>代理节点</th>
             <th>登录状态</th>
             <th>账号状态</th>
             <th>最近检查</th>
@@ -780,6 +783,7 @@ function ProfilesPage() {
               </td>
               <td>{item.x_username || "-"}</td>
               <td className="mono">{item.x_account_id || "-"}</td>
+              <td>{item.proxy_name || item.proxy_id || "直连/未配置"}<div className="muted mono">{item.proxy_host ? `${item.proxy_host}${item.proxy_port ? `:${item.proxy_port}` : ""}` : "-"}</div></td>
               <td>
                 <State value={item.login_status} />
               </td>

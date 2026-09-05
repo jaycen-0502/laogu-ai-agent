@@ -158,6 +158,9 @@ func normalizeConfig(config *Config) {
 		config.ProxyCheck.BridgeStartTimeoutMs = defaultConfig.ProxyCheck.BridgeStartTimeoutMs
 	}
 	config.License.ServerURL = strings.TrimSpace(config.License.ServerURL)
+	if config.License.ServerURL == "" {
+		config.License.ServerURL = defaultConfig.License.ServerURL
+	}
 	if strings.TrimSpace(config.ProxyCheck.SpeedTargetID) == "" {
 		config.ProxyCheck.SpeedTargetID = defaultConfig.ProxyCheck.SpeedTargetID
 	}
@@ -320,7 +323,7 @@ func DefaultConfig() *Config {
 			NodeVersion:           DefaultAutomationNodeVersion,
 			PlaywrightCoreVersion: DefaultAutomationPWVersion,
 		},
-		License: LicenseConfig{ServerURL: ""},
+		License: LicenseConfig{ServerURL: DefaultLicenseServerURL},
 	}
 }
 

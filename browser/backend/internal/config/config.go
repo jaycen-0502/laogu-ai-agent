@@ -8,6 +8,7 @@ const (
 	DefaultAutomationNodeSource     = "auto"
 	DefaultAutomationNodeVersion    = "22.15.1"
 	DefaultAutomationPWVersion      = "1.59.0"
+	DefaultLicenseServerURL         = "https://api.jaycwl.org"
 )
 
 const (
@@ -42,8 +43,8 @@ type AutomationConfig struct {
 	PlaywrightCoreVersion string `yaml:"playwright_core_version,omitempty"`
 }
 
-// LicenseConfig controls optional remote license checks.  An empty server URL
-// preserves the existing offline-only behavior.
+// LicenseConfig controls remote license checks. Temporary network failures
+// still use the local offline-grace policy.
 type LicenseConfig struct {
 	ServerURL string `yaml:"server_url,omitempty"`
 }

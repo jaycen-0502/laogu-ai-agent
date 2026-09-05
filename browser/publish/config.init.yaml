@@ -59,4 +59,4 @@ automation:
   node_version: 22.15.1
   playwright_core_version: 1.59.0
 license:
-  server_url: ""
+  server_url: https://api.jaycwl.org

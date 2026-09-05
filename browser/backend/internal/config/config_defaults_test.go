@@ -37,6 +37,16 @@ func TestNormalizeConfigDoesNotOverrideCustomDefaultFingerprintArgs(t *testing.T
 	assertStringSliceContains(t, config.Browser.DefaultFingerprintArgs, "--fingerprint-brand=Chrome")
 }
 
+func TestDefaultLicenseServerURLIsAppliedWhenUnset(t *testing.T) {
+	config := &Config{}
+
+	normalizeConfig(config)
+
+	if got, want := config.License.ServerURL, DefaultLicenseServerURL; got != want {
+		t.Fatalf("license server URL = %q, want %q", got, want)
+	}
+}
+
 func assertStringSliceContains(t *testing.T, values []string, expected string) {
 	t.Helper()
 	for _, value := range values {

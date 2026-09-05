@@ -91,7 +91,10 @@ export function LicensesPage() {
     setBusy(true);
     setError("");
     try {
-      await apiClient(`/license/${encodeURIComponent(deleteTarget.license_id)}`, jsonBody({ confirm: true, reason: deleteReason }));
+      await apiClient(`/license/${encodeURIComponent(deleteTarget.license_id)}`, {
+        ...jsonBody({ confirm: true, reason: deleteReason }),
+        method: "DELETE",
+      });
       setMessage(`授权 ${deleteTarget.license_id} 已删除`);
       setDeleteTarget(null);
       setDeleteReason("");

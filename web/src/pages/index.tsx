@@ -395,6 +395,13 @@ function WorkspacesPage({ user }: { user: User }) {
             <Card label="账号" value={selected.account_count ?? 0} />
             <Card label="任务" value={selected.task_count ?? 0} />
           </div>
+          <div style={{ marginTop: "1rem", marginBottom: "1rem", padding: "0.75rem 1rem", background: "var(--bg-subtle, #f8f9fa)", borderRadius: "6px", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>工作室协同码 (Studio Token)：</span>
+            <code style={{ fontSize: "1rem", fontWeight: "bold", background: "#eef2f7", padding: "0.2rem 0.6rem", borderRadius: "4px", userSelect: "all" }}>
+              {selected.studio_token || "未分配"}
+            </code>
+            <small style={{ color: "#666" }}>（各电脑客户端填入此协同码即可实现跨设备防重复去重）</small>
+          </div>
           {user.role === "ADMIN" && (
             <button onClick={toggle}>
               {selected.status === "ACTIVE" ? "禁用工作区" : "启用工作区"}

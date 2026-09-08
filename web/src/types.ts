@@ -42,6 +42,7 @@ export type Workspace = {
   id?: string;
   name: string;
   status: string;
+  studio_token?: string | null;
   created_at?: string;
   user_count?: number;
   agent_count?: number;

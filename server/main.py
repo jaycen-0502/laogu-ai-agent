@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -42,6 +42,7 @@ from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
 from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
+from .dedup_api import register_dedup_routes
 from .offline_access import issue_agent_offline_access
 from .proxy_converter import render_vless_reality_yaml
 from .schemas import AccountSync, AgentRegister, AgentUpdate, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, VlessRealityConvertRequest, WorkspaceCreate, WorkspaceUpdate
@@ -128,7 +129,13 @@ def _user_usage(db: Session, item: User) -> dict:
 
 
 def _workspace_dict(item: Workspace) -> dict:
-    return {"workspace_id": item.id, "name": item.name, "status": item.status, "created_at": _dt(item.created_at)}
+    return {
+        "workspace_id": item.id,
+        "name": item.name,
+        "status": item.status,
+        "studio_token": item.studio_token,
+        "created_at": _dt(item.created_at),
+    }
 
 
 def _aware(value: datetime) -> datetime:
@@ -1468,6 +1475,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         current_user=current_user,
         deny=deny,
     )
+    register_dedup_routes(app, get_db=get_db)
 
     return app
 

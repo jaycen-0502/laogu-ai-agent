@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, Date, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, Date, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, Uuid, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -17,11 +17,16 @@ def now() -> datetime:
     return datetime.now().astimezone()
 
 
+def new_studio_token() -> str:
+    return f"std_{uuid4().hex[:16]}"
+
+
 class Workspace(Base):
     __tablename__ = "workspaces"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
     name: Mapped[str] = mapped_column(String(120), unique=True)
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE")
+    studio_token: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True, default=new_studio_token)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
@@ -581,3 +586,28 @@ class LicenseRevocation(Base):
     reason: Mapped[str] = mapped_column(String(300), default="")
     revoked_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
+class StudioVisitedTarget(Base):
+    """跨设备多工作室去重目标池"""
+
+    __tablename__ = "studio_visited_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    target_handle: Mapped[str] = mapped_column(String(64), index=True)
+    operator_device: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    account_tag: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    action: Mapped[str] = mapped_column(String(30), default="follow", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="CLAIMED", index=True, nullable=False)
+    lease_id: Mapped[UUID | None] = mapped_column(Uuid(), nullable=True)
+    owner_key: Mapped[str] = mapped_column(String(256), default="", server_default="", nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "target_handle", name="uq_workspace_target_handle"),
+        Index("ix_studio_target_exp", "workspace_id", "expires_at"),
+    )
+

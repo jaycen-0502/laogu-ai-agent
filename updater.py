@@ -108,15 +108,36 @@ def apply_update(zip_path: Path, target_dir: Path) -> None:
             if mode and (mode & 0o170000) == 0o120000:
                 continue
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with archive.open(info, "r") as source, destination.open("wb") as output:
-                shutil.copyfileobj(source, output, length=128 * 1024)
+            try:
+                with archive.open(info, "r") as source, destination.open("wb") as output:
+                    shutil.copyfileobj(source, output, length=128 * 1024)
+            except (PermissionError, OSError):
+                # When updater.exe is running, Windows prevents in-place file replacement.
+                # Write to .new or skip safely so the rest of the application updates and restarts.
+                if destination.name.lower() in {"updater.exe", "updater.py"}:
+                    try:
+                        temp_new = destination.with_suffix(destination.suffix + ".new")
+                        with archive.open(info, "r") as source, temp_new.open("wb") as output:
+                            shutil.copyfileobj(source, output, length=128 * 1024)
+                    except Exception:
+                        pass
+                    continue
+                raise
 
 
 def relaunch_client(target_dir: Path) -> subprocess.Popen:
     executable = target_dir / "Laogu-Desktop.exe"
     if not executable.is_file():
         raise FileNotFoundError(f"Client executable not found: {executable}")
-    return subprocess.Popen([str(executable)], cwd=str(target_dir), close_fds=True)
+    flags = 0
+    if sys.platform == "win32":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    return subprocess.Popen(
+        [str(executable)],
+        cwd=str(target_dir),
+        close_fds=True,
+        creationflags=flags,
+    )
 
 
 def run_update(parent_pid: int, zip_path: Path, target_dir: Path) -> int:

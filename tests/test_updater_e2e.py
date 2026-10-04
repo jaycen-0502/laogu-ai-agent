@@ -115,3 +115,38 @@ def test_updater_path_traversal_blocked(tmp_path: Path):
 
     with pytest.raises(ValueError):
         updater._safe_destination(target, "../../../evil.txt")
+
+
+def test_updater_locked_self_executable_handled(tmp_path: Path, monkeypatch):
+    target = tmp_path / "app"
+    target.mkdir()
+
+    # Pre-create updater.exe and Laogu-Desktop.exe
+    (target / "Laogu-Desktop.exe").write_text("old-desktop", encoding="utf-8")
+    (target / "updater.exe").write_text("running-updater", encoding="utf-8")
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as z:
+        z.writestr("Laogu-Desktop.exe", "new-desktop")
+        z.writestr("updater.exe", "new-updater")
+
+    zip_file = tmp_path / "update.zip"
+    zip_file.write_bytes(zip_buf.getvalue())
+
+    # Simulate PermissionError on writing updater.exe
+    orig_open = Path.open
+    def mock_open(self, mode="r", *args, **kwargs):
+        if self.name.lower() == "updater.exe" and "w" in mode:
+            raise PermissionError("[Errno 13] Permission denied: updater.exe")
+        return orig_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", mock_open)
+    updater.apply_update(zip_file, target)
+
+    # Main binary must be updated to new-desktop
+    assert (target / "Laogu-Desktop.exe").read_text(encoding="utf-8") == "new-desktop"
+    # updater.exe is preserved without crashing
+    assert (target / "updater.exe").read_text(encoding="utf-8") == "running-updater"
+    # updater.exe.new was written
+    assert (target / "updater.exe.new").read_text(encoding="utf-8") == "new-updater"
+

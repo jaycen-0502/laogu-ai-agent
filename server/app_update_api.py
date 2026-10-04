@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from email import policy
 from email.parser import BytesParser
 import os
@@ -22,6 +23,7 @@ from .models import AppRelease, now
 from .security import audit
 
 
+LOGGER = logging.getLogger("laogu.app_update")
 _DEFAULT_PUBLISH_DIR = Path(__file__).resolve().parent.parent / "release" / "updates"
 _PUBLISH_DIR = Path(
     os.getenv("LAOGU_APP_UPDATE_DIR", str(_DEFAULT_PUBLISH_DIR)).strip() or str(_DEFAULT_PUBLISH_DIR)
@@ -159,6 +161,7 @@ def _write_package(version: str, filename: str, package: bytes) -> tuple[Path, s
                 digest.update(chunk)
         os.replace(temporary, target)
     except OSError as exc:
+        LOGGER.error("Failed to write release package: %s", exc, exc_info=True)
         try:
             temporary.unlink()
         except OSError:

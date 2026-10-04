@@ -459,6 +459,8 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
 
     @app.exception_handler(HTTPException)
     async def http_error_handler(request: Request, exc: HTTPException):
+        if exc.status_code >= 500:
+            LOGGER.error("HTTP %s error: %s", exc.status_code, exc.detail, exc_info=True)
         detail = exc.detail if exc.status_code < 500 else "Internal server error"
         return JSONResponse(status_code=exc.status_code, content={"detail": detail})
 

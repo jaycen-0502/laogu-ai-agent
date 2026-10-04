@@ -19,7 +19,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/opt/laogu-ai-agent/server /opt/laogu-ai-agent/data/ai-images /var/lib/laogu/agent-data
+ReadWritePaths=/opt/laogu-ai-agent/server /opt/laogu-ai-agent/data/ai-images /opt/laogu-ai-agent/release /var/lib/laogu/agent-data
 
 [Install]
 WantedBy=multi-user.target

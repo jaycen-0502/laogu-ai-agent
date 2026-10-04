@@ -33,7 +33,7 @@ const taskTypeNames: Record<string, string> = {
 const statusNames: Record<string, string> = {
   ACTIVE: "启用",
   DISABLED: "禁用",
-  DELETED: "已删除",
+  DELETED: "已取消授权",
   ONLINE: "在线",
   OFFLINE: "离线",
   RUNNING: "运行中",
@@ -51,6 +51,7 @@ const statusNames: Record<string, string> = {
   ACCEPTED: "已接受",
   EXPIRED: "已过期",
   REVOKED: "已撤销",
+  UNAUTHORIZED: "已取消授权",
 };
 const actionNames: Record<string, string> = {
   LOGIN: "登录",
@@ -63,6 +64,8 @@ const actionNames: Record<string, string> = {
   AGENT_HEARTBEAT: "运行端心跳",
   AGENT_TOKEN_ROTATE: "轮换运行端令牌",
   AGENT_TOKEN_REVOKE: "吊销运行端令牌",
+  AGENT_REVOKE_AUTH: "取消运行端授权",
+  AGENT_PURGE: "删除运行端",
   ACCOUNT_SYNC: "同步账号",
   TASK_CREATE: "创建任务",
   TASK_CANCEL: "取消任务",
@@ -417,7 +420,7 @@ function WorkspacesPage({ user }: { user: User }) {
 function AgentsPage({ current }: { current: User }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState("");
-  const [registerForm, setRegisterForm] = useState({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
+  const [registerForm, setRegisterForm] = useState({ agent_name: "", workspace_id: current.workspace_id || "" });
   const [registerResult, setRegisterResult] = useState<{ agent_id: string; agent_token: string; workspace_id: string } | null>(null);
   const [registerMessage, setRegisterMessage] = useState("");
   const [editingAgentName, setEditingAgentName] = useState(false);
@@ -450,12 +453,10 @@ function AgentsPage({ current }: { current: User }) {
     try {
       const created = await apiClient<{ agent_id: string; agent_token: string; workspace_id: string }>("/agents/register", jsonBody({
         agent_name: registerForm.agent_name.trim(),
-        machine_name: registerForm.machine_name.trim(),
-        client_version: registerForm.client_version.trim() || "unknown",
         ...(current.role === "ADMIN" ? { workspace_id: registerForm.workspace_id } : {}),
       }));
       setRegisterResult(created);
-      setRegisterForm({ agent_name: "", machine_name: "", client_version: "", workspace_id: current.workspace_id || "" });
+      setRegisterForm({ agent_name: "", workspace_id: current.workspace_id || "" });
       setRegisterMessage("运行端注册成功。请立即复制令牌；关闭此提示后不会再次显示。");
       result.reload();
     } catch (exc) {
@@ -473,11 +474,22 @@ function AgentsPage({ current }: { current: User }) {
     }
   };
   const deleteAgent = async (item: Agent) => {
-    if (!window.confirm(`确定删除“${item.agent_name}”吗？删除后该运行端的所有 Token 会立即失效，远程连接会被取消；浏览器资料和任务历史会保留。`)) return;
+    if (!window.confirm(`确定要彻底删除运行端“${item.agent_name}”吗？\n\n此操作将整列彻底删除该运行端及其所有关联记录，在后台完全不残留任何数据，不可撤销！`)) return;
     try {
       await apiClient(`/agents/${item.agent_id}`, { method: "DELETE" });
       setSelected(null);
-      setRegisterMessage("运行端已删除，所有 Token 已失效。浏览器资料和历史记录仍保留。 ");
+      setRegisterMessage(`运行端“${item.agent_name}”已整列删除，已从后台完全移除。`);
+      result.reload();
+    } catch (exc) {
+      setRegisterMessage(errorText(exc));
+    }
+  };
+  const revokeAgentAuth = async (item: Agent) => {
+    if (!window.confirm(`确定要取消“${item.agent_name}”的授权吗？\n\n取消后该运行端的所有 Token 会立即失效，无法再连接服务器；后续可通过“恢复授权”重新激活。`)) return;
+    try {
+      await apiClient(`/agents/${item.agent_id}/revoke-auth`, { method: "POST" });
+      setSelected(null);
+      setRegisterMessage(`运行端“${item.agent_name}”已取消授权，Token 已立即失效。如需重新启用请点击“恢复授权”。`);
       result.reload();
     } catch (exc) {
       setRegisterMessage(errorText(exc));
@@ -562,8 +574,6 @@ if ($setupSucceeded) {
         <p className="form-help">在安装 Windows Agent 的电脑上注册一个连接身份。注册成功后会生成一次性 Agent Token，用于连接本服务器。</p>
         <div className="form-grid">
           <label>运行端名称<small>后台列表中显示的名称，例如：办公室电脑</small><input value={registerForm.agent_name} onChange={(event) => setRegisterForm({ ...registerForm, agent_name: event.target.value })} placeholder="例如：办公室电脑" required /></label>
-          <label>机器名称<small>Windows 电脑名称，用于识别安装位置</small><input value={registerForm.machine_name} onChange={(event) => setRegisterForm({ ...registerForm, machine_name: event.target.value })} placeholder="例如：DESKTOP-ABC" required /></label>
-          <label>Agent 版本<small>填写 Windows Agent 当前版本，便于后台检查升级</small><input value={registerForm.client_version} onChange={(event) => setRegisterForm({ ...registerForm, client_version: event.target.value })} placeholder="例如：1.0.0" /></label>
           {current.role === "ADMIN" ? <label>所属工作区<small>该运行端产生的浏览器环境和任务归属此工作区</small><select value={registerForm.workspace_id} onChange={(event) => setRegisterForm({ ...registerForm, workspace_id: event.target.value })} required><option value="">请选择工作区</option>{workspaces.map((workspace) => <option key={workspace.workspace_id || workspace.id} value={workspace.workspace_id || workspace.id}>{workspace.name}</option>)}</select></label> : <label>所属工作区<small>负责人只能注册到自己的工作区</small><input value={current.workspace_name || current.workspace_id || "未分配工作区"} disabled /></label>}
         </div>
         <button className="primary">生成 Agent Token</button>
@@ -652,8 +662,18 @@ if ($setupSucceeded) {
             {selected.recent_tasks?.length || 0}
           </p>
           <p className="form-help">如果 Windows Agent 的 Token 遗失或泄露，可以重新生成；旧 Token 会立即失效。</p>
-          {selected.status === "DELETED" ? <button onClick={() => void recoverAgent(selected)}>恢复授权</button> : <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>}
-          {selected.status !== "DELETED" && <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>}
+          {selected.status === "DELETED" || selected.status === "UNAUTHORIZED" || selected.status === "REVOKED" ? (
+            <>
+              <button onClick={() => void recoverAgent(selected)}>恢复授权</button>
+              <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => void rotateToken(selected)}>重新生成 Agent Token</button>
+              <button onClick={() => void revokeAgentAuth(selected)}>取消运行端授权</button>
+              <button className="danger-button" onClick={() => void deleteAgent(selected)}>删除运行端</button>
+            </>
+          )}
           <button onClick={() => setSelected(null)}>关闭</button>
         </div>
       )}

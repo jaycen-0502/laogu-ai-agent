@@ -103,8 +103,8 @@ class UserAIPolicyUpdate(BaseModel):
 
 class AgentRegister(BaseModel):
     agent_name: str
-    machine_name: str
-    client_version: str
+    machine_name: str = ""
+    client_version: str = ""
     workspace_id: str | None = None
     device_id: str = Field(default="", max_length=128)
 

@@ -41,7 +41,7 @@ from .telegram_translation_api import register_telegram_translation_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
-from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AppRelease, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
+from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentEngineGrant, AgentToken, AppRelease, AuditLog, AutomationMetric, Command, CredentialCapability, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
 from .dedup_api import register_dedup_routes
 from .offline_access import issue_agent_offline_access
@@ -1003,8 +1003,10 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if not workspace_id or not db.get(Workspace, workspace_id):
             raise HTTPException(status_code=404, detail="Workspace not found")
         country = _request_ip_country(request)
+        machine_name = body.machine_name.strip() or f"{body.agent_name.strip()}-{__import__('uuid').uuid4().hex[:6]}"
+        client_version = body.client_version.strip() or "0.21.91"
         device_id = body.device_id.strip()
-        item = Agent(workspace_id=workspace_id, agent_name=body.agent_name, machine_name=body.machine_name, client_version=body.client_version, token_hash="", bound_device_id=device_id or None, bound_ip=client_ip(request) if device_id else None, last_ip=client_ip(request), ip_country=country, bound_at=now() if device_id else None, registered_by_user_id=user.id)
+        item = Agent(workspace_id=workspace_id, agent_name=body.agent_name.strip(), machine_name=machine_name, client_version=client_version, token_hash="", bound_device_id=device_id or None, bound_ip=client_ip(request) if device_id else None, last_ip=client_ip(request), ip_country=country, bound_at=now() if device_id else None, registered_by_user_id=user.id)
         db.add(item); db.flush(); raw_token, _ = create_token(db, item.id); db.commit()
         audit(db, request, action="AGENT_REGISTER", result="SUCCESS", user_id=user.id, workspace_id=item.workspace_id, agent_id=item.id, resource_type="agent", resource_id=item.id)
         return {"agent_id": item.id, "agent_token": raw_token, "workspace_id": item.workspace_id}
@@ -1059,19 +1061,35 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         audit(db, request, action="AGENT_TOKEN_REVOKE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id)
         return {"agent_id": agent.id, "revoked": changed}
 
+    @app.post("/api/agents/{agent_id}/revoke-auth")
+    def revoke_agent_auth(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
+        agent = db.get(Agent, agent_id)
+        if not agent: raise HTTPException(status_code=404, detail="Agent not found")
+        require_agent_manager(request, db, user, agent)
+        when = now(); revoked = 0
+        for token in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
+            token.status = TOKEN_REVOKED; token.revoked_at = when; revoked += 1
+        agent.status = "UNAUTHORIZED"
+        db.commit()
+        audit(db, request, action="AGENT_REVOKE_AUTH", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id)
+        return {"agent_id": agent.id, "status": agent.status, "revoked": revoked}
+
     @app.delete("/api/agents/{agent_id}")
     def delete_agent(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
         agent = db.get(Agent, agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         require_agent_manager(request, db, user, agent)
-        when = now(); revoked = 0
-        for token in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
-            token.status = TOKEN_REVOKED; token.revoked_at = when; revoked += 1
-        agent.status = "DELETED"
+        target_id = agent.id
+        target_workspace = agent.workspace_id
+        revoked = db.scalar(select(func.count(AgentToken.token_id)).where(AgentToken.agent_id == target_id, AgentToken.status == TOKEN_ACTIVE)) or 0
+        for model in (CredentialCapability, Activity, Command, Task, Account, Profile, AutomationMetric, AgentEngineGrant, AgentToken):
+            db.execute(delete(model).where(model.agent_id == target_id))
+        db.execute(update(AuditLog).where(AuditLog.agent_id == target_id).values(agent_id=None, message="purged agent activity"))
+        db.execute(delete(Agent).where(Agent.id == target_id))
         db.commit()
-        audit(db, request, action="AGENT_DELETE", result="SUCCESS", user_id=user.id, workspace_id=agent.workspace_id, agent_id=agent.id, resource_type="agent", resource_id=agent.id, message=f"revoked_tokens={revoked}")
-        return {"agent_id": agent.id, "status": "DELETED", "revoked": revoked}
+        audit(db, request, action="AGENT_PURGE", result="SUCCESS", user_id=user.id, workspace_id=target_workspace, resource_type="agent", resource_id=target_id, message=f"revoked_tokens={revoked}")
+        return {"ok": True, "agent_id": target_id, "purged": True}
 
     @app.post("/api/agents/{agent_id}/recover")
     def recover_agent(agent_id: str, request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
@@ -1080,8 +1098,8 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         require_agent_manager(request, db, user, agent)
-        if agent.status != "DELETED":
-            raise HTTPException(status_code=409, detail="Agent is not deleted")
+        if agent.status not in {"DELETED", "UNAUTHORIZED", "REVOKED"}:
+            raise HTTPException(status_code=409, detail="Agent is not unauthorized or deleted")
         issued = now()
         for old in db.scalars(select(AgentToken).where(AgentToken.agent_id == agent.id, AgentToken.status == TOKEN_ACTIVE)):
             old.status = TOKEN_REVOKED

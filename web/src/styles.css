@@ -416,7 +416,10 @@ tbody tr:hover {
 }
 .state-failed,
 .state-error,
-.state-disabled {
+.state-disabled,
+.state-deleted,
+.state-revoked,
+.state-unauthorized {
   color: #b42318;
   background: #fee4e2;
 }

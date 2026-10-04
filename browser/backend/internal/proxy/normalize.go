@@ -9,7 +9,7 @@ const defaultSourceRefreshIntervalM = 60
 const maxSourceRefreshIntervalM = 24 * 60
 
 func NormalizeBrowserProxies(proxies []config.BrowserProxy, generateID func() string) []config.BrowserProxy {
-	normalized := make([]config.BrowserProxy, 0, len(proxies)+1)
+	normalized := make([]config.BrowserProxy, 0, len(proxies))
 	for i, item := range proxies {
 		proxyName := strings.TrimSpace(item.ProxyName)
 		proxyConfig := strings.TrimSpace(item.ProxyConfig)
@@ -66,21 +66,7 @@ func NormalizeBrowserProxies(proxies []config.BrowserProxy, generateID func() st
 		})
 	}
 
-	return ensureBuiltinDirectProxy(normalized)
-}
-
-func ensureBuiltinDirectProxy(proxies []config.BrowserProxy) []config.BrowserProxy {
-	const directProxyID = "__direct__"
-	for _, item := range proxies {
-		if item.ProxyId == directProxyID {
-			return proxies
-		}
-	}
-
-	builtin := config.BrowserProxy{
-		ProxyId:     directProxyID,
-		ProxyName:   "直连（不走代理）",
-		ProxyConfig: "direct://",
-	}
-	return append([]config.BrowserProxy{builtin}, proxies...)
+	// 直连现在是可管理的普通代理项：允许用户删除，也允许通过代理导入面板再次添加。
+	// 不在规范化阶段强制补回 __direct__，否则删除操作无法持久化。
+	return normalized
 }

@@ -91,9 +91,16 @@ func (m *XrayManager) buildRuntimeConfigWithRoute(key string, outbounds []interf
 }
 
 func defaultXrayDNSConfig() map[string]interface{} {
-	return map[string]interface{}{
-		"servers": []interface{}{"223.5.5.5", "119.29.29.29"},
-	}
+	return withXrayDNSRefreshPolicy(map[string]interface{}{
+		"servers": []interface{}{
+			"8.8.8.8",
+			"8.8.4.4",
+			"1.1.1.1",
+			"1.0.0.1",
+			"223.5.5.5",
+			"223.6.6.6",
+		},
+	})
 }
 
 func sanitizeXrayOutbounds(outbounds []interface{}) []interface{} {
@@ -141,7 +148,7 @@ func firstXrayOutboundEndpoint(outbound map[string]interface{}) (string, string)
 		return "", ""
 	}
 	switch protocol {
-	case "trojan":
+	case "trojan", "shadowsocks", "socks", "http":
 		servers, _ := settings["servers"].([]interface{})
 		if len(servers) == 0 {
 			return "", ""

@@ -57,4 +57,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    exit_code = 0
+    try:
+        exit_code = main()
+    except SystemExit as exc:
+        exit_code = exc.code if isinstance(exc.code, int) else 0
+    except Exception:
+        exit_code = 1
+    finally:
+        # 彻底在操作系统级别终止进程，避免底层线程池或网络连接死锁导致任务管理器中进程假死残留
+        import os
+        os._exit(exit_code if isinstance(exit_code, int) else 0)

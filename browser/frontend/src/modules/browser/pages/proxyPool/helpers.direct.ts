@@ -39,6 +39,7 @@ function formatDirectProxyHost(raw: string): string {
 
 function normalizeDirectProtocol(raw: unknown): DirectImportForm['protocol'] {
   const protocol = String(raw || '').trim().toLowerCase()
+  if (protocol === 'direct') return 'direct'
   if (protocol === 'http' || protocol === 'https' || protocol === 'socks5') {
     return protocol
   }
@@ -86,6 +87,11 @@ function parseDirectProxyURL(raw: string): DirectImportForm {
 }
 
 export function buildDirectImportCandidate(form: DirectImportForm): ImportCandidate {
+  if (form.protocol === 'direct') {
+    const proxyName = form.proxyName.trim()
+    if (!proxyName) throw new Error('请输入直连配置名称')
+    return { proxyName, proxyConfig: 'direct://' }
+  }
   const serverInput = form.server.trim()
   if (!serverInput) {
     throw new Error('请输入代理地址')
@@ -159,6 +165,12 @@ function parseDirectImportObject(payload: Record<string, unknown>, fallbackGroup
   }
 
   const protocol = normalizeDirectProtocol(payload.protocol ?? payload.scheme)
+  if (protocol === 'direct') {
+    return {
+      form: { proxyName, protocol, server: '', port: '', username: '', password: '' },
+      groupName,
+    }
+  }
   const server = String(payload.server ?? payload.host ?? '').trim()
   if (!server) {
     throw new Error('JSON 缺少 server')

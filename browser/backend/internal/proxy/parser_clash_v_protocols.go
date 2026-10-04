@@ -1,6 +1,9 @@
 package proxy
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interface{}, string, error) {
 	host := getMapString(node, "server")
@@ -33,7 +36,10 @@ func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interf
 	}
 	stream := map[string]interface{}{}
 	tlsVal := strings.ToLower(getMapString(node, "tls"))
-	_, hasRealityOpts := node["reality-opts"]
+	realityRaw, hasRealityOpts := node["reality-opts"]
+	if !hasRealityOpts {
+		realityRaw, hasRealityOpts = node["realityOpts"]
+	}
 
 	if hasRealityOpts {
 		stream["network"] = "tcp"
@@ -43,18 +49,37 @@ func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interf
 		if sni != "" {
 			realityOpts["serverName"] = sni
 		}
-		fingerprint := getMapString(node, "client-fingerprint")
+		fingerprint := firstMapString(node, "client-fingerprint", "clientFingerprint", "fingerprint")
 		if fingerprint == "" {
 			fingerprint = "chrome"
 		}
 		realityOpts["fingerprint"] = fingerprint
-		if rm := toStringMap(node["reality-opts"]); rm != nil {
-			if pbk := getMapString(rm, "public-key"); pbk != "" {
-				realityOpts["publicKey"] = pbk
-			}
-			if sid := getMapString(rm, "short-id"); sid != "" {
-				realityOpts["shortId"] = sid
-			}
+		realityMap := toStringMap(realityRaw)
+		publicKey := firstMapString(realityMap, "public-key", "publicKey", "public_key", "pbk")
+		shortID := firstMapString(realityMap, "short-id", "shortId", "short_id", "sid")
+		spiderX := firstMapString(realityMap, "spider-x", "spiderX", "spx")
+
+		// A common hand-written YAML mistake leaves `reality-opts:` empty and
+		// places its fields at the node level. Recover those fields so an otherwise
+		// valid subscription does not silently turn into a broken Xray outbound.
+		if publicKey == "" {
+			publicKey = firstMapString(node, "public-key", "publicKey", "public_key", "pbk")
+		}
+		if shortID == "" {
+			shortID = firstMapString(node, "short-id", "shortId", "short_id", "sid")
+		}
+		if spiderX == "" {
+			spiderX = firstMapString(node, "spider-x", "spiderX", "spx")
+		}
+		if publicKey == "" {
+			return nil, "", fmt.Errorf("VLESS REALITY 配置缺少 reality-opts.public-key；请确认 public-key 和 short-id 缩进在 reality-opts 下")
+		}
+		realityOpts["publicKey"] = publicKey
+		if shortID != "" {
+			realityOpts["shortId"] = shortID
+		}
+		if spiderX != "" {
+			realityOpts["spiderX"] = spiderX
 		}
 		stream["security"] = "reality"
 		stream["realitySettings"] = realityOpts
@@ -82,6 +107,18 @@ func buildOutboundFromClashVless(node map[string]interface{}) (map[string]interf
 	}
 	applyXrayBrowserOutboundTuning(node, out)
 	return out, "", nil
+}
+
+func firstMapString(m map[string]interface{}, keys ...string) string {
+	if m == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if value := getMapString(m, key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func buildOutboundFromClashVmess(node map[string]interface{}) (map[string]interface{}, string, error) {

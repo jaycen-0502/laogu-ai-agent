@@ -47,6 +47,7 @@ class ServerSettings:
     rate_limit_license_issue: int = 5
     rate_limit_license_check: int = 300
     license_check_retention_days: int = 30
+    app_update_max_bytes: int = 536870912
 
 
 def load_server_settings() -> ServerSettings:
@@ -92,4 +93,5 @@ def load_server_settings() -> ServerSettings:
         rate_limit_license_issue=int(os.getenv("LAOGU_RATE_LIMIT_LICENSE_ISSUE", "5")),
         rate_limit_license_check=int(os.getenv("LAOGU_RATE_LIMIT_LICENSE_CHECK", "300")),
         license_check_retention_days=int(os.getenv("LAOGU_LICENSE_CHECK_RETENTION_DAYS", "30")),
+        app_update_max_bytes=max(1, int(os.getenv("LAOGU_APP_UPDATE_MAX_BYTES", str(512 * 1024 * 1024)))),
     )

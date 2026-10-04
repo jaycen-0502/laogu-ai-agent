@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -38,8 +40,42 @@ class RuntimeConfig:
             key = "active" if mode == "HOT_UPDATE" else "next_run"
             current.setdefault(key, {}).update(values)
             current["version"] = int(current.get("version") or 0) + 1
-            self.path.write_text(json.dumps(self._items, ensure_ascii=False, indent=2), encoding="utf-8")
+            payload = json.dumps(self._items, ensure_ascii=False, indent=2)
+            self._atomic_write(payload)
             return self.get(profile_id)
+
+    def remove(self, profile_id: str) -> bool:
+        with self._lock:
+            if str(profile_id) in self._items:
+                del self._items[str(profile_id)]
+                payload = json.dumps(self._items, ensure_ascii=False, indent=2)
+                self._atomic_write(payload)
+                return True
+            return False
+
+    def _atomic_write(self, payload: str) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_name = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temporary_name = stream.name
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_name, self.path)
+        finally:
+            if temporary_name:
+                try:
+                    os.unlink(temporary_name)
+                except FileNotFoundError:
+                    pass
 
     def snapshot(self, profile_id: str) -> dict[str, Any]:
         return self.get(profile_id)

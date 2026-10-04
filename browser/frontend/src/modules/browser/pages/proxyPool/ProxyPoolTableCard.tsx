@@ -4,7 +4,7 @@ import { Button, Card, Input, Switch, Table } from '../../../../shared/component
 import type { SortOrder, TableColumn } from '../../../../shared/components/Table'
 import type { ProxyIPHealthResult } from '../../types'
 
-import { BUILTIN_PROXY_IDS, sourceHostLabel, type ProxyDisplayInfo } from './helpers'
+import { sourceHostLabel, type ProxyDisplayInfo } from './helpers'
 
 interface ProxyPoolTableCardProps {
   allFilteredSelected: boolean
@@ -131,7 +131,6 @@ export function ProxyPoolTableCard({
         <input
           type="checkbox"
           checked={selectedIds.has(record.proxyId)}
-          disabled={BUILTIN_PROXY_IDS.has(record.proxyId)}
           onChange={() => onToggleOne(record.proxyId)}
           onClick={event => event.stopPropagation()}
           className="w-4 h-4 rounded border-[var(--color-border-default)] accent-[var(--color-accent)] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
@@ -185,7 +184,6 @@ export function ProxyPoolTableCard({
       title: '操作',
       width: '320px',
       render: (_, record) => {
-        const isBuiltin = BUILTIN_PROXY_IDS.has(record.proxyId)
         const sourceId = record.sourceId || ''
         const hasSource = !!sourceId && !!record.sourceUrl
         return (
@@ -222,11 +220,9 @@ export function ProxyPoolTableCard({
             <Button
               size="sm"
               variant="ghost"
-              disabled={isBuiltin}
-              title={isBuiltin ? '内置代理不可编辑' : undefined}
               onClick={(event) => {
                 event.stopPropagation()
-                if (!isBuiltin) onEdit(record)
+                onEdit(record)
               }}
             >
               编辑
@@ -234,11 +230,9 @@ export function ProxyPoolTableCard({
             <Button
               size="sm"
               variant="danger"
-              disabled={isBuiltin}
-              title={isBuiltin ? '内置代理不可删除' : undefined}
               onClick={(event) => {
                 event.stopPropagation()
-                if (!isBuiltin) onDelete(record.proxyId)
+                onDelete(record.proxyId)
               }}
             >
               删除

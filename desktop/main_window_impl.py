@@ -354,7 +354,18 @@ class MainWindow(QMainWindow):
 
     def _run_profile_action(self, label: str, function: Callable[[str], Any], ids: list[str] | None = None):
         selected = ids or self._require_selection()
-        if selected: self._run_job(label, lambda: [function(item) for item in selected], lambda _: self.refresh_profiles())
+        if selected:
+            def safe_action():
+                for item in selected:
+                    try:
+                        function(item)
+                    except Exception as exc:
+                        err = str(exc).lower()
+                        if "停止" in label or "stop" in label.lower() or "404" in err or "not found" in err or "10061" in err or "拒绝" in err:
+                            pass
+                        else:
+                            raise
+            self._run_job(label, safe_action, lambda _: self.refresh_profiles())
 
     def _run_job(self, label: str, function: Callable[[], Any], callback: Callable[[Any], None]) -> None:
         if self._closing: return

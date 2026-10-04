@@ -81,12 +81,21 @@ func buildOutboundVless(node string) (map[string]interface{}, error) {
 	}
 	host := u.Hostname()
 	portStr := u.Port()
-	p, _ := strconv.Atoi(portStr)
+	p, portErr := strconv.Atoi(portStr)
 	id := u.User.Username()
+	if host == "" {
+		return nil, fmt.Errorf("vless 配置缺少服务器地址")
+	}
+	if portErr != nil || p < 1 || p > 65535 {
+		return nil, fmt.Errorf("vless 配置端口无效")
+	}
+	if strings.TrimSpace(id) == "" {
+		return nil, fmt.Errorf("vless 配置缺少 uuid")
+	}
 	q := u.Query()
 	flow := q.Get("flow")
 	sec := strings.ToLower(q.Get("security"))
-	sni := q.Get("sni")
+	sni := firstNonEmptyQueryValue(q, "sni", "servername", "serverName", "peer")
 	fingerprint := firstNonEmptyQueryValue(q, "fp", "client-fingerprint", "fingerprint")
 	insecure := queryBool(q, "insecure", "allowInsecure")
 	out := map[string]interface{}{
@@ -109,7 +118,28 @@ func buildOutboundVless(node string) (map[string]interface{}, error) {
 		},
 	}
 	stream := map[string]interface{}{}
-	if sec == "tls" || sec == "reality" {
+	if sec == "reality" {
+		publicKey := firstNonEmptyQueryValue(q, "pbk", "public-key", "publicKey", "public_key")
+		if publicKey == "" {
+			return nil, fmt.Errorf("VLESS REALITY 配置缺少 public-key（链接参数 pbk）")
+		}
+		if fingerprint == "" {
+			fingerprint = "chrome"
+		}
+		realitySettings := map[string]interface{}{
+			"publicKey":   publicKey,
+			"fingerprint": fingerprint,
+			"spiderX":     firstNonEmptyQueryValue(q, "spx", "spiderX", "spider-x"),
+		}
+		if sni != "" {
+			realitySettings["serverName"] = sni
+		}
+		if shortID := firstNonEmptyQueryValue(q, "sid", "short-id", "shortId", "short_id"); shortID != "" {
+			realitySettings["shortId"] = shortID
+		}
+		stream["security"] = "reality"
+		stream["realitySettings"] = realitySettings
+	} else if sec == "tls" {
 		stream["security"] = "tls"
 		tlsSettings := map[string]interface{}{}
 		if sni != "" {
@@ -129,8 +159,13 @@ func buildOutboundVless(node string) (map[string]interface{}, error) {
 	if network == "" {
 		network = q.Get("network")
 	}
+	if network == "raw" {
+		network = "tcp"
+	}
+	if network != "" {
+		stream["network"] = network
+	}
 	if network == "ws" {
-		stream["network"] = "ws"
 		ws := map[string]interface{}{}
 		if pth := q.Get("path"); pth != "" {
 			ws["path"] = pth

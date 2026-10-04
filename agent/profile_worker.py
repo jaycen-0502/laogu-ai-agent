@@ -4,6 +4,8 @@ from enum import Enum
 import threading
 from typing import Any
 
+from .value_parsing import parse_bool
+
 
 class WorkerState(str, Enum):
     STOPPED = "STOPPED"
@@ -136,6 +138,20 @@ class ProfileWorkerManager:
                 if not 0.0 <= ratio <= 1.0:
                     raise ProfileWorkerError("ai_reply_ratio must be between 0.0 and 1.0")
                 values["ai_reply_ratio"] = ratio
+            if isinstance(values, dict):
+                values = dict(values)
+                for action in ("like", "follow", "reply", "bookmark", "retweet"):
+                    key = f"allow_{action}"
+                    if key in values:
+                        try:
+                            values[key] = parse_bool(values[key])
+                        except ValueError as exc:
+                            raise ProfileWorkerError(f"{key} must be a boolean") from exc
+                if "dry_run" in values:
+                    try:
+                        values["dry_run"] = parse_bool(values["dry_run"])
+                    except ValueError as exc:
+                        raise ProfileWorkerError("dry_run must be a boolean") from exc
             return {"runtime_config": self.runtime_config.update(profile_id, values, mode=mode)}
         if self.task_service is None:
             raise ProfileWorkerError("Command type is not enabled without TaskService")

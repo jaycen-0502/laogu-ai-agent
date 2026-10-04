@@ -72,9 +72,16 @@ class CredentialStore:
                 raise RuntimeError("Plaintext Agent Token credential file is not allowed; re-register the Agent")
             credentials = {key: str(value) for key, value in payload.items() if value and key != "agent_token_protected"}
             if payload.get("agent_token_protected"):
-                credentials["agent_token"] = self.protector.unprotect(str(payload["agent_token_protected"]))
+                try:
+                    credentials["agent_token"] = self.protector.unprotect(str(payload["agent_token_protected"]))
+                except Exception as unprotect_err:
+                    # DPAPI 解密失败（如跨机器或用户复制、密钥失效），安全降级处理，避免阻断程序启动
+                    logger = logging.getLogger("laogu.agent.server_client")
+                    logger.warning("DPAPI 凭证解密跳过 (可能由跨机器或用户迁移引起): %s", unprotect_err)
             return credentials
-        except (OSError, json.JSONDecodeError, TypeError):
+        except RuntimeError:
+            raise
+        except Exception:
             return {}
 
     def save(self, payload: dict[str, str]) -> None:

@@ -44,6 +44,37 @@ func (m *Manager) GetDefaultCore() (Core, bool) {
 	return Core{}, false
 }
 
+// resolveFirstAvailableCore returns the first core whose executable can be
+// resolved. The configured default is preferred, but broken or missing core
+// records are skipped so an upgraded portable package can recover after its
+// bundled Chromium version changes.
+func (m *Manager) resolveFirstAvailableCore(excludeCoreID string) (Core, string, bool) {
+	excludeCoreID = normalizeProfileCoreID(excludeCoreID)
+	cores := m.ListCores()
+	ordered := make([]Core, 0, len(cores))
+	for _, core := range cores {
+		if core.IsDefault {
+			ordered = append(ordered, core)
+		}
+	}
+	for _, core := range cores {
+		if !core.IsDefault {
+			ordered = append(ordered, core)
+		}
+	}
+
+	for _, core := range ordered {
+		if excludeCoreID != "" && strings.EqualFold(core.CoreId, excludeCoreID) {
+			continue
+		}
+		exePath, err := m.ResolveCoreExecutable(core)
+		if err == nil {
+			return core, exePath, true
+		}
+	}
+	return Core{}, "", false
+}
+
 // ResolveCoreExecutable 解析内核可执行文件路径
 func (m *Manager) ResolveCoreExecutable(core Core) (string, error) {
 	corePath := strings.TrimSpace(core.CorePath)
@@ -60,7 +91,11 @@ func (m *Manager) ResolveCoreExecutable(core Core) (string, error) {
 		return "", fmt.Errorf("浏览器内核文件不可执行：%s。原因：%w。请检查文件权限或重新解压内核", exePath, err)
 	}
 
-	return exePath, nil
+	// Chromium on Windows can start its browser, GPU and network processes from
+	// a deep portable-package path while silently failing to spawn renderers.
+	// Prefer the equivalent 8.3 path for process launch so child-process and
+	// resource paths stay within legacy Windows compatibility limits.
+	return preferShortCoreExecutablePath(exePath), nil
 }
 
 // ValidateCorePath 验证内核路径是否有效
@@ -105,11 +140,24 @@ func (m *Manager) ResolveChromeBinary(profile *Profile) (string, error) {
 	}
 
 	exePath, err := m.ResolveCoreExecutable(core)
-	if err != nil {
+	if err == nil {
+		log.Debug("使用内核", logger.F("core_id", core.CoreId), logger.F("path", exePath))
+		return exePath, nil
+	}
+	log.Warn("所选内核不可用，尝试回退到其他可用内核",
+		logger.F("core_id", core.CoreId),
+		logger.F("error", err.Error()),
+	)
+
+	fallbackCore, fallbackPath, ok := m.resolveFirstAvailableCore(core.CoreId)
+	if !ok {
 		log.Error("内核路径解析失败", logger.F("core_id", core.CoreId), logger.F("error", err.Error()))
 		return "", err
 	}
-
-	log.Debug("使用内核", logger.F("core_id", core.CoreId), logger.F("path", exePath))
-	return exePath, nil
+	log.Warn("已回退到可用内核",
+		logger.F("selected_core_id", core.CoreId),
+		logger.F("fallback_core_id", fallbackCore.CoreId),
+		logger.F("path", fallbackPath),
+	)
+	return fallbackPath, nil
 }

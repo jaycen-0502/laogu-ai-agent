@@ -106,6 +106,101 @@ func ReplaceBookmarkURL(userDataDir string, oldURL string, newURL string) (bool,
 	})
 }
 
+// RemoveExactBookmarks 从 Chromium 书签文件中删除名称和 URL 都完全匹配的条目。
+// 这用于清理旧版本自动写入的默认书签，不会删除用户改名或改网址的书签。
+func RemoveExactBookmarks(userDataDir string, bookmarks []config.BrowserBookmark) (int, error) {
+	if len(bookmarks) == 0 {
+		return 0, nil
+	}
+	bookmarksPath := filepath.Join(userDataDir, "Default", "Bookmarks")
+	data, err := os.ReadFile(bookmarksPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var root map[string]interface{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return 0, fmt.Errorf("解析书签失败: %w", err)
+	}
+	roots, ok := root["roots"].(map[string]interface{})
+	if !ok {
+		return 0, nil
+	}
+
+	removed := 0
+	for _, item := range roots {
+		folder, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		children, ok := folder["children"].([]interface{})
+		if !ok {
+			continue
+		}
+		filtered, count := removeExactBookmarkNodes(children, bookmarks)
+		if count > 0 {
+			folder["children"] = filtered
+			folder["date_modified"] = toChromiumTime(time.Now())
+			removed += count
+		}
+	}
+	if removed == 0 {
+		return 0, nil
+	}
+	root["checksum"] = ""
+	out, err := json.MarshalIndent(root, "", "   ")
+	if err != nil {
+		return 0, fmt.Errorf("序列化书签失败: %w", err)
+	}
+	if err := os.WriteFile(bookmarksPath, out, 0o644); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+func removeExactBookmarkNodes(nodes []interface{}, bookmarks []config.BrowserBookmark) ([]interface{}, int) {
+	filtered := make([]interface{}, 0, len(nodes))
+	removed := 0
+	for _, item := range nodes {
+		node, ok := item.(map[string]interface{})
+		if !ok {
+			filtered = append(filtered, item)
+			continue
+		}
+		if node["type"] == "folder" {
+			if children, ok := node["children"].([]interface{}); ok {
+				updated, count := removeExactBookmarkNodes(children, bookmarks)
+				if count > 0 {
+					node["children"] = updated
+					node["date_modified"] = toChromiumTime(time.Now())
+					removed += count
+				}
+			}
+			filtered = append(filtered, node)
+			continue
+		}
+
+		nameValue, _ := node["name"].(string)
+		urlValue, _ := node["url"].(string)
+		matched := false
+		for _, bookmark := range bookmarks {
+			if strings.EqualFold(strings.TrimSpace(nameValue), strings.TrimSpace(bookmark.Name)) &&
+				strings.EqualFold(strings.TrimSpace(urlValue), strings.TrimSpace(bookmark.URL)) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			removed++
+			continue
+		}
+		filtered = append(filtered, node)
+	}
+	return filtered, removed
+}
+
 func replaceBookmarkURL(userDataDir string, newURL string, match func(map[string]interface{}) bool) (bool, error) {
 	bookmarksPath := filepath.Join(userDataDir, "Default", "Bookmarks")
 	data, err := os.ReadFile(bookmarksPath)

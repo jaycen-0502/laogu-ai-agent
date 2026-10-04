@@ -22,7 +22,7 @@ export type ProxyImportMode = 'clash' | 'direct' | 'chain'
 
 export interface DirectImportForm {
   proxyName: string
-  protocol: 'http' | 'https' | 'socks5'
+  protocol: 'direct' | 'http' | 'https' | 'socks5'
   server: string
   port: string
   username: string
@@ -45,6 +45,7 @@ export interface ChainImportForm {
 }
 
 export const DIRECT_PROXY_PROTOCOL_OPTIONS = [
+  { value: 'direct', label: '直连（不走代理）' },
   { value: 'http', label: 'HTTP' },
   { value: 'https', label: 'HTTPS' },
   { value: 'socks5', label: 'SOCKS5' },

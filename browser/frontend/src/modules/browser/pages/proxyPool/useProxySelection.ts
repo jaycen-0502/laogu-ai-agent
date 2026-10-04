@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { toast } from '../../../../shared/components'
 import type { BrowserProxy } from '../../types'
-import { BUILTIN_PROXY_IDS, type ProxyDisplayInfo } from './helpers'
+import { type ProxyDisplayInfo } from './helpers'
 
 interface UseProxySelectionOptions {
   proxies: BrowserProxy[]
@@ -27,14 +27,13 @@ export function useProxySelection({ proxies, filteredList, saveProxies }: UsePro
     } else {
       setSelectedIds(prev => {
         const next = new Set(prev)
-        filteredList.filter(p => !BUILTIN_PROXY_IDS.has(p.proxyId)).forEach(p => next.add(p.proxyId))
+        filteredList.forEach(p => next.add(p.proxyId))
         return next
       })
     }
   }
 
   const handleToggleOne = (proxyId: string) => {
-    if (BUILTIN_PROXY_IDS.has(proxyId)) return
     setSelectedIds(prev => {
       const next = new Set(prev)
       next.has(proxyId) ? next.delete(proxyId) : next.add(proxyId)

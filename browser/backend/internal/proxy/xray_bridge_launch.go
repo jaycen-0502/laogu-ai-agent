@@ -3,6 +3,7 @@ package proxy
 import (
 	"ant-chrome/backend/internal/config"
 	"ant-chrome/backend/internal/logger"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -92,15 +93,23 @@ func (m *XrayManager) ensureBridge(proxyConfig string, proxies []config.BrowserP
 	}
 	key := computeNodeKey(src + "\x00" + dnsServers)
 
+	unlockLaunch := m.lockLaunchForKey(key)
+	defer unlockLaunch()
+	if m.isStopped() {
+		return "", "", fmt.Errorf("xray 管理器已停止")
+	}
 	if socksURL, reused := m.tryReuseBridge(key, pin); reused {
 		log.Info("复用 xray 桥接进程", logger.F("engine", "xray"), logger.F("key", key), logger.F("socks_url", socksURL))
 		return socksURL, key, nil
 	}
-	unlockLaunch := m.lockLaunchForKey(key)
-	defer unlockLaunch()
-	if socksURL, reused := m.tryReuseBridge(key, pin); reused {
-		log.Info("复用 xray 桥接进程", logger.F("engine", "xray"), logger.F("key", key), logger.F("socks_url", socksURL))
-		return socksURL, key, nil
+	// Never replace a port owned by a running browser. Its monitor repairs
+	// the same listener; a speed test must not silently create another one.
+	m.mu.Lock()
+	active := m.Bridges[key]
+	pinned := active != nil && active.RefCount > 0
+	m.mu.Unlock()
+	if pinned {
+		return "", "", fmt.Errorf("xray 桥接暂不可用，正在保留原端口恢复，请稍后重试")
 	}
 
 	binaryPath, err := m.resolveBinary()
@@ -117,12 +126,9 @@ func (m *XrayManager) ensureBridge(proxyConfig string, proxies []config.BrowserP
 	attemptsUsed := 0
 	for attempt := 1; attempt <= maxLaunchRetries; attempt++ {
 		attemptsUsed = attempt
-		socksURL, bridge, err := m.launchBridgeAttempt(log, key, binaryPath, outbounds, routes, preferredPort, dnsServers, pin, attempt)
+		socksURL, _, err := m.launchBridgeAttempt(log, key, binaryPath, outbounds, routes, preferredPort, dnsServers, pin, attempt)
 		if err == nil {
 			return socksURL, key, nil
-		}
-		if bridge != nil && bridge.Running {
-			go m.watchBridge(bridge, key)
 		}
 		lastErr = err
 		if !isRetryableXrayLaunchError(err) {
@@ -166,6 +172,9 @@ func isRetryableXrayLaunchError(err error) bool {
 }
 
 func (m *XrayManager) launchBridgeAttempt(log *logger.Logger, key string, binaryPath string, outbounds []interface{}, routes []interface{}, preferredPort int, dnsServers string, pin bool, attempt int) (string, *XrayBridge, error) {
+	if m.isStopped() {
+		return "", nil, fmt.Errorf("xray 管理器已停止")
+	}
 	port := preferredPort
 	if port <= 0 {
 		var err error
@@ -210,6 +219,7 @@ func (m *XrayManager) launchBridgeAttempt(log *logger.Logger, key string, binary
 		Running:    true,
 		RefCount:   0,
 		LastUsedAt: time.Now(),
+		StartedAt:  time.Now(),
 		Outbounds:  cloneInterfaceSlice(outbounds),
 		Routes:     cloneInterfaceSlice(routes),
 		DNSServers: dnsServers,
@@ -221,13 +231,18 @@ func (m *XrayManager) launchBridgeAttempt(log *logger.Logger, key string, binary
 		return "", nil, err
 	}
 
-	if socksURL, reused := m.registerBridge(key, bridge, pin); reused {
-		log.Info("复用已就绪 xray 桥接进程", logger.F("engine", "xray"), logger.F("key", key), logger.F("socks_url", socksURL))
-		bridge.Stopping = true
+	socksURL, reused, err := m.registerBridge(key, bridge, pin)
+	if err != nil {
 		m.stopBridgeProcess(bridge)
+		_ = bridge.waitExit()
+		return "", nil, err
+	}
+	if reused {
+		log.Info("复用已就绪 xray 桥接进程", logger.F("engine", "xray"), logger.F("key", key), logger.F("socks_url", socksURL))
 		return socksURL, nil, nil
 	}
 
+	bridge.monitorOnce.Do(func() { go m.watchBridge(bridge, key) })
 	return fmt.Sprintf("socks5://127.0.0.1:%d", port), bridge, nil
 }
 
@@ -356,7 +371,16 @@ func (m *XrayManager) isRetryableBridgeReadyError(err error, cfgPath string, std
 }
 
 func (m *XrayManager) testRuntimeConfig(binaryPath string, cfgPath string, stderrPath string) error {
-	cmd := exec.Command(binaryPath, "run", "-test", "-c", cfgPath)
+	ctx, cancel := context.WithTimeout(context.Background(), m.bridgeStartTimeout())
+	defer cancel()
+	go func() {
+		select {
+		case <-m.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	cmd := exec.CommandContext(ctx, binaryPath, "run", "-test", "-c", cfgPath)
 	hideWindow(cmd)
 	cmd.Dir = xrayProcessWorkDir(binaryPath, cfgPath)
 	stderrFile, _ := os.Create(stderrPath)

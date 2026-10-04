@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import re
 import sys
@@ -8,6 +9,26 @@ from typing import Any
 
 _LOGGER_LOCK = threading.Lock()
 _SECRET_PATTERN = re.compile(r"(?i)(bearer\s+[A-Za-z0-9._~+/-]+|lag_[A-Za-z0-9_-]{12,}|agent[_ -]?token|x[_ -]?token|jwt|password|cookie|session|authorization|api[_ -]?key|\btoken\b|\bsecret\b)")
+
+# 单个日志文件上限 15MB，保留 3 个滚动备份，全生命周期磁盘占用硬顶 ~60MB，彻底杜绝磁盘写满
+DEFAULT_LOG_MAX_BYTES = 15 * 1024 * 1024
+DEFAULT_LOG_BACKUP_COUNT = 3
+
+
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """
+    Windows 友好的并发安全滚动日志 Handler:
+    1. 限制单个日志文件最大为 maxBytes，保留 backupCount 个历史切片。
+    2. 针对 Windows 下可能存在的并发文件读取或句柄占用 (WinError 32 共享冲突)，
+       在 doRollover 发生异常时安全捕获并降级追加，绝不抛出异常导致多开任务中断或闪退。
+    """
+
+    def doRollover(self) -> None:
+        try:
+            super().doRollover()
+        except (PermissionError, OSError):
+            # 若 GUI 尾部监听器或其它线程正在并发读取，暂缓本次物理切片，继续安全写入
+            pass
 
 
 def _safe(value: Any) -> str:
@@ -34,7 +55,12 @@ def build_logger(log_file: Path) -> logging.Logger:
             "[%(asctime)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler = SafeRotatingFileHandler(
+            log_file,
+            maxBytes=DEFAULT_LOG_MAX_BYTES,
+            backupCount=DEFAULT_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 

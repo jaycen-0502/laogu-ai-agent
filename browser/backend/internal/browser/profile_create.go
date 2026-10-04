@@ -2,6 +2,7 @@ package browser
 
 import (
 	"ant-chrome/backend/internal/logger"
+	"fmt"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ func (m *Manager) Create(input ProfileInput) (*Profile, error) {
 	}
 	fingerprintArgs := append([]string{}, input.FingerprintArgs...)
 	if len(fingerprintArgs) == 0 && m.Config != nil {
-		fingerprintArgs = append([]string{}, m.Config.Browser.DefaultFingerprintArgs...)
+		fingerprintArgs = differentiateProfileFingerprintArgs(profileId, m.Config.Browser.DefaultFingerprintArgs)
 	}
 	profile := &Profile{
 		ProfileId:       profileId,
@@ -87,3 +88,62 @@ func (m *Manager) ensureProfileLaunchCode(profile *Profile) {
 func buildProfileGroupID(value string) string {
 	return strings.TrimSpace(value)
 }
+
+func differentiateProfileFingerprintArgs(profileId string, baseArgs []string) []string {
+	out := append([]string{}, baseArgs...)
+	seed := generateFingerprintSeedForProfile(profileId)
+
+	hasFingerprint := false
+	hasConcurrency := false
+	hasWindowSize := false
+	windowIndex := -1
+
+	for i, arg := range out {
+		trimmed := strings.TrimSpace(arg)
+		if strings.HasPrefix(trimmed, "--fingerprint=") {
+			hasFingerprint = true
+		}
+		if strings.HasPrefix(trimmed, "--fingerprint-hardware-concurrency=") {
+			hasConcurrency = true
+		}
+		if strings.HasPrefix(trimmed, "--window-size=") {
+			hasWindowSize = true
+			windowIndex = i
+		}
+	}
+
+	if !hasFingerprint {
+		out = append(out, fmt.Sprintf("--fingerprint=%d", seed))
+	}
+
+	if !hasConcurrency {
+		cores := []int{4, 6, 8, 12, 16}
+		selectedCores := cores[seed%len(cores)]
+		out = append(out, fmt.Sprintf("--fingerprint-hardware-concurrency=%d", selectedCores))
+	}
+
+	desktopResolutions := []string{"1280,800", "1366,768", "1440,900", "1536,864", "1600,900", "1920,1080"}
+	selectedRes := desktopResolutions[seed%len(desktopResolutions)]
+	if !hasWindowSize {
+		out = append(out, fmt.Sprintf("--window-size=%s", selectedRes))
+	} else if windowIndex >= 0 && out[windowIndex] == "--window-size=1280,800" {
+		out[windowIndex] = fmt.Sprintf("--window-size=%s", selectedRes)
+	}
+
+	return out
+}
+
+func generateFingerprintSeedForProfile(profileId string) int {
+	seed := 0
+	for _, char := range profileId {
+		seed = (seed << 5) - seed + int(char)
+	}
+	if seed < 0 {
+		seed = -seed
+	}
+	if seed == 0 {
+		seed = 1000000 + (time.Now().Nanosecond() % 9000000)
+	}
+	return seed & 0x7FFFFFFF
+}
+

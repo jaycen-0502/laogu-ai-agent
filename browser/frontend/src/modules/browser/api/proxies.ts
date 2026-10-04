@@ -9,6 +9,19 @@ export interface ClashImportURLResult {
   suggestedGroup?: string
 }
 
+export interface ProxyImportNormalizeResult {
+  content: string
+  proxyCount: number
+  detectedType: 'yaml' | 'uri'
+}
+
+export interface ProxyDNSNormalizeResult {
+  canonical: string
+  servers: string[]
+  count: number
+  usingDefault: boolean
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -80,6 +93,36 @@ export async function fetchClashImportFromURL(targetURL: string, proxyId = ''): 
   }
 
   throw new Error('当前环境不支持 URL 导入 Clash 配置')
+}
+
+export async function normalizeProxyImportText(raw: string): Promise<ProxyImportNormalizeResult> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserProxyNormalizeImportText) {
+    return await bindings.BrowserProxyNormalizeImportText(raw)
+  }
+  const goApp = getGoApp()
+  if (goApp?.BrowserProxyNormalizeImportText) {
+    return await goApp.BrowserProxyNormalizeImportText(raw)
+  }
+  if (!/^\s*(?:vless|trojan|anytls):\/\//i.test(raw)) {
+    return { content: raw.trim(), proxyCount: 0, detectedType: 'yaml' }
+  }
+  throw new Error('当前环境不支持代理链接转换')
+}
+
+export async function normalizeProxyDNSInput(raw: string): Promise<ProxyDNSNormalizeResult> {
+  const bindings: any = await getBindings()
+  if (bindings?.BrowserProxyNormalizeDNSInput) {
+    return await bindings.BrowserProxyNormalizeDNSInput(raw)
+  }
+  const goApp = getGoApp()
+  if (goApp?.BrowserProxyNormalizeDNSInput) {
+    return await goApp.BrowserProxyNormalizeDNSInput(raw)
+  }
+  if (!raw.trim()) {
+    return { canonical: '', servers: [], count: 0, usingDefault: true }
+  }
+  throw new Error('当前环境不支持 DNS 配置校验')
 }
 
 export async function saveBrowserProxies(proxies: BrowserProxy[]): Promise<boolean> {

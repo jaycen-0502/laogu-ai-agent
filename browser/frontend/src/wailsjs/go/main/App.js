@@ -494,6 +494,14 @@ export function BrowserProxyListGroups() {
   return window['go']['main']['App']['BrowserProxyListGroups']();
 }
 
+export function BrowserProxyNormalizeDNSInput(arg1) {
+  return window['go']['main']['App']['BrowserProxyNormalizeDNSInput'](arg1);
+}
+
+export function BrowserProxyNormalizeImportText(arg1) {
+  return window['go']['main']['App']['BrowserProxyNormalizeImportText'](arg1);
+}
+
 export function BrowserProxyProbeBrowserPage(arg1) {
   return window['go']['main']['App']['BrowserProxyProbeBrowserPage'](arg1);
 }

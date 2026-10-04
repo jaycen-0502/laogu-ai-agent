@@ -122,8 +122,8 @@ class AutomationStatisticsStore:
             "follows": _result_count(result, "follows", "follow_count", "follows_today"),
             "comments": _result_count(result, "comments", "comment_count", "comments_today"),
             "scanned_posts": _result_count(result, "scanned_posts", "views"),
-            "own_followers": _optional_count(result.get("own_followers")),
-            "own_following": _optional_count(result.get("own_following")),
+            "own_followers": _optional_count(result.get("own_followers", result.get("final_followers", result.get("initial_followers")))),
+            "own_following": _optional_count(result.get("own_following", result.get("final_following", result.get("initial_following")))),
         }
         return self._upsert_payload(payload)
 

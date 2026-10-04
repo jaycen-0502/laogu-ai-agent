@@ -54,3 +54,46 @@ def test_start_profile_ready_accepts_nested_debug_port(monkeypatch):
     ))
     result = manager.start_profile_ready("profile-port", timeout_seconds=1, retries=0)
     assert result["data"]["cdpPort"] == 9444
+
+
+def test_stop_profile_returns_success_on_404():
+    from agent.laogu_api import LaoguApiError
+
+    class ApiWith404:
+        def stop_profile(self, profile_id):
+            raise LaoguApiError("Laogu API returned HTTP 404: {'error': 'profile not found', 'ok': False}", status_code=404)
+
+    manager = BrowserManager(ApiWith404())
+    res = manager.stop_profile("missing-profile")
+    assert res["ok"] is True
+    assert res["stopped"] is True
+    assert res["profileId"] == "missing-profile"
+    assert res["note"] == "already_stopped_or_not_found"
+
+
+def test_stop_profile_raises_on_non_404_error():
+    import pytest
+    from agent.laogu_api import LaoguApiError
+
+    class ApiWith500:
+        def stop_profile(self, profile_id):
+            raise LaoguApiError("Internal Server Error", status_code=500)
+
+    manager = BrowserManager(ApiWith500())
+    with pytest.raises(BrowserManagerError, match="Internal Server Error"):
+        manager.stop_profile("error-profile")
+
+
+def test_delete_profile_returns_success_on_404():
+    from agent.laogu_api import LaoguApiError
+
+    class ApiWith404:
+        def delete_profile(self, profile_id):
+            raise LaoguApiError("profile not found", status_code=404)
+
+    manager = BrowserManager(ApiWith404())
+    res = manager.delete_profile("missing-profile")
+    assert res["ok"] is True
+    assert res["deleted"] is True
+    assert res["profileId"] == "missing-profile"
+

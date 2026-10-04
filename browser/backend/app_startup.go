@@ -165,6 +165,7 @@ func (a *App) startupInitManagers(cfg *config.Config, db *database.DB) {
 	a.migrateToSQLite()
 
 	a.browserMgr.InitData()
+	a.migrateRemovedDefaultBookmarks()
 	if err := a.browserMgr.CleanupExpiredTrash(); err != nil {
 		logger.New("Browser").Error("启动清理回收站失败", logger.F("error", err))
 	}
@@ -217,6 +218,14 @@ func (a *App) startupInitBridgeHooks() {
 				"engine": "xray",
 				"key":    key[:8],
 				"error":  err.Error(),
+			})
+		}
+	}
+	a.xrayMgr.OnBridgeRecovered = func(key string) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "proxy:bridge:recovered", map[string]interface{}{
+				"engine": "xray",
+				"key":    key[:8],
 			})
 		}
 	}

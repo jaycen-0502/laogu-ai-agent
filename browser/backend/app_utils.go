@@ -106,6 +106,8 @@ func (a *App) autoDetectCores() {
 	if a.browserMgr != nil {
 		cores = a.browserMgr.ListCores()
 	}
+	validDefault := false
+	fallbackCoreID := ""
 	for _, core := range cores {
 		if a.browserMgr == nil {
 			break
@@ -113,8 +115,21 @@ func (a *App) autoDetectCores() {
 		result := a.browserMgr.ValidateCorePath(core.CorePath)
 		if result.Valid {
 			log.Debug("内核路径有效", logger.F("core_id", core.CoreId), logger.F("path", core.CorePath))
+			if fallbackCoreID == "" {
+				fallbackCoreID = core.CoreId
+			}
+			if core.IsDefault {
+				validDefault = true
+			}
 		} else {
 			log.Warn("内核路径无效", logger.F("core_id", core.CoreId), logger.F("path", core.CorePath), logger.F("message", result.Message))
+		}
+	}
+	if a.browserMgr != nil && !validDefault && fallbackCoreID != "" {
+		if err := a.browserMgr.SetDefaultCore(fallbackCoreID); err != nil {
+			log.Warn("修复默认内核失败", logger.F("core_id", fallbackCoreID), logger.F("error", err.Error()))
+		} else {
+			log.Warn("原默认内核不可用，已切换默认内核", logger.F("core_id", fallbackCoreID))
 		}
 	}
 }

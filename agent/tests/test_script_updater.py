@@ -44,8 +44,9 @@ def test_check_and_update_engine_rejects_unpinned_or_insecure(monkeypatch, tmp_p
     assert target.read_bytes() == b"VALUE = 0\n"
 
 
-def test_get_automation_engine_class_reloads_module():
+def test_get_automation_engine_class_reloads_module(monkeypatch):
     module = importlib.import_module("agent.x_automation_engine")
+    monkeypatch.setattr(script_updater.importlib, "reload", lambda m: m)
     original = script_updater.get_automation_engine_class()
     assert original is module.XAutomationEngine
 

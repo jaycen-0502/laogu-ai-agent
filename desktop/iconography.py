@@ -21,6 +21,13 @@ _PATHS = {
     "minimize": '<path d="M5 12h14"/>',
     "restore": '<path d="M8 8h11v11H8zM5 5h11v3M5 5v11h3"/>',
     "close": '<path d="m6 6 12 12M18 6 6 18"/>',
+    "trash": '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M10 11v6M14 11v6"/>',
+    "copy": '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    "bolt": '<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" fill="{color}" stroke="none"/>',
+    "pause": '<rect x="6" y="4" width="4" height="16" rx="1" fill="{color}" stroke="none"/><rect x="14" y="4" width="4" height="16" rx="1" fill="{color}" stroke="none"/>',
+    "globe": '<circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a15 15 0 0 1 4 9 15 15 0 0 1-4 9 15 15 0 0 1-4-9 15 15 0 0 1 4-9z"/>',
+    "alert": '<path d="m10.29 3.86-8.6 14.89A2 2 0 0 0 3.42 22h17.16a2 2 0 0 0 1.73-3.25L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    "shield": '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
 }
 
 

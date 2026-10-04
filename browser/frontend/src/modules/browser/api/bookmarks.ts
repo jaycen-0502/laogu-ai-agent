@@ -13,9 +13,6 @@ export async function fetchBookmarks(): Promise<BrowserBookmark[]> {
     { name: 'Claude', url: 'https://claude.ai/', openOnStart: false },
     { name: 'ChatGPT', url: 'https://chatgpt.com/', openOnStart: false },
     { name: 'YouTube', url: 'https://www.youtube.com/', openOnStart: false },
-    { name: 'IPPure', url: 'https://ippure.com/', openOnStart: false },
-    { name: 'IPLark', url: 'https://iplark.com/', openOnStart: false },
-    { name: 'Ping0', url: 'https://ping0.cc/', openOnStart: false },
   ]
 }
 

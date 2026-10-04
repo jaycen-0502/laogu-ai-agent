@@ -123,17 +123,19 @@ class AccountRegistry:
         self.registry_file = registry_file
         self.history_file = history_file
         self._lock = threading.RLock()
-        self._records = self._load()
+        self._records, self._deleted_profile_ids = self._load()
         self._apply_duplicate_statuses()
 
     def register(self, discovered: DiscoveredAccount) -> AccountRecord:
         with self._lock:
+            self._deleted_profile_ids.discard(discovered.profile_id)
             if discovered.profile_id in self._records:
                 raise ValueError(f"Profile is already registered: {discovered.profile_id}")
             return self._upsert(discovered)
 
     def update(self, discovered: DiscoveredAccount) -> AccountRecord:
         with self._lock:
+            self._deleted_profile_ids.discard(discovered.profile_id)
             return self._upsert(discovered)
 
     def get(self, profile_id: str) -> AccountRecord | None:
@@ -148,8 +150,13 @@ class AccountRegistry:
             )
 
     def remove(self, profile_id: str) -> bool:
+        pid = str(profile_id).strip()
+        if not pid:
+            return False
         with self._lock:
-            if self._records.pop(str(profile_id), None) is None:
+            self._deleted_profile_ids.add(pid)
+            if self._records.pop(pid, None) is None:
+                self._save()
                 return False
             self._apply_duplicate_statuses()
             self._save()
@@ -167,6 +174,8 @@ class AccountRegistry:
 
     def update_many(self, discoveries: list[DiscoveredAccount]) -> list[AccountRecord]:
         with self._lock:
+            for item in discoveries:
+                self._deleted_profile_ids.discard(item.profile_id)
             updated = [self._upsert(item, save=False) for item in discoveries]
             self._apply_duplicate_statuses()
             self._save()
@@ -177,20 +186,58 @@ class AccountRegistry:
 
         This is used by the cache-first path: refreshing the Profile list can
         update proxy labels immediately while preserving the last verified X
-        identity.  It never creates a new account row and never overwrites an
-        existing exit-IP value with an empty value.
+        identity. It automatically registers newly seen profiles from the local
+        browser as UNKNOWN login status so fresh installs immediately display
+        the user's browser profiles without requiring external Node.js scans.
         """
         changed = False
         with self._lock:
             for profile in profiles:
                 profile_id = str(profile.get("profileId") or profile.get("profile_id") or "").strip()
+                if not profile_id or profile_id in self._deleted_profile_ids:
+                    continue
                 record = self._records.get(profile_id)
                 if not record:
+                    now = datetime.now().astimezone()
+                    browser_running = profile.get("running")
+                    browser_status = (
+                        BrowserStatus.RUNNING
+                        if browser_running is True
+                        else BrowserStatus.STOPPED
+                        if browser_running is False
+                        else BrowserStatus.UNKNOWN
+                    )
+                    record = AccountRecord(
+                        profile_id=profile_id,
+                        instance_id=str(profile.get("instanceId") or profile.get("instance_id") or profile_id),
+                        profile_name=str(profile.get("profileName") or profile.get("profile_name") or ""),
+                        x_username="",
+                        x_account_id="",
+                        login_status=LoginStatus.UNKNOWN,
+                        browser_status=browser_status,
+                        account_status=AccountStatus.UNKNOWN,
+                        last_checked=now,
+                        mapping_updated_at=now,
+                    )
+                    proxy_metadata = _profile_proxy_metadata(profile)
+                    for key, value in proxy_metadata.items():
+                        if value and hasattr(record, key):
+                            setattr(record, key, value)
+                    self._records[profile_id] = record
+                    changed = True
                     continue
+
                 metadata = {
                     "instance_id": str(profile.get("instanceId") or record.instance_id),
                     "profile_name": str(profile.get("profileName") or record.profile_name),
                 }
+                browser_running = profile.get("running")
+                if browser_running is not None:
+                    new_b_status = BrowserStatus.RUNNING if browser_running else BrowserStatus.STOPPED
+                    if record.browser_status != new_b_status:
+                        record.browser_status = new_b_status
+                        changed = True
+
                 proxy_metadata = _profile_proxy_metadata(profile)
                 for key, value in proxy_metadata.items():
                     if value and (key != "proxy_status" or not record.proxy_status or record.proxy_status == "UNKNOWN"):
@@ -354,16 +401,18 @@ class AccountRegistry:
         with self.history_file.open("a", encoding="utf-8", newline="\n") as stream:
             stream.write(json.dumps(event, ensure_ascii=False) + "\n")
 
-    def _load(self) -> dict[str, AccountRecord]:
+    def _load(self) -> tuple[dict[str, AccountRecord], set[str]]:
         if not self.registry_file.exists():
-            return {}
+            return {}, set()
         try:
             payload = json.loads(self.registry_file.read_text(encoding="utf-8"))
             items = payload.get("items", []) if isinstance(payload, dict) else []
             records = [
                 AccountRecord.from_dict(item) for item in items if isinstance(item, dict)
             ]
-            return {item.profile_id: item for item in records if item.profile_id}
+            deleted_raw = payload.get("deleted_profile_ids", []) if isinstance(payload, dict) else []
+            deleted = {str(x).strip() for x in deleted_raw if str(x).strip()} if isinstance(deleted_raw, list) else set()
+            return {item.profile_id: item for item in records if item.profile_id}, deleted
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError(f"Cannot load Account Registry: {exc}") from exc
 
@@ -373,6 +422,7 @@ class AccountRegistry:
             "updatedAt": datetime.now().astimezone().isoformat(),
             "count": len(self._records),
             "items": [item.to_dict() for item in self.list()],
+            "deleted_profile_ids": sorted(list(self._deleted_profile_ids)),
         }
         temporary = self.registry_file.with_suffix(self.registry_file.suffix + ".tmp")
         temporary.write_text(

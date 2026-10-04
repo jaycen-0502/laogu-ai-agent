@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button, toast } from '../../../shared/components'
 import type { TableColumn } from '../../../shared/components/Table'
 import type { BrowserProxy } from '../types'
-import { fetchClashImportFromURL, saveBrowserProxies } from '../api'
+import { fetchClashImportFromURL, normalizeProxyDNSInput, normalizeProxyImportText, saveBrowserProxies } from '../api'
 import { DIRECT_QUICK_IMPORT_TEMPLATE, buildDirectImportCandidatesFromText, parseDirectImportText } from '../pages/proxyPool/helpers'
 import {
   INITIAL_CHAIN_IMPORT_FORM,
@@ -126,13 +126,20 @@ export function ProxyImportModal({
     }
   }
 
-  const handleParseImport = () => {
+  const handleParseImport = async () => {
     try {
       const prefix = importNamePrefix.trim()
       let candidates
       let previewGroupName = importGroupName.trim()
       if (importMode === 'clash') {
-        candidates = buildImportCandidatesFromClash(parseClashImportText(importText), prefix)
+		const normalized = await normalizeProxyImportText(importText)
+		const dns = await normalizeProxyDNSInput(importDnsServers)
+		if (normalized.detectedType === 'uri') {
+		  setImportText(normalized.content)
+		  toast.success(`已识别并转换 ${normalized.proxyCount} 个代理链接`)
+		}
+		if (dns.canonical !== importDnsServers.trim()) setImportDnsServers(dns.canonical)
+		candidates = buildImportCandidatesFromClash(parseClashImportText(normalized.content), prefix)
       } else if (importMode === 'direct') {
         if (directImportText.trim()) {
           const parsed = buildDirectImportCandidatesFromText(directImportText)
@@ -250,7 +257,9 @@ export function ProxyImportModal({
   const canParseImport = importMode === 'clash'
     ? !!importText.trim()
     : importMode === 'direct'
-      ? !!directImportText.trim() || (!!directImportForm.server.trim() && !!directImportForm.port.trim())
+      ? !!directImportText.trim() || (directImportForm.protocol === 'direct'
+        ? !!directImportForm.proxyName.trim()
+        : !!directImportForm.server.trim() && !!directImportForm.port.trim())
       : !!chainImportForm.first.server.trim()
         && !!chainImportForm.first.port.trim()
         && !!chainImportForm.second.server.trim()

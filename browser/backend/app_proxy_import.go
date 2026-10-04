@@ -27,6 +27,73 @@ var clashSubscriptionUserAgents = []string{
 	"ClashforWindows/0.19.23",
 }
 
+// BrowserProxyNormalizeImportText keeps existing Clash YAML unchanged and
+// converts one-or-more supported proxy URI lines into canonical Clash YAML.
+// The frontend can therefore use one input box for templates and share links.
+func (a *App) BrowserProxyNormalizeImportText(raw string) (map[string]interface{}, error) {
+	raw = strings.TrimSpace(strings.ReplaceAll(raw, "\r\n", "\n"))
+	if raw == "" {
+		return nil, fmt.Errorf("导入内容不能为空")
+	}
+	if payload, ok := parseClashPayload(raw); ok {
+		if count := clashProxyCount(payload); count > 0 {
+			return map[string]interface{}{
+				"content":      raw,
+				"proxyCount":   count,
+				"detectedType": "yaml",
+			}, nil
+		}
+	}
+
+	lines := strings.Split(raw, "\n")
+	proxies := make([]map[string]interface{}, 0, len(lines))
+	for index, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(line), "vless://") {
+			if _, _, err := proxy.ParseProxyNode(line); err != nil {
+				return nil, fmt.Errorf("第 %d 行: %w", index+1, err)
+			}
+		}
+		node, ok := proxyURIToClashNode(line, index)
+		if !ok {
+			return nil, fmt.Errorf("第 %d 行不是支持的代理链接；当前支持 vless://、trojan:// 和 anytls://", index+1)
+		}
+		proxies = append(proxies, node)
+	}
+	if len(proxies) == 0 {
+		return nil, fmt.Errorf("未识别到可导入的代理")
+	}
+	payload := map[string]interface{}{"proxies": proxies}
+	data, err := yaml.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("代理链接转换 YAML 失败: %w", err)
+	}
+	return map[string]interface{}{
+		"content":      strings.TrimSpace(string(data)),
+		"proxyCount":   len(proxies),
+		"detectedType": "uri",
+	}, nil
+}
+
+// BrowserProxyNormalizeDNSInput validates the friendly DNS list before it is
+// saved. Empty input intentionally selects the application's maintained
+// default DNS policy.
+func (a *App) BrowserProxyNormalizeDNSInput(raw string) (map[string]interface{}, error) {
+	canonical, servers, err := proxy.NormalizeXrayDNSInput(raw)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]interface{}{
+		"canonical":    canonical,
+		"servers":      servers,
+		"count":        len(servers),
+		"usingDefault": strings.TrimSpace(raw) == "",
+	}, nil
+}
+
 // BrowserProxyFetchClashByURL 拉取 Clash 订阅 URL，并返回可直接导入的 YAML 文本与建议配置。
 func (a *App) BrowserProxyFetchClashByURL(rawURL string) (map[string]interface{}, error) {
 	return a.browserProxyFetchClashByURL(rawURL, "")
@@ -236,6 +303,76 @@ func proxyURIToClashNode(raw string, index int) (map[string]interface{}, bool) {
 	}
 	name := proxyURIName(u, index)
 	switch scheme {
+	case "vless":
+		uuid := u.User.Username()
+		if uuid == "" {
+			return nil, false
+		}
+		q := u.Query()
+		network := strings.ToLower(firstNonEmptyQueryParam(q, "type", "network"))
+		if network == "raw" {
+			network = "tcp"
+		}
+		node := map[string]interface{}{
+			"name":   name,
+			"type":   "vless",
+			"server": u.Hostname(),
+			"port":   port,
+			"uuid":   uuid,
+			"udp":    true,
+		}
+		if flow := firstNonEmptyQueryParam(q, "flow"); flow != "" {
+			node["flow"] = flow
+		}
+		if network != "" {
+			node["network"] = network
+		}
+		if sni := firstNonEmptyQueryParam(q, "sni", "servername", "serverName", "peer"); sni != "" {
+			node["servername"] = sni
+		}
+		if fp := firstNonEmptyQueryParam(q, "client-fingerprint", "fingerprint", "fp"); fp != "" {
+			node["client-fingerprint"] = fp
+		}
+		if uriBoolParam(q, "insecure", "allowInsecure", "skip-cert-verify") {
+			node["skip-cert-verify"] = true
+		}
+
+		security := strings.ToLower(firstNonEmptyQueryParam(q, "security"))
+		if security == "tls" || security == "reality" {
+			node["tls"] = true
+		}
+		if security == "reality" {
+			publicKey := firstNonEmptyQueryParam(q, "pbk", "public-key", "publicKey", "public_key")
+			if publicKey == "" {
+				return nil, false
+			}
+			realityOpts := map[string]interface{}{"public-key": publicKey}
+			if shortID := firstNonEmptyQueryParam(q, "sid", "short-id", "shortId", "short_id"); shortID != "" {
+				realityOpts["short-id"] = shortID
+			}
+			if spiderX := firstNonEmptyQueryParam(q, "spx", "spiderX", "spider-x"); spiderX != "" {
+				realityOpts["spider-x"] = spiderX
+			}
+			node["reality-opts"] = realityOpts
+		}
+		if network == "ws" {
+			wsOpts := map[string]interface{}{}
+			if path := firstNonEmptyQueryParam(q, "path"); path != "" {
+				wsOpts["path"] = path
+			}
+			if host := firstNonEmptyQueryParam(q, "host"); host != "" {
+				wsOpts["headers"] = map[string]interface{}{"Host": host}
+			}
+			if len(wsOpts) > 0 {
+				node["ws-opts"] = wsOpts
+			}
+		}
+		if network == "grpc" {
+			if serviceName := firstNonEmptyQueryParam(q, "serviceName", "service-name", "path"); serviceName != "" {
+				node["grpc-opts"] = map[string]interface{}{"grpc-service-name": serviceName}
+			}
+		}
+		return node, true
 	case "anytls":
 		password := u.User.Username()
 		if password == "" {

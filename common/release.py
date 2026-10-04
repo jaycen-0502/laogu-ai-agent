@@ -12,7 +12,8 @@ import os
 from typing import Any
 
 
-DEFAULT_VERSION = "0.21.49"
+DEFAULT_VERSION = "0.21.91"
+
 RELEASE_CHANNEL = os.getenv("LAOGU_RELEASE_CHANNEL", "stable").strip().lower() or "stable"
 VERSION = os.getenv("LAOGU_RELEASE_VERSION", DEFAULT_VERSION).strip() or DEFAULT_VERSION
 

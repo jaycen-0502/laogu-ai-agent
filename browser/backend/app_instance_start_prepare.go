@@ -224,6 +224,23 @@ func (a *App) prepareBrowserLaunchContext(input browserStartInput, profile *Brow
 
 	fingerprintLaunchArgs := a.buildBrowserFingerprintCapabilityReport(input.ProfileID, profile.CoreId, profile.FingerprintArgs).LaunchArgs
 	fingerprintExpectedArgs := combineFingerprintExpectedArgs(fingerprintLaunchArgs, sanitizedProfileLaunchArgs, sanitizedExtraLaunchArgs)
+
+	// 🛡️ 防风控时区与语言自动对齐：若未显式配置，根据代理归属国家自动补齐，消灭地域冲突指纹
+	hasTimezone := browserArgValue(fingerprintExpectedArgs, "--timezone") != "" || browserArgValue(fingerprintExpectedArgs, "--tz") != ""
+	hasLang := browserArgValue(fingerprintExpectedArgs, browserLangArg) != "" || browserArgValue(fingerprintExpectedArgs, browserAcceptLangArg) != ""
+	if !hasTimezone || !hasLang {
+		inferredTz, inferredLang := a.resolveProxyLocaleForProfile(profile, input)
+		if !hasTimezone && inferredTz != "" {
+			fingerprintLaunchArgs = append(fingerprintLaunchArgs, fmt.Sprintf("--timezone=%s", inferredTz))
+			log.Info("根据代理归属国家自动对齐浏览器时区", logger.F("profile_id", input.ProfileID), logger.F("timezone", inferredTz))
+		}
+		if !hasLang && inferredLang != "" {
+			fingerprintLaunchArgs = append(fingerprintLaunchArgs, fmt.Sprintf("--lang=%s", inferredLang), fmt.Sprintf("--accept-lang=%s", buildAcceptLanguage(inferredLang)))
+			log.Info("根据代理归属国家自动对齐浏览器语言", logger.F("profile_id", input.ProfileID), logger.F("lang", inferredLang))
+		}
+		fingerprintExpectedArgs = combineFingerprintExpectedArgs(fingerprintLaunchArgs, sanitizedProfileLaunchArgs, sanitizedExtraLaunchArgs)
+	}
+
 	runtimeBookmarks, fingerprintBookmarkURL, bookmarkErr := a.runtimeBookmarksForProfileExpectedArgsAndProfile(profile.ProfileId, fingerprintExpectedArgs, profile, bookmarks)
 	if bookmarkErr != nil {
 		log.Error("指纹检测书签生成失败", logger.F("profile_id", input.ProfileID), logger.F("error", bookmarkErr.Error()))
@@ -304,13 +321,31 @@ func buildBrowserLaunchArgs(userDataDir string, debugPort int, effectiveProxy st
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		fmt.Sprintf("--remote-debugging-port=%d", debugPort),
 		"--disable-session-crashed-bubble",
+
+		// === 核心抗自动化侦测与指纹伪装 ===
+		"--excludeSwitches=enable-automation",           // 隐藏“受自动测试软件控制”警告条
+		"--disable-infobars",                           // 禁用通知信息栏
+		"--no-first-run",                               // 跳过首次启动引导页
+		"--no-default-browser-check",                   // 跳过默认浏览器提示
+		"--password-store=basic",                       // 跨系统独立凭据存储
+		"--use-mock-keychain",                          // 避免钥匙串弹窗
+		"--hide-crash-restore-bubble",                  // 禁用非正常关闭后的崩溃恢复黄条
+
+		// === 屏蔽后台遥测与非预期直连网络请求 ===
+		"--disable-background-networking",
+		"--disable-component-update",
+		"--disable-domain-reliability",
+		"--disable-sync",
+		"--disable-features=Translate,OptimizationHints,MediaRouter",
+		"--metrics-recording-only",
+
+		// === 内存稳定性与防 OOM 崩溃加固 (Anti-OOM & Memory Stability) ===
+		"--js-flags=--max-old-space-size=4096",        // 扩展 V8 JS 堆内存从默认约 1.4GB 扩充至 4GB，预防 SPA 复杂页面堆内存溢出
+		"--disable-dev-shm-usage",                     // 避免共享内存 (/dev/shm) 不足引发崩溃
+		"--disable-gpu-memory-buffer-video-frames",    // 防止媒体流/视频帧缓冲持续占用渲染进程显存
 	}
 
-	if effectiveProxy == "direct://" {
-		args = append(args, "--no-proxy-server")
-	} else if effectiveProxy != "" {
-		args = append(args, fmt.Sprintf("--proxy-server=%s", effectiveProxy))
-	}
+	args = appendEffectiveProxyLaunchArg(args, effectiveProxy)
 
 	if extensionArg := strings.Join(normalizeNonEmptyStrings(extensionDirs), ","); extensionArg != "" {
 		args = append(args, fmt.Sprintf("--disable-extensions-except=%s", extensionArg))
@@ -321,4 +356,18 @@ func buildBrowserLaunchArgs(userDataDir string, debugPort int, effectiveProxy st
 	args = append(args, sanitizedProfileLaunchArgs...)
 	args = append(args, sanitizedExtraLaunchArgs...)
 	return browser.BuildLaunchArgs(args, launchTargets)
+}
+
+// appendEffectiveProxyLaunchArg keeps every Chromium launch path consistent.
+// In particular, a running profile can need to fall back from CDP tab creation
+// to a native new-window launch. That window must use the same proxy decision
+// as a normal profile start instead of silently falling back to direct traffic.
+func appendEffectiveProxyLaunchArg(args []string, effectiveProxy string) []string {
+	if effectiveProxy == "direct://" {
+		return append(args, "--no-proxy-server")
+	}
+	if effectiveProxy != "" {
+		return append(args, fmt.Sprintf("--proxy-server=%s", effectiveProxy))
+	}
+	return args
 }

@@ -111,10 +111,6 @@ func (m *SingBoxManager) buildConfig(key string, outbound map[string]interface{}
 			"default_domain_resolver": "public-dns",
 			"rules": []interface{}{
 				map[string]interface{}{
-					"protocol": "dns",
-					"outbound": "direct",
-				},
-				map[string]interface{}{
 					"inbound":  []string{"socks-in"},
 					"outbound": "proxy-out",
 				},
@@ -140,12 +136,20 @@ func defaultSingBoxDNSConfig() map[string]interface{} {
 			map[string]interface{}{
 				"type":   "udp",
 				"tag":    "public-dns",
-				"server": "223.5.5.5",
+				"server": "8.8.8.8",
+				"detour": "direct",
 			},
 			map[string]interface{}{
 				"type":   "udp",
-				"tag":    "backup-dns",
-				"server": "119.29.29.29",
+				"tag":    "cf-dns",
+				"server": "1.1.1.1",
+				"detour": "direct",
+			},
+			map[string]interface{}{
+				"type":   "udp",
+				"tag":    "ali-dns",
+				"server": "223.5.5.5",
+				"detour": "direct",
 			},
 		},
 		"final":    "public-dns",

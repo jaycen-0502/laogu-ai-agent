@@ -288,8 +288,9 @@ export function ProxyPoolEditModal({
             value={editForm.dnsServers}
             onChange={(event) => onChange({ dnsServers: event.target.value })}
             rows={6}
-            placeholder={`dns:\n  enable: true\n  nameserver:\n    - 119.29.29.29\n    - 223.5.5.5`}
+			placeholder={`8.8.8.8\n1.1.1.1\n223.5.5.5`}
           />
+		  <p className="text-xs text-[var(--color-text-muted)] mt-1">每行一个或用逗号分隔；留空使用默认（谷歌、Cloudflare 与阿里云备用 DNS）。</p>
         </FormItem>
       </div>
     </Modal>

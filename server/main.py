@@ -23,6 +23,7 @@ from .ai_provider_api import register_ai_provider_routes
 from .ai_service import AIService, ChatRunRegistry
 from .analysis_api import register_analysis_routes
 from .analysis_service import AIAnalysisService
+from .app_update_api import register_app_update_routes
 from .auth import create_jwt, decode_jwt, hash_password, new_agent_token, new_invitation_token, password_auth_version, token_hash, verify_login_password
 from .chat_api import register_chat_routes
 from .config import ROOT, ServerSettings, load_server_settings
@@ -40,7 +41,7 @@ from .telegram_translation_api import register_telegram_translation_routes
 from .task_proposal_service import AITaskProposalService
 from .control_api import register_control_routes
 from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_command_routes, store_credential_probe
-from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
+from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentToken, AppRelease, AuditLog, AutomationMetric, Command, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
 from .dedup_api import register_dedup_routes
 from .offline_access import issue_agent_offline_access
@@ -201,6 +202,10 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
     engine, SessionLocal = create_database(database_url)
     if settings.environment != "production":
         Base.metadata.create_all(engine)
+    else:
+        # Keep the OTA endpoint available during rolling deployments where the
+        # application starts before the schema migration job has completed.
+        AppRelease.__table__.create(engine, checkfirst=True)
     app = FastAPI(title="Laogu Coordination Server", version=VERSION, debug=False)
     app.state.engine = engine
     app.state.SessionLocal = SessionLocal
@@ -324,11 +329,12 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             declared_length = int(length) if length else None
         except ValueError:
             return secure_response(400, "Invalid Content-Length")
-        if declared_length is not None and declared_length > settings.max_request_bytes:
+        request_limit = settings.app_update_max_bytes if request.url.path == "/api/v1/admin/releases/publish" else settings.max_request_bytes
+        if declared_length is not None and declared_length > request_limit:
             return secure_response(413, "Request payload too large")
         if request.method in {"POST", "PUT", "PATCH"} and "application/json" in request.headers.get("content-type", "").lower():
             body = await request.body()
-            if len(body) > settings.max_request_bytes:
+            if len(body) > request_limit:
                 return secure_response(413, "Request payload too large")
         limits = {"/api/auth/login": settings.rate_limit_auth, "/api/agents/register": settings.rate_limit_register, "/api/agents/heartbeat": settings.rate_limit_heartbeat}
         limit = limits.get(request.url.path)
@@ -1386,6 +1392,11 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         get_db=get_db,
         current_user=current_user,
         current_agent=current_agent,
+    )
+    register_app_update_routes(
+        app,
+        get_db=get_db,
+        current_user=current_user,
     )
     register_ai_provider_routes(
         app,

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -30,9 +31,9 @@ var regionPresets = map[string]RegionPreset{
 		Latitude:    40.7128,
 		Longitude:   -74.0060,
 		UserAgents: []string{
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 		},
 	},
 	"JP": {
@@ -42,21 +43,21 @@ var regionPresets = map[string]RegionPreset{
 		Latitude:    35.6762,
 		Longitude:   139.6503,
 		UserAgents: []string{
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-			"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 		},
 	},
 }
 
-// 通用 User-Agent 库 (用于动态代理识别)
+// 通用 User-Agent 库 (用于动态代理识别，同构 Windows Chrome 140+)
 var defaultUserAgents = []string{
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
 }
 
-// 国家代码 -> Language 标头映射
+// 国家代码 -> Accept-Language 标头映射
 var countryLanguageMap = map[string]string{
 	"JP": "ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7",
 	"US": "en-US,en;q=0.9",
@@ -64,6 +65,28 @@ var countryLanguageMap = map[string]string{
 	"GB": "en-GB,en;q=0.9,en-US;q=0.8",
 	"KR": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
 	"DE": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+	"SG": "en-SG,en;q=0.9,zh-SG;q=0.8",
+	"HK": "zh-HK,zh;q=0.9,en-US;q=0.8",
+	"TW": "zh-TW,zh;q=0.9,en-US;q=0.8",
+	"FR": "fr-FR,fr;q=0.9,en-US;q=0.8",
+	"CA": "en-CA,en;q=0.9,fr-CA;q=0.8",
+	"AU": "en-AU,en;q=0.9,en-GB;q=0.8",
+}
+
+// 国家代码 -> 规范 RFC 5646 主语言代码映射（供 --lang 使用）
+var countryPrimaryLangMap = map[string]string{
+	"JP": "ja-JP",
+	"US": "en-US",
+	"CN": "zh-CN",
+	"GB": "en-GB",
+	"KR": "ko-KR",
+	"DE": "de-DE",
+	"SG": "en-SG",
+	"HK": "zh-HK",
+	"TW": "zh-TW",
+	"FR": "fr-FR",
+	"CA": "en-CA",
+	"AU": "en-AU",
 }
 
 // IPInfo 存储从代理节点解析到的 IP 地理元数据
@@ -162,24 +185,32 @@ func GeneratePresetLaunchArgs(region string) ([]string, error) {
 	realLat := preset.Latitude + latOffset
 	realLng := preset.Longitude + lngOffset
 
-	// 4. 生成独特的 Canvas/ClientRects 噪音 Seed
-	randomNoiseSeed := r.Int63()
+	// 4. 生成独特的确定性指纹 Seed (31位正整数)
+	randomNoiseSeed := r.Int63() & 0x7FFFFFFF
+	if randomNoiseSeed == 0 {
+		randomNoiseSeed = 1000000 + r.Int63n(9000000)
+	}
 
+	presetLang := strings.Split(preset.Languages[0], ",")[0]
 	args := []string{
-		fmt.Sprintf("--tz=%s", preset.Timezone),
-		fmt.Sprintf("--lang=%s", preset.Languages[0]),
+		fmt.Sprintf("--timezone=%s", preset.Timezone),
+		fmt.Sprintf("--lang=%s", presetLang),
 		fmt.Sprintf("--accept-lang=%s", preset.Languages[0]),
 
 		fmt.Sprintf("--user-agent=%s", selectedUA),
 		fmt.Sprintf("--js-flags=--max-old-space-size=%d", memoryGB*1024),
 
-		fmt.Sprintf("--fingerprint-canvas-seed=%d", randomNoiseSeed),
+		fmt.Sprintf("--fingerprint=%d", randomNoiseSeed),
 		fmt.Sprintf("--fingerprint-hardware-concurrency=%d", cpuCores),
 
 		fmt.Sprintf("--geolocation-latitude=%.6f", realLat),
 		fmt.Sprintf("--geolocation-longitude=%.6f", realLng),
 
-		// 【关键添加】跨设备解密与崩溃恢复 Flag
+		// 【关键添加】抗自动化侦测与跨设备解密 Flag
+		"--excludeSwitches=enable-automation",
+		"--disable-infobars",
+		"--no-first-run",
+		"--no-default-browser-check",
 		"--password-store=basic",
 		"--use-mock-keychain",
 		"--hide-crash-restore-bubble",
@@ -211,7 +242,10 @@ func GenerateDynamicPresetArgs(proxyURL string) ([]string, int64, error) {
 	selectedUA := defaultUserAgents[r.Intn(len(defaultUserAgents))]
 	cpuCores := []int{4, 8, 12, 16}[r.Intn(4)]
 	memoryGB := []int{8, 16, 32}[r.Intn(3)]
-	randomNoiseSeed := r.Int63()
+	randomNoiseSeed := r.Int63() & 0x7FFFFFFF
+	if randomNoiseSeed == 0 {
+		randomNoiseSeed = 1000000 + r.Int63n(9000000)
+	}
 
 	// 3. 动态坐标抖动 Jitter
 	latOffset := (r.Float64() - 0.5) * 0.1
@@ -219,28 +253,36 @@ func GenerateDynamicPresetArgs(proxyURL string) ([]string, int64, error) {
 	realLat := ipInfo.Lat + latOffset
 	realLng := ipInfo.Lon + lngOffset
 
-	// 4. 获取代理对应国家的语言 Header
+	// 4. 获取代理对应国家的语言 Header 与规范主语言
 	langHeader, exists := countryLanguageMap[ipInfo.CountryCode]
 	if !exists {
 		langHeader = "en-US,en;q=0.9"
 	}
+	primaryLang, hasPrimary := countryPrimaryLangMap[ipInfo.CountryCode]
+	if !hasPrimary {
+		primaryLang = "en-US"
+	}
 
 	// 5. 组合 Flags
 	args := []string{
-		fmt.Sprintf("--tz=%s", ipInfo.Timezone),
-		fmt.Sprintf("--lang=%s", ipInfo.CountryCode),
+		fmt.Sprintf("--timezone=%s", ipInfo.Timezone),
+		fmt.Sprintf("--lang=%s", primaryLang),
 		fmt.Sprintf("--accept-lang=%s", langHeader),
 
 		fmt.Sprintf("--user-agent=%s", selectedUA),
 		fmt.Sprintf("--js-flags=--max-old-space-size=%d", memoryGB*1024),
 
-		fmt.Sprintf("--fingerprint-canvas-seed=%d", randomNoiseSeed),
+		fmt.Sprintf("--fingerprint=%d", randomNoiseSeed),
 		fmt.Sprintf("--fingerprint-hardware-concurrency=%d", cpuCores),
 
 		fmt.Sprintf("--geolocation-latitude=%.6f", realLat),
 		fmt.Sprintf("--geolocation-longitude=%.6f", realLng),
 
-		// 【关键添加】跨设备解密与崩溃恢复 Flag
+		// 【关键添加】抗自动化侦测与跨设备解密 Flag
+		"--excludeSwitches=enable-automation",
+		"--disable-infobars",
+		"--no-first-run",
+		"--no-default-browser-check",
 		"--password-store=basic",
 		"--use-mock-keychain",
 		"--hide-crash-restore-bubble",

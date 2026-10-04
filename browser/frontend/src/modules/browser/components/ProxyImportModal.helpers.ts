@@ -1,5 +1,6 @@
 import yaml from 'js-yaml'
 import type { BrowserProxy } from '../types'
+import { normalizeVlessRealityImport } from '../utils/normalizeRealityImport'
 import { CHAIN_SOCKS5_PREFIX, type ChainImportForm, type ChainHopForm, type ChainSocks5Config, type ChainSocks5HopConfig, type ClashProxy, type DirectImportForm, type ImportCandidate, type ProxyDisplayInfo } from './ProxyImportModal.types'
 
 function parseChainSocks5Config(proxyConfig: string): ChainSocks5Config | null {
@@ -89,7 +90,7 @@ export function parseProxyInfo(proxyConfig: string): { type: string; server: str
 }
 
 function proxyToYaml(proxy: ClashProxy): string {
-  return yaml.dump([proxy], { flowLevel: -1, lineWidth: -1 }).trim()
+  return yaml.dump([normalizeVlessRealityImport(proxy)], { flowLevel: -1, lineWidth: -1 }).trim()
 }
 
 function quoteYamlScalar(value: string): string {
@@ -217,6 +218,11 @@ function formatDirectProxyHost(raw: string): string {
 }
 
 export function buildDirectImportCandidate(form: DirectImportForm): ImportCandidate {
+  if (form.protocol === 'direct') {
+    const proxyName = form.proxyName.trim()
+    if (!proxyName) throw new Error('请输入直连配置名称')
+    return { proxyName, proxyConfig: 'direct://' }
+  }
   const serverInput = form.server.trim()
   if (!serverInput) {
     throw new Error('请输入代理地址')

@@ -20,7 +20,10 @@ func TestXrayRegisterBridgeStoresNewBridge(t *testing.T) {
 		Running: true,
 	}
 
-	socksURL, reused := manager.registerBridge("node-a", bridge, false)
+	socksURL, reused, err := manager.registerBridge("node-a", bridge, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reused {
 		t.Fatalf("expected new bridge registration, got reused with %q", socksURL)
 	}
@@ -45,7 +48,10 @@ func TestXrayRegisterBridgeIgnoresSamePointer(t *testing.T) {
 	}
 	manager.Bridges["node-a"] = bridge
 
-	socksURL, reused := manager.registerBridge("node-a", bridge, false)
+	socksURL, reused, err := manager.registerBridge("node-a", bridge, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reused {
 		t.Fatalf("same bridge pointer must not be treated as duplicate, got reused with %q", socksURL)
 	}
@@ -139,7 +145,11 @@ func TestXrayRegisterBridgeTransfersRestartingRefCount(t *testing.T) {
 	manager.Bridges["node-a"] = oldBridge
 	newBridge := &XrayBridge{NodeKey: "node-a", Port: port, Running: true}
 
-	socksURL, reused := manager.registerBridge("node-a", newBridge, false)
+	oldBridge.Port = port
+	socksURL, reused, err := manager.registerBridge("node-a", newBridge, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reused {
 		t.Fatalf("expected new restarted bridge registration, got reused %q", socksURL)
 	}

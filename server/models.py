@@ -120,6 +120,26 @@ class AgentToken(Base):
     status: Mapped[str] = mapped_column(String(20), default="ACTIVE", index=True)
 
 
+class AppRelease(Base):
+    """Published desktop release metadata and its optional package file."""
+
+    __tablename__ = "app_releases"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
+    version: Mapped[str] = mapped_column(String(80), index=True)
+    channel: Mapped[str] = mapped_column(String(32), default="stable", index=True)
+    release_notes: Mapped[str] = mapped_column(Text, default="")
+    package_path: Mapped[str] = mapped_column(String(1000), default="")
+    package_filename: Mapped[str] = mapped_column(String(255), default="")
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    file_size: Mapped[int] = mapped_column(Integer, default=0)
+    is_mandatory: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    package_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (UniqueConstraint("version", "channel", name="uq_app_release_version_channel"),)
+
+
 class Profile(Base):
     __tablename__ = "profiles"
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=uid)
@@ -610,4 +630,3 @@ class StudioVisitedTarget(Base):
         UniqueConstraint("workspace_id", "target_handle", name="uq_workspace_target_handle"),
         Index("ix_studio_target_exp", "workspace_id", "expires_at"),
     )
-

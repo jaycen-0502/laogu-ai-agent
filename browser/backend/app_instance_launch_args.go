@@ -207,20 +207,57 @@ func (a *App) openBrowserWindowForRunningProfile(profile *BrowserProfile, extraL
 		return fmt.Errorf("无法创建用户数据目录 %s：%w", userDataDir, err)
 	}
 
+	// This path is used when CDP cannot create a new tab in an otherwise live
+	// profile. It must use the same proxy resolution as a normal profile start;
+	// otherwise the fallback window bypasses the configured proxy and cannot
+	// load pages on networks where direct egress is unavailable.
+	proxyInput := newBrowserStartInput(profile.ProfileId, nil, nil, true, true, false, "", "")
+	effectiveProxy, acquiredProxyBridge, releaseProxyBridge, err := a.resolveBrowserStartProxy(proxyInput, profile)
+	if err != nil {
+		return err
+	}
+	bridgeBound := false
+	if releaseProxyBridge {
+		bridgeBound = a.bindProfileProxyBridgeIfMissing(profile.ProfileId, acquiredProxyBridge)
+		if bridgeBound {
+			releaseProxyBridge = false
+		}
+	}
+	defer func() {
+		if releaseProxyBridge {
+			a.releaseProxyBridgeRef(acquiredProxyBridge)
+		}
+	}()
+
 	args := []string{
 		fmt.Sprintf("--user-data-dir=%s", userDataDir),
 		// === 关键抗封锁 Flag 汇总 ===
-		"--excludeSwitches=enable-automation", // 隐藏顶部的“正受自动测试软件控制”警告条
-		"--disable-infobars",                  // 禁用信息栏通知
-		"--no-first-run",                      // 跳过 Chrome 首次运行引导页
-		"--no-default-browser-check",          // 跳过默认浏览器提示
-		"--password-store=basic",              // 避免不同环境凭据冲突
+		"--excludeSwitches=enable-automation",           // 隐藏顶部的“正受自动测试软件控制”警告条
+		"--disable-infobars",                            // 禁用信息栏通知
+		"--no-first-run",                                // 跳过 Chrome 首次运行引导页
+		"--no-default-browser-check",                    // 跳过默认浏览器提示
+		"--password-store=basic",                        // 避免不同环境凭据冲突
+		"--use-mock-keychain",                           // 避免钥匙串弹窗
+		"--hide-crash-restore-bubble",                   // 禁用崩溃恢复黄条
+		// === 屏蔽后台遥测 ===
+		"--disable-background-networking",
+		"--disable-component-update",
+		"--disable-domain-reliability",
+		"--disable-sync",
+		"--disable-features=Translate,OptimizationHints,MediaRouter",
+		"--metrics-recording-only",
+
+		// === 内存稳定性与防 OOM 崩溃加固 (Anti-OOM & Memory Stability) ===
+		"--js-flags=--max-old-space-size=4096",        // 扩展 V8 JS 堆内存从默认约 1.4GB 扩充至 4GB，预防 SPA 复杂页面堆内存溢出
+		"--disable-dev-shm-usage",                     // 避免共享内存 (/dev/shm) 不足引发崩溃
+		"--disable-gpu-memory-buffer-video-frames",    // 防止媒体流/视频帧缓冲持续占用渲染进程显存
 	}
 
 	// 注入 Profile 本身保存的 LaunchArgs（如语言、时区、硬件指纹等）
-	if len(profile.LaunchArgs) > 0 {
-		args = append(args, profile.LaunchArgs...)
-	}
+	sanitizedProfileLaunchArgs, managedProfileArgs := sanitizeManagedLaunchArgs(profile.LaunchArgs)
+	logManagedLaunchArgOverrides(logger.New("Browser"), profile.ProfileId, "running-window.profileLaunchArgs", managedProfileArgs)
+	args = append(args, sanitizedProfileLaunchArgs...)
+	args = appendEffectiveProxyLaunchArg(args, effectiveProxy)
 
 	sanitizedExtraLaunchArgs, managedExtraArgs := sanitizeManagedLaunchArgs(extraLaunchArgs)
 	logManagedLaunchArgOverrides(logger.New("Browser"), profile.ProfileId, "running-window.extraLaunchArgs", managedExtraArgs)
@@ -237,6 +274,9 @@ func (a *App) openBrowserWindowForRunningProfile(profile *BrowserProfile, extraL
 
 	cmd, err := startBrowserWindowProcess(chromeBinaryPath, args)
 	if err != nil {
+		if bridgeBound {
+			a.releaseProfileProxyBridge(profile.ProfileId)
+		}
 		return fmt.Errorf("启动 Chrome 进程失败：%s", describeChromeProcessStartError(chromeBinaryPath, err))
 	}
 

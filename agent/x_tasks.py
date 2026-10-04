@@ -68,6 +68,29 @@ class ProfileSnapshotStore:
         with self._lock:
             return {key: dict(value) for key, value in self._load().items()}
 
+    def remove(self, profile_id: str) -> bool:
+        with self._lock:
+            payload = self._load()
+            if str(profile_id) in payload:
+                del payload[str(profile_id)]
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self.path.with_suffix(f"{self.path.suffix}.tmp_{os.getpid()}_{threading.get_ident()}_{random.randint(1000, 9999)}")
+                for attempt in range(8):
+                    try:
+                        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+                        temporary.replace(self.path)
+                        break
+                    except (OSError, PermissionError):
+                        time.sleep(random.uniform(0.02, 0.08))
+                    finally:
+                        if temporary.exists():
+                            try:
+                                temporary.unlink()
+                            except Exception:
+                                pass
+                return True
+            return False
+
     def _load(self) -> dict[str, dict[str, Any]]:
         if not self.path.exists():
             return {}

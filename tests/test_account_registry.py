@@ -127,6 +127,73 @@ class AccountRegistryTests(unittest.TestCase):
         self.assertEqual(record.browser_status, BrowserStatus.STOPPED)
         self.assertEqual(self.registry.find_by_profile("p1").profile_id, "p1")
 
+    def test_update_profile_metadata_auto_registers_new_profiles(self):
+        # When registry starts empty (fresh machine), update_profile_metadata should
+        # automatically register newly seen profiles from the local browser.
+        profiles = [
+            {
+                "profileId": "prof-new-1",
+                "profileName": "11",
+                "instanceId": "inst-1",
+                "running": True,
+                "proxyName": "代理万1",
+                "proxyConfig": "http://127.0.0.1:7890",
+            }
+        ]
+        changed = self.registry.update_profile_metadata(profiles)
+        self.assertTrue(changed)
+        records = self.registry.list()
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record.profile_id, "prof-new-1")
+        self.assertEqual(record.profile_name, "11")
+        self.assertEqual(record.browser_status, BrowserStatus.RUNNING)
+        self.assertEqual(record.login_status, LoginStatus.UNKNOWN)
+        self.assertEqual(record.proxy_name, "代理万1")
+
+        # Second call with running=False updates browser status
+        profiles[0]["running"] = False
+        changed2 = self.registry.update_profile_metadata(profiles)
+        self.assertTrue(changed2)
+        self.assertEqual(self.registry.get("prof-new-1").browser_status, BrowserStatus.STOPPED)
+
+    def test_remove_persists_deleted_profiles_and_prevents_reimport(self):
+        profiles = [
+            {
+                "profileId": "prof-11",
+                "profileName": "11",
+                "running": False,
+            },
+            {
+                "profileId": "prof-22",
+                "profileName": "22",
+                "running": False,
+            },
+        ]
+        # Auto register both
+        self.registry.update_profile_metadata(profiles)
+        self.assertEqual(len(self.registry.list()), 2)
+
+        # Remove prof-11
+        self.assertTrue(self.registry.remove("prof-11"))
+        self.assertEqual(len(self.registry.list()), 1)
+        self.assertIn("prof-11", self.registry._deleted_profile_ids)
+
+        # Refreshing profiles should NOT resurrect prof-11!
+        self.registry.update_profile_metadata(profiles)
+        self.assertEqual(len(self.registry.list()), 1)
+        self.assertIsNone(self.registry.get("prof-11"))
+
+        # Re-instantiate from file to test persistence
+        registry2 = AccountRegistry(self.registry_path, self.history_path)
+        self.assertIn("prof-11", registry2._deleted_profile_ids)
+        self.assertEqual(len(registry2.list()), 1)
+
+        # Refreshing on re-instantiated registry still does not resurrect prof-11
+        registry2.update_profile_metadata(profiles)
+        self.assertEqual(len(registry2.list()), 1)
+        self.assertIsNone(registry2.get("prof-11"))
+
 
 if __name__ == "__main__":
     unittest.main()

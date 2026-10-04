@@ -1,7 +1,12 @@
 package proxy
 
 import (
+	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,53 +29,103 @@ type DnsDiagnosticSummary struct {
 // 注意：xray dns.servers 只支持纯 IP 或 DoH（https://）地址，
 // 不支持 Clash 的 tls:// 格式（DoT），会被自动过滤。
 func parseDnsConfig(raw string) map[string]interface{} {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
+	_, addresses, err := NormalizeXrayDNSInput(raw)
+	if err != nil || len(addresses) == 0 {
 		return nil
 	}
+	hasLocalhost := false
+	for _, a := range addresses {
+		if strings.EqualFold(a, "localhost") {
+			hasLocalhost = true
+			break
+		}
+	}
+	servers := make([]interface{}, len(addresses))
+	for i, s := range addresses {
+		servers[i] = s
+	}
+	if !hasLocalhost {
+		servers = append(servers, "localhost")
+	}
+	return withXrayDNSRefreshPolicy(map[string]interface{}{"servers": servers})
+}
 
-	type clashDns struct {
-		Enable     bool     `yaml:"enable"`
+// NormalizeXrayDNSInput accepts either a Clash dns: YAML block or a simple
+// address list separated by lines, spaces, commas (including Chinese commas),
+// or semicolons. It validates eagerly so a typo cannot become a delayed Xray
+// startup/network failure.
+func NormalizeXrayDNSInput(raw string) (string, []string, error) {
+	original := strings.TrimSpace(raw)
+	if original == "" {
+		return "", nil, nil
+	}
+
+	type clashDNS struct {
 		Nameserver []string `yaml:"nameserver"`
 		Fallback   []string `yaml:"fallback"`
 	}
-	type clashDnsWrapper struct {
-		Dns clashDns `yaml:"dns"`
+	type clashDNSWrapper struct {
+		DNS *clashDNS `yaml:"dns"`
+	}
+	var wrapper clashDNSWrapper
+	if err := yaml.Unmarshal([]byte(original), &wrapper); err == nil && wrapper.DNS != nil {
+		addresses := append(append([]string{}, wrapper.DNS.Nameserver...), wrapper.DNS.Fallback...)
+		validated, err := validateAndDedupeXrayDNSAddresses(addresses, original)
+		if err != nil {
+			return "", nil, err
+		}
+		if len(validated) == 0 {
+			return "", nil, fmt.Errorf("DNS YAML 未包含 nameserver 或 fallback 地址")
+		}
+		return original, validated, nil
 	}
 
-	var wrapper clashDnsWrapper
-	if err := yaml.Unmarshal([]byte(raw), &wrapper); err == nil && len(wrapper.Dns.Nameserver) > 0 {
-		servers := make([]interface{}, 0)
-		for _, s := range wrapper.Dns.Nameserver {
-			if s = strings.TrimSpace(s); s != "" && isXrayDnsAddr(s) {
-				servers = append(servers, s)
-			}
-		}
-		for _, s := range wrapper.Dns.Fallback {
-			if s = strings.TrimSpace(s); s != "" && isXrayDnsAddr(s) {
-				servers = append(servers, s)
-			}
-		}
-		if len(servers) > 0 {
-			return map[string]interface{}{"servers": servers}
-		}
+	addresses := splitSimpleDNSInput(original)
+	validated, err := validateAndDedupeXrayDNSAddresses(addresses, original)
+	if err != nil {
+		return "", nil, err
 	}
+	if len(validated) == 0 {
+		return "", nil, fmt.Errorf("未识别到有效 DNS 地址")
+	}
+	return strings.Join(validated, "\n"), validated, nil
+}
 
-	var result []string
-	for _, s := range strings.Split(raw, ",") {
-		if s = strings.TrimSpace(s); s != "" && isXrayDnsAddr(s) {
-			result = append(result, s)
+func splitSimpleDNSInput(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ',' || r == '，' || r == ';' || r == '；'
+	})
+}
+
+func validateAndDedupeXrayDNSAddresses(addresses []string, original string) ([]string, error) {
+	result := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		address = strings.TrimSpace(address)
+		if address == "" {
+			continue
 		}
+		if !isXrayDnsAddr(address) {
+			return nil, fmt.Errorf("DNS 地址 %q 格式无效或 Xray 不支持（输入: %q）", address, original)
+		}
+		key := strings.ToLower(address)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, address)
 	}
-	if len(result) == 0 {
+	return result, nil
+}
+
+func withXrayDNSRefreshPolicy(config map[string]interface{}) map[string]interface{} {
+	if config == nil {
 		return nil
 	}
-
-	servers := make([]interface{}, len(result))
-	for i, s := range result {
-		servers[i] = s
-	}
-	return map[string]interface{}{"servers": servers}
+	config["queryStrategy"] = "UseIP"
+	config["disableCache"] = false
+	config["serveStale"] = false
+	return config
 }
 
 // isXrayDnsAddr 判断 DNS 地址是否为 xray 支持的格式。
@@ -78,11 +133,30 @@ func parseDnsConfig(raw string) map[string]interface{} {
 // DoH（https://...）、localhost。
 // 不支持：Clash 的 tls:// 格式（DoT）。
 func isXrayDnsAddr(s string) bool {
-	l := strings.ToLower(s)
-	if strings.HasPrefix(l, "tls://") {
+	s = strings.TrimSpace(s)
+	if s == "" {
 		return false
 	}
-	return true
+	if strings.EqualFold(s, "localhost") {
+		return true
+	}
+	if net.ParseIP(s) != nil {
+		return true
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "https://") {
+		parsed, err := url.Parse(s)
+		return err == nil && parsed.Scheme == "https" && parsed.Hostname() != "" && parsed.Path != ""
+	}
+	if strings.Contains(s, ":") {
+		host, portText, err := net.SplitHostPort(s)
+		if err != nil {
+			return false
+		}
+		port, err := strconv.Atoi(portText)
+		return err == nil && port >= 1 && port <= 65535 && (net.ParseIP(host) != nil || strings.EqualFold(host, "localhost"))
+	}
+	return false
 }
 
 func buildDnsDiagnosticSummary(raw string) DnsDiagnosticSummary {
@@ -119,7 +193,7 @@ func buildDnsDiagnosticSummary(raw string) DnsDiagnosticSummary {
 		}
 		return summary
 	}
-	for _, server := range strings.Split(raw, ",") {
+	for _, server := range splitSimpleDNSInput(raw) {
 		server = strings.TrimSpace(server)
 		if server == "" {
 			continue

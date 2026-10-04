@@ -206,3 +206,102 @@ func defaultProxyLocationOptions() []ProxyLocationOption {
 		countryLocaleDefaults["CN"],
 	}
 }
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z')
+}
+
+func containsCountryToken(s, code string) bool {
+	upperCode := strings.ToUpper(code)
+	idx := 0
+	for {
+		pos := strings.Index(s[idx:], upperCode)
+		if pos == -1 {
+			return false
+		}
+		actualPos := idx + pos
+		beforeOk := actualPos == 0 || !isASCIILetter(s[actualPos-1])
+		afterPos := actualPos + len(upperCode)
+		afterOk := afterPos == len(s) || !isASCIILetter(s[afterPos])
+		if beforeOk && afterOk {
+			return true
+		}
+		idx = actualPos + 1
+	}
+}
+
+func inferCountryCodeFromText(text string) string {
+	upper := strings.ToUpper(text)
+	switch {
+	case strings.Contains(upper, "日本") || strings.Contains(upper, "JAPAN") || strings.Contains(upper, "TOKYO") || strings.Contains(upper, "OSAKA") || containsCountryToken(upper, "JP"):
+		return "JP"
+	case strings.Contains(upper, "美国") || strings.Contains(upper, "USA") || strings.Contains(upper, "UNITED STATES") || containsCountryToken(upper, "US"):
+		return "US"
+	case strings.Contains(upper, "香港") || strings.Contains(upper, "HONG KONG") || containsCountryToken(upper, "HK"):
+		return "HK"
+	case strings.Contains(upper, "台湾") || strings.Contains(upper, "TAIWAN") || containsCountryToken(upper, "TW"):
+		return "TW"
+	case strings.Contains(upper, "新加坡") || strings.Contains(upper, "SINGAPORE") || containsCountryToken(upper, "SG"):
+		return "SG"
+	case strings.Contains(upper, "韩国") || strings.Contains(upper, "KOREA") || strings.Contains(upper, "SEOUL") || containsCountryToken(upper, "KR"):
+		return "KR"
+	case strings.Contains(upper, "英国") || strings.Contains(upper, "UNITED KINGDOM") || strings.Contains(upper, "LONDON") || containsCountryToken(upper, "GB") || containsCountryToken(upper, "UK"):
+		return "GB"
+	case strings.Contains(upper, "德国") || strings.Contains(upper, "GERMANY") || strings.Contains(upper, "BERLIN") || containsCountryToken(upper, "DE"):
+		return "DE"
+	case strings.Contains(upper, "法国") || strings.Contains(upper, "FRANCE") || strings.Contains(upper, "PARIS") || containsCountryToken(upper, "FR"):
+		return "FR"
+	case strings.Contains(upper, "加拿大") || strings.Contains(upper, "CANADA") || strings.Contains(upper, "TORONTO") || containsCountryToken(upper, "CA"):
+		return "CA"
+	case strings.Contains(upper, "澳大利亚") || strings.Contains(upper, "AUSTRALIA") || strings.Contains(upper, "SYDNEY") || containsCountryToken(upper, "AU"):
+		return "AU"
+	}
+	return ""
+}
+
+func extractServerHostFromProxyConfig(cfg string) string {
+	for _, line := range strings.Split(cfg, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "server:") {
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
+func (a *App) resolveProxyLocaleForProfile(profile *BrowserProfile, input browserStartInput) (string, string) {
+	if profile == nil {
+		return "", ""
+	}
+	proxyID := strings.TrimSpace(profile.ProxyId)
+	if input.hasTemporaryProxy() {
+		proxyID = strings.TrimSpace(input.TemporaryProxyID)
+	}
+	if proxyID == "" || strings.EqualFold(proxyID, temporaryDirectProxyID) || input.ForceDirectProxy {
+		return "", ""
+	}
+
+	// 1. 优先使用已探测的真实出口 IP 属性缓存（严格基于出口网络 IP，不识别节点名称）
+	if cached, ok := a.cachedProxyIPHealthResult(proxyID); ok && cached.Ok {
+		opt := resolveProxyLocationOption(resolveProxyLocationCountryCode(cached), cached.Country, cached.City)
+		if opt.Timezone != "" || opt.Lang != "" {
+			return opt.Timezone, opt.Lang
+		}
+	}
+
+	// 2. 实时探测该代理的真实出口 IP（通过代理隧道实际测试出口 IP 归属，杜绝根据节点名称猜测）
+	health := a.BrowserProxyCheckIPHealth(proxyID)
+	if health.Ok {
+		countryCode := resolveProxyLocationCountryCode(health)
+		opt := resolveProxyLocationOption(countryCode, health.Country, health.City)
+		if opt.Timezone != "" || opt.Lang != "" {
+			return opt.Timezone, opt.Lang
+		}
+	}
+
+	return "", ""
+}
+

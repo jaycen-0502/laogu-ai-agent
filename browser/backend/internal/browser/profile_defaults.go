@@ -10,6 +10,7 @@ const directProxyID = "__direct__"
 // ApplyDefaults 应用默认配置
 func (m *Manager) ApplyDefaults(profile *Profile) bool {
 	log := logger.New("Browser")
+	changed := false
 	if len(profile.FingerprintArgs) == 0 {
 		profile.FingerprintArgs = append([]string(nil), m.Config.Browser.DefaultFingerprintArgs...)
 	}
@@ -19,10 +20,26 @@ func (m *Manager) ApplyDefaults(profile *Profile) bool {
 	if strings.TrimSpace(profile.UserDataDir) == "" {
 		profile.UserDataDir = profile.ProfileId
 	}
-	profile.CoreId = normalizeProfileCoreID(profile.CoreId)
-	if profile.CoreId == "" {
-		if defaultCore, ok := m.GetDefaultCore(); ok {
-			profile.CoreId = defaultCore.CoreId
+	originalCoreID := normalizeProfileCoreID(profile.CoreId)
+	profile.CoreId = originalCoreID
+	selectedCoreUsable := false
+	if profile.CoreId != "" {
+		if selectedCore, ok := m.GetCore(profile.CoreId); ok {
+			_, selectedCoreErr := m.ResolveCoreExecutable(selectedCore)
+			selectedCoreUsable = selectedCoreErr == nil
+		}
+	}
+	if profile.CoreId == "" || !selectedCoreUsable {
+		if fallbackCore, _, ok := m.resolveFirstAvailableCore(""); ok && !strings.EqualFold(profile.CoreId, fallbackCore.CoreId) {
+			profile.CoreId = fallbackCore.CoreId
+			changed = true
+			if originalCoreID != "" {
+				log.Warn("实例内核不可用，已自动迁移到可用内核",
+					logger.F("profile_id", profile.ProfileId),
+					logger.F("previous_core_id", originalCoreID),
+					logger.F("fallback_core_id", fallbackCore.CoreId),
+				)
+			}
 		}
 	}
 
@@ -72,7 +89,7 @@ func (m *Manager) ApplyDefaults(profile *Profile) bool {
 		}
 	}
 
-	return proxyChanged
+	return changed || proxyChanged
 }
 
 func (m *Manager) bindProfileToDirectProxy(profile *Profile) bool {

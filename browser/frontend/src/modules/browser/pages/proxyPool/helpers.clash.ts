@@ -1,17 +1,11 @@
 import yaml from 'js-yaml'
 import type { BrowserProxy } from '../../types'
+import { normalizeVlessRealityImport } from '../../utils/normalizeRealityImport'
 import type { ClashProxy, ImportCandidate, ProxyDisplayInfo } from './helpers.types'
-import { BUILTIN_PROXIES } from './helpers.types'
 import { parseChainSocks5Config } from './helpers.chain'
 
 export function ensureBuiltinProxies(proxies: BrowserProxy[]): BrowserProxy[] {
-  const result = [...proxies]
-  for (const builtin of BUILTIN_PROXIES) {
-    if (!result.find((proxy) => proxy.proxyId === builtin.proxyId)) {
-      result.unshift(builtin)
-    }
-  }
-  return result
+  return [...proxies]
 }
 
 export function parseProxyInfo(proxyConfig: string): { type: string; server: string; port: number } {
@@ -63,7 +57,7 @@ export function toDisplayList(proxies: BrowserProxy[]): ProxyDisplayInfo[] {
 }
 
 export function proxyToYaml(proxy: ClashProxy): string {
-  return yaml.dump([proxy], { flowLevel: -1, lineWidth: -1 }).trim()
+  return yaml.dump([normalizeVlessRealityImport(proxy)], { flowLevel: -1, lineWidth: -1 }).trim()
 }
 
 function quoteYamlScalar(value: string): string {

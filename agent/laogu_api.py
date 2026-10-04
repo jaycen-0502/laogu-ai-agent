@@ -139,6 +139,13 @@ class LaoguApi:
             timeout_seconds=20,
         )
 
+    def delete_profile(self, profile_id: str) -> dict[str, Any]:
+        return self._request(
+            "DELETE",
+            f"/api/profiles/{profile_id}",
+            timeout_seconds=10,
+        )
+
     def run_hook(
         self,
         profile_id: str,

@@ -106,3 +106,50 @@ export const jsonBody = (value: unknown): RequestInit => ({
   method: "POST",
   body: JSON.stringify(value),
 });
+
+export async function uploadAppRelease(
+  file: File,
+  version: string,
+  channel = "stable",
+  releaseNotes = "",
+  isMandatory = false,
+  timeoutMs = 180000,
+): Promise<{ ok: boolean; version: string; channel: string; release_notes: string; is_mandatory: boolean; sha256: string; file_size: number; download_url: string }> {
+  const headers = new Headers({ Accept: "application/json" });
+  const token = authStore.get();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("version", version);
+  formData.append("channel", channel);
+  formData.append("release_notes", releaseNotes);
+  formData.append("is_mandatory", String(isMandatory));
+
+  let response: Response;
+  try {
+    response = await fetch("/api/admin/releases/publish", {
+      method: "POST",
+      headers,
+      body: formData,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw new ApiError(0, "上传超时或网络连接失败，请检查升级包文件大小与服务状态");
+  }
+  if (response.status === 401) {
+    authStore.clear();
+    if (window.location.pathname !== "/login") window.location.assign("/login");
+    throw new ApiError(401, "登录已过期，请重新登录");
+  }
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    /* ignore */
+  }
+  if (!response.ok) {
+    throw new ApiError(response.status, String(payload?.detail || "客户端版本发布失败"));
+  }
+  return payload;
+}
+

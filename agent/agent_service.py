@@ -136,12 +136,15 @@ class AgentService:
             remember_workspace(workspace_id)
         offline_access = response.get("offline_access") if isinstance(response, dict) else None
         if self.offline_access_store is not None and isinstance(offline_access, dict):
-            self.offline_access_store.accept(
-                offline_access,
-                agent_id=self.server_client.agent_id,
-                device_id=getattr(self.server_client, "device_id", ""),
-                workspace_id=workspace_id,
-            )
+            try:
+                self.offline_access_store.accept(
+                    offline_access,
+                    agent_id=self.server_client.agent_id,
+                    device_id=getattr(self.server_client, "device_id", ""),
+                    workspace_id=workspace_id,
+                )
+            except Exception as exc:
+                LOGGER.warning("Offline access store update deferred: %s", exc)
         self.server_status = "ONLINE"; self.agent_status = "ONLINE"; self.last_heartbeat = timestamp; self.last_error = ""
         return True
 
@@ -372,12 +375,12 @@ class AgentService:
         self._thread = threading.Thread(target=self._loop, name="laogu-agent-service", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 1.0) -> None:
         self._stop.set()
         if self._command_thread:
-            self._command_thread.join(timeout=5)
+            self._command_thread.join(timeout=timeout)
         if self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=timeout)
         self.lifecycle = "STOPPED"
 
     def _dispatch_socket_command(self, command: dict[str, Any]) -> dict[str, Any]:

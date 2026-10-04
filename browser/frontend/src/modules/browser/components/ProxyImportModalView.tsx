@@ -116,7 +116,7 @@ export function ProxyImportModalView({
               variant={importMode === 'clash' ? undefined : 'secondary'}
               onClick={() => onImportModeChange('clash')}
             >
-              Clash 订阅 / YAML
+              订阅 / 链接 / YAML
             </Button>
             <Button
               variant={importMode === 'direct' ? undefined : 'secondary'}
@@ -180,6 +180,9 @@ export function ProxyImportModalView({
                 rows={12}
                 placeholder={`proxies:\n  - name: vless-v6\n    type: vless\n    server: example.com\n    port: 443\n    uuid: your-uuid\n    ...`}
               />
+			  <p className="text-xs text-[var(--color-text-muted)]">
+				可直接粘贴一个或多个 vless:// 链接（每行一个），也保留 Clash YAML 模板输入。
+			  </p>
             </>
           )}
           {importMode === 'direct' && (
@@ -192,45 +195,49 @@ export function ProxyImportModalView({
                     onChange={e => onDirectImportFormChange(prev => ({ ...prev, protocol: e.target.value as DirectImportForm['protocol'] }))}
                   />
                 </FormItem>
-                <FormItem label="代理名称（可选）">
+                <FormItem label={directImportForm.protocol === 'direct' ? '直连名称' : '代理名称（可选）'} required={directImportForm.protocol === 'direct'}>
                   <Input
                     value={directImportForm.proxyName}
                     onChange={e => onDirectImportFormChange(prev => ({ ...prev, proxyName: e.target.value }))}
                     placeholder="节点名称"
                   />
                 </FormItem>
-                <FormItem label="代理地址" required>
-                  <Input
-                    value={directImportForm.server}
-                    onChange={e => onDirectImportFormChange(prev => ({ ...prev, server: e.target.value }))}
-                    placeholder="例如：127.0.0.1 或 hk.example.com"
-                  />
-                </FormItem>
-                <FormItem label="代理端口" required>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={directImportForm.port}
-                    onChange={e => onDirectImportFormChange(prev => ({ ...prev, port: e.target.value }))}
-                    placeholder="例如：1080"
-                  />
-                </FormItem>
-                <FormItem label="账号（可选）">
-                  <Input
-                    value={directImportForm.username}
-                    onChange={e => onDirectImportFormChange(prev => ({ ...prev, username: e.target.value }))}
-                    placeholder="留空则不使用认证"
-                  />
-                </FormItem>
-                <FormItem label="密码（可选）">
-                  <Input
-                    type="password"
-                    value={directImportForm.password}
-                    onChange={e => onDirectImportFormChange(prev => ({ ...prev, password: e.target.value }))}
-                    placeholder="留空则不使用密码"
-                  />
-                </FormItem>
+                {directImportForm.protocol !== 'direct' && (
+                  <>
+                    <FormItem label="代理地址" required>
+                      <Input
+                        value={directImportForm.server}
+                        onChange={e => onDirectImportFormChange(prev => ({ ...prev, server: e.target.value }))}
+                        placeholder="例如：127.0.0.1 或 hk.example.com"
+                      />
+                    </FormItem>
+                    <FormItem label="代理端口" required>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={directImportForm.port}
+                        onChange={e => onDirectImportFormChange(prev => ({ ...prev, port: e.target.value }))}
+                        placeholder="例如：1080"
+                      />
+                    </FormItem>
+                    <FormItem label="账号（可选）">
+                      <Input
+                        value={directImportForm.username}
+                        onChange={e => onDirectImportFormChange(prev => ({ ...prev, username: e.target.value }))}
+                        placeholder="留空则不使用认证"
+                      />
+                    </FormItem>
+                    <FormItem label="密码（可选）">
+                      <Input
+                        type="password"
+                        value={directImportForm.password}
+                        onChange={e => onDirectImportFormChange(prev => ({ ...prev, password: e.target.value }))}
+                        placeholder="留空则不使用密码"
+                      />
+                    </FormItem>
+                  </>
+                )}
               </div>
               <FormItem label="文本辅助（可选）" hint="支持单个 JSON、JSON 数组，或多行 http:// / https:// / socks5://，每行一个">
                 <Textarea
@@ -403,10 +410,10 @@ export function ProxyImportModalView({
             </FormItem>
           )}
           {importMode === 'clash' && (
-            <FormItem label="批量 DNS 配置（可选）">
+            <FormItem label="自定义 DNS（可选）">
               <Textarea value={importDnsServers} onChange={e => onImportDnsServersChange(e.target.value)} rows={5}
-                placeholder={`dns:\n  enable: true\n  nameserver:\n    - 119.29.29.29\n    - 223.5.5.5`} />
-              <p className="text-xs text-[var(--color-text-muted)] mt-1">留空则不配置 DNS，填写后将应用到本次导入的所有代理</p>
+				placeholder={`8.8.8.8\n1.1.1.1\n223.5.5.5`} />
+			  <p className="text-xs text-[var(--color-text-muted)] mt-1">每行一个，也可用空格、逗号或分号分隔；仍兼容完整 dns: YAML。留空使用默认（谷歌、Cloudflare 与阿里云备用 DNS）。</p>
             </FormItem>
           )}
         </div>

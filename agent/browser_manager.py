@@ -1,7 +1,10 @@
+import logging
 from typing import Any, Callable
 import time
 
 from .laogu_api import LaoguApi, LaoguApiError
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserManagerError(RuntimeError):
@@ -77,12 +80,12 @@ class BrowserManager:
     def _is_ready(payload: Any) -> bool:
         if not isinstance(payload, dict):
             return False
-        for key in ("cdpUrl", "cdp_url", "debuggerUrl", "debugger_url", "webSocketDebuggerUrl"):
+        for key in ("directDebugUrl", "direct_debug_url", "cdpUrl", "cdp_url", "debuggerUrl", "debugger_url", "webSocketDebuggerUrl"):
             if str(payload.get(key) or "").strip():
                 return True
         # Older Browser API versions expose only the debugging port. Treat a
         # valid port as ready; the controller normalizes it to a local CDP URL.
-        for key in ("port", "cdpPort", "cdp_port", "debuggerPort", "debugger_port"):
+        for key in ("debugPort", "debug_port", "port", "cdpPort", "cdp_port", "debuggerPort", "debugger_port"):
             value = payload.get(key)
             if isinstance(value, int) and 1 <= value <= 65535:
                 return True
@@ -111,7 +114,41 @@ class BrowserManager:
         try:
             return self.api.stop_profile(profile_id)
         except LaoguApiError as exc:
+            status_code = getattr(exc, "status_code", None)
+            err_msg = str(exc).lower()
+            if status_code == 404 or "not found" in err_msg or "404" in err_msg:
+                logger.info(
+                    "stop_profile: profile %s was already stopped or not found in browser runtime: %s",
+                    profile_id,
+                    exc,
+                )
+                return {
+                    "ok": True,
+                    "stopped": True,
+                    "profileId": str(profile_id),
+                    "note": "already_stopped_or_not_found",
+                }
             raise BrowserManagerError(f"Failed to stop profile {profile_id}: {exc}") from exc
+
+    def delete_profile(self, profile_id: str) -> dict[str, Any]:
+        try:
+            return self.api.delete_profile(profile_id)
+        except LaoguApiError as exc:
+            status_code = getattr(exc, "status_code", None)
+            err_msg = str(exc).lower()
+            if status_code == 404 or "not found" in err_msg or "404" in err_msg:
+                logger.info(
+                    "delete_profile: profile %s not found in browser runtime, treating as deleted: %s",
+                    profile_id,
+                    exc,
+                )
+                return {
+                    "ok": True,
+                    "deleted": True,
+                    "profileId": str(profile_id),
+                    "note": "already_deleted_or_not_found",
+                }
+            raise BrowserManagerError(f"Failed to delete profile {profile_id}: {exc}") from exc
 
     def run_automation(
         self,

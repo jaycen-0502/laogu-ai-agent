@@ -125,7 +125,7 @@ def load_settings() -> Settings:
         ),
         account_discovery_script=RESOURCE_ROOT / "scripts" / "discover_x_account.js",
         x_readonly_task_script=RESOURCE_ROOT / "scripts" / "x_readonly_tasks.js",
-        server_url=os.getenv("LAOGU_SERVER_URL", "").strip(),
+        server_url=os.getenv("LAOGU_SERVER_URL", "https://api.jaycwl.org").strip() or "https://api.jaycwl.org",
         server_enrollment_token=os.getenv("LAOGU_SERVER_ENROLLMENT_TOKEN", "").strip(),
         server_agent_id=os.getenv("LAOGU_AGENT_ID", "").strip(),
         server_agent_token=os.getenv("LAOGU_AGENT_TOKEN", "").strip(),

@@ -1,4 +1,4 @@
-﻿export const DOC_TUTORIAL = `# 使用教程
+export const DOC_TUTORIAL = `# 使用教程
 
 ## 只在应用内使用
 
@@ -310,7 +310,9 @@ proxies:
 dns:
   enable: true
   nameserver:
-    - 119.29.29.29
+    - 8.8.8.8
+    - 1.1.1.1
+  fallback:
     - 223.5.5.5
 \`\`\`
 

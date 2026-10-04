@@ -6,4 +6,13 @@ except ImportError as exc:
     raise
 
 
-raise SystemExit(main())
+exit_code = 0
+try:
+    exit_code = main()
+except SystemExit as exc:
+    exit_code = exc.code if isinstance(exc.code, int) else 0
+except Exception:
+    exit_code = 1
+finally:
+    import os
+    os._exit(exit_code if isinstance(exit_code, int) else 0)

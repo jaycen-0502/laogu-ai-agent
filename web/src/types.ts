@@ -50,6 +50,22 @@ export type Workspace = {
   account_count?: number;
   task_count?: number;
 };
+export type AppReleaseItem = {
+  id: string;
+  version: string;
+  channel: string;
+  release_notes: string;
+  package_filename: string;
+  file_size: number;
+  sha256: string;
+  is_mandatory: boolean;
+  is_active: boolean;
+  package_deleted: boolean;
+  file_exists: boolean;
+  download_url: string;
+  created_at: string | null;
+};
+
 export type Agent = {
   agent_id: string;
   workspace_id: string;

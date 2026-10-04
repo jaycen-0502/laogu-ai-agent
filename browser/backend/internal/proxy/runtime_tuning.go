@@ -77,5 +77,8 @@ func xrayBrowserSniffingConfig() map[string]interface{} {
 	return map[string]interface{}{
 		"enabled":      true,
 		"destOverride": []string{"http", "tls", "quic"},
+		// The browser already supplies the destination through SOCKS. In
+		// particular, an ECH outer SNI must not replace that destination.
+		"routeOnly": true,
 	}
 }

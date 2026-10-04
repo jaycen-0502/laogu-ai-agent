@@ -339,8 +339,11 @@ func defaultFingerprintArgsForOS(goos string) []string {
 		"--fingerprint-brand=Chrome",
 		"--fingerprint-platform=" + platform,
 		"--disable-non-proxied-udp",
+		"--disable-quic",
+		"--proxy-bypass-list=<-loopback>",
 		"--fingerprinting-canvas-image-data-noise=0",
 		"--fingerprinting-client-rects-noise=0",
+		"--window-size=1280,800",
 	}
 }
 
@@ -365,8 +368,11 @@ func isLegacyMinimalDefaultFingerprintArgs(args []string) bool {
 func appendEffectiveRuntimeFingerprintArgs(args []string) []string {
 	defaultRuntimeArgs := []string{
 		"--disable-non-proxied-udp",
+		"--disable-quic",
+		"--proxy-bypass-list=<-loopback>",
 		"--fingerprinting-canvas-image-data-noise=0",
 		"--fingerprinting-client-rects-noise=0",
+		"--window-size=1280,800",
 	}
 	out := append([]string{}, args...)
 	for _, defaultArg := range defaultRuntimeArgs {

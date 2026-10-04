@@ -157,8 +157,10 @@ func (g *singleInstanceGuard) Close() {
 	if g == nil {
 		return
 	}
-	if err := g.listener.Close(); err != nil {
-		log.Printf("关闭单实例监听失败: %v", err)
+	if g.listener != nil {
+		if err := g.listener.Close(); err != nil {
+			log.Printf("关闭单实例监听失败: %v", err)
+		}
 	}
 	if g.lock != nil {
 		if err := g.lock.Close(); err != nil {

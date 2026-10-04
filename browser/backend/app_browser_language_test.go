@@ -74,4 +74,8 @@ func TestWriteBrowserLanguagePreferences(t *testing.T) {
 	if _, ok := prefs["profile"].(map[string]interface{}); !ok {
 		t.Fatalf("existing preferences were not preserved: %#v", prefs)
 	}
+	webrtc, ok := prefs["webrtc"].(map[string]interface{})
+	if !ok || webrtc["ip_handling_policy"] != "disable_non_proxied_udp" {
+		t.Fatalf("webrtc ip_handling_policy not written properly: %#v", prefs)
+	}
 }

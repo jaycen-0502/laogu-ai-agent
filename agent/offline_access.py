@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,18 +12,20 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .server_client import DpapiProtector, protect_agent_directory
 
+LOGGER = logging.getLogger("laogu-agent.offline-access")
+
 
 ALWAYS_ALLOWED_CAPABILITIES = frozenset({"local.view", "local.browser.stop"})
 OFFLINE_ACCESS_PREFIX = "LGOFF1."
 
 
 def _decode_b64(value: str) -> bytes:
-    raw = str(value).strip()
+    raw = str(value).strip().replace("-", "+").replace("_", "/")
     padded = raw + "=" * (-len(raw) % 4)
-    decoded = base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
-    canonical = base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("=")
+    decoded = base64.b64decode(padded.encode("ascii"), validate=True)
+    canonical = base64.b64encode(decoded).decode("ascii").rstrip("=")
     if canonical != raw:
-        raise ValueError("Invalid Base64URL encoding")
+        raise ValueError("Invalid Base64 encoding")
     return decoded
 
 
@@ -87,11 +90,14 @@ class OfflineAccessStore:
         payload = json.dumps(stored_lease, ensure_ascii=False, separators=(",", ":"))
         stored = {"lease_protected": self.protector.protect(payload)}
         with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            protect_agent_directory(self.path.parent)
-            temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-            temporary.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
-            temporary.replace(self.path)
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                protect_agent_directory(self.path.parent)
+                temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+                temporary.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(self.path)
+            except OSError as exc:
+                LOGGER.warning("Failed to persist offline access lease due to disk/OS error: %s", exc)
 
     def _load_stored(self) -> dict[str, Any]:
         with self._lock:

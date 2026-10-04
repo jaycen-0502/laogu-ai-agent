@@ -165,7 +165,7 @@ func main() {
 	if err := backend.EnsureRuntimeLayout(appRoot); err != nil {
 		log.Printf("准备用户数据目录失败: %v", err)
 	}
-	singleInstance, primaryInstance, err := acquireSingleInstance(appRoot)
+	singleInstance, primaryInstance, err := acquireAppSingleInstance(appRoot)
 	if err != nil {
 		log.Printf("单实例检查失败: %v", err)
 	}

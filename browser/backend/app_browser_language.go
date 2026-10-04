@@ -43,10 +43,6 @@ func writeBrowserLanguagePreferences(userDataDir string, args []string) error {
 	if lang == "" && acceptLang != "" {
 		lang = browserLangFromAcceptLanguage(acceptLang)
 	}
-	if lang == "" && acceptLang == "" {
-		return nil
-	}
-
 	profileDir := filepath.Join(userDataDir, "Default")
 	if err := os.MkdirAll(profileDir, 0o755); err != nil {
 		return err
@@ -62,14 +58,14 @@ func writeBrowserLanguagePreferences(userDataDir string, args []string) error {
 		return err
 	}
 
-	intl, _ := prefs["intl"].(map[string]interface{})
-	if intl == nil {
-		intl = map[string]interface{}{}
-	}
 	if acceptLang != "" {
+		intl, _ := prefs["intl"].(map[string]interface{})
+		if intl == nil {
+			intl = map[string]interface{}{}
+		}
 		intl["accept_languages"] = acceptLang
+		prefs["intl"] = intl
 	}
-	prefs["intl"] = intl
 
 	webkit, _ := prefs["webkit"].(map[string]interface{})
 	if webkit == nil {
@@ -82,6 +78,14 @@ func writeBrowserLanguagePreferences(userDataDir string, args []string) error {
 	webprefs["default_encoding"] = browserDefaultEncoding
 	webkit["webprefs"] = webprefs
 	prefs["webkit"] = webkit
+
+	// 强制注入现代 WebRTC 防泄露首选项，杜绝 UDP 旁路泄露真实公网/内网 IP
+	webrtc, _ := prefs["webrtc"].(map[string]interface{})
+	if webrtc == nil {
+		webrtc = map[string]interface{}{}
+	}
+	webrtc["ip_handling_policy"] = "disable_non_proxied_udp"
+	prefs["webrtc"] = webrtc
 
 	data, err := json.MarshalIndent(prefs, "", "  ")
 	if err != nil {

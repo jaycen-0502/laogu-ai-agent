@@ -9,8 +9,12 @@ func TestUpgradeLegacyMinimalFingerprintArgsAddsEffectiveRuntimeArgs(t *testing.
 	args := upgradeLegacyMinimalFingerprintArgs([]string{"--fingerprint-brand=Chrome", "--fingerprint-platform=windows"})
 
 	assertStringSliceContains(t, args, "--disable-non-proxied-udp")
+	assertStringSliceContains(t, args, "--webrtc-ip-handling-policy=disable_non_proxied_udp")
+	assertStringSliceContains(t, args, "--disable-quic")
+	assertStringSliceContains(t, args, "--proxy-bypass-list=<-loopback>")
 	assertStringSliceContains(t, args, "--fingerprinting-canvas-image-data-noise=0")
 	assertStringSliceContains(t, args, "--fingerprinting-client-rects-noise=0")
+	assertStringSliceContains(t, args, "--window-size=1280,800")
 }
 
 func TestEnsureRuntimeFingerprintArgsRespectsExplicitNoiseEnablement(t *testing.T) {

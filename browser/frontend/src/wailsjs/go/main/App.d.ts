@@ -259,6 +259,10 @@ export function BrowserProxyListByGroup(arg1:string):Promise<Array<config.Browse
 
 export function BrowserProxyListGroups():Promise<Array<string>>;
 
+export function BrowserProxyNormalizeDNSInput(arg1:string):Promise<Record<string, any>>;
+
+export function BrowserProxyNormalizeImportText(arg1:string):Promise<Record<string, any>>;
+
 export function BrowserProxyProbeBrowserPage(arg1:backend.ProxyBrowserProbeRequest):Promise<backend.ProxyBrowserProbeResult>;
 
 export function BrowserProxyResolveLocation(arg1:string):Promise<backend.ProxyLocationResolveResult>;

@@ -224,4 +224,7 @@ class LaoguProjectHookRunner:
         }
         missing = [f"{label}: {path}" for label, path in required.items() if not path.exists()]
         if missing:
-            raise LaoguHookRunnerError("Missing required runtime path(s): " + "; ".join(missing))
+            raise LaoguHookRunnerError(
+                "未检测到外部 Node.js 运行组件 (" + "; ".join(missing) + ")。"
+                "【提示】：日常使用无需扫描底层，请点击【刷新账号】直接读取老谷浏览器档案；执行任务请点击【配置并运行自动化】。"
+            )

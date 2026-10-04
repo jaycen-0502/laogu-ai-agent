@@ -58,11 +58,24 @@ function useWailsNotifications() {
 
     const offBridgeDied = runtime.EventsOn(
       "proxy:bridge:died",
-      (data: { key: string; error: string }) => {
+      (data: { key: string; error: string; engine?: string }) => {
         addNotification({
           type: "warning",
-          title: "连接池节点失效",
-          message: `代理节点 ${data.key} 连接中断，相关实例可能无法访问网络`,
+          title: data.engine === "xray" ? "代理连接正在恢复" : "连接池节点失效",
+          message: data.engine === "xray"
+            ? `代理节点 ${data.key} 连接中断，正在自动恢复，请稍后重试页面`
+            : `代理节点 ${data.key} 连接中断，相关实例可能无法访问网络`,
+        });
+      },
+    );
+
+    const offBridgeRecovered = runtime.EventsOn(
+      "proxy:bridge:recovered",
+      (data: { key: string }) => {
+        addNotification({
+          type: "success",
+          title: "代理连接已恢复",
+          message: `代理节点 ${data.key} 已恢复连接，可刷新失败的页面重试`,
         });
       },
     );
@@ -71,6 +84,7 @@ function useWailsNotifications() {
       offCrashed?.();
       offBridgeFailed?.();
       offBridgeDied?.();
+      offBridgeRecovered?.();
     };
   }, [addNotification]);
 }

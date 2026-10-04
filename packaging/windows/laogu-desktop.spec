@@ -17,6 +17,15 @@ a = Analysis(
         # configured automation run. PyInstaller cannot discover that dynamic
         # import without an explicit entry.
         "agent.x_automation_engine",
+        "agent.automation_safety",
+        "agent.history_pool",
+        "agent.cloud_dedup",
+        "agent.group_manager",
+        "agent.rotation_scheduler",
+        "agent.telegram_notifier",
+        "agent.value_parsing",
+        "agent.blacklist_filter",
+        "agent.authenticity_learner",
         "playwright.async_api",
         "ntsecuritycon",
         "websocket",

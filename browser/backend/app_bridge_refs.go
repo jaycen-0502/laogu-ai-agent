@@ -38,6 +38,28 @@ func (a *App) bindProfileProxyBridge(profileId string, ref profileProxyBridgeRef
 	a.bridgeMu.Unlock()
 }
 
+// bindProfileProxyBridgeIfMissing keeps an acquired bridge alive for a profile
+// that was already running when this backend attached to it. A normal running
+// profile already owns a bridge reference, in which case the temporary acquire
+// performed for a native new-window fallback is released by its caller.
+func (a *App) bindProfileProxyBridgeIfMissing(profileId string, ref profileProxyBridgeRef) bool {
+	profileId = strings.TrimSpace(profileId)
+	if profileId == "" || !ref.valid() {
+		return false
+	}
+
+	a.bridgeMu.Lock()
+	defer a.bridgeMu.Unlock()
+	if a.profileBridgeRefs == nil {
+		a.profileBridgeRefs = make(map[string]profileProxyBridgeRef)
+	}
+	if existing := a.profileBridgeRefs[profileId]; existing.valid() {
+		return false
+	}
+	a.profileBridgeRefs[profileId] = ref
+	return true
+}
+
 func (a *App) releaseProfileProxyBridge(profileId string) {
 	profileId = strings.TrimSpace(profileId)
 	if profileId == "" {

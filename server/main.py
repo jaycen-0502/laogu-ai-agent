@@ -329,7 +329,14 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
             declared_length = int(length) if length else None
         except ValueError:
             return secure_response(400, "Invalid Content-Length")
-        request_limit = settings.app_update_max_bytes if request.url.path == "/api/v1/admin/releases/publish" else settings.max_request_bytes
+        request_limit = (
+            settings.app_update_max_bytes
+            if (
+                request.url.path in {"/api/v1/admin/releases/publish", "/api/admin/releases/publish"}
+                or request.url.path.endswith("/admin/releases/publish")
+            )
+            else settings.max_request_bytes
+        )
         if declared_length is not None and declared_length > request_limit:
             return secure_response(413, "Request payload too large")
         if request.method in {"POST", "PUT", "PATCH"} and "application/json" in request.headers.get("content-type", "").lower():

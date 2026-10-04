@@ -103,7 +103,7 @@ def test_alembic_upgrade_downgrade_upgrade_and_legacy_token_migration(tmp_path, 
         migrated = db.execute("SELECT agent_id, token_hash, status FROM agent_tokens").fetchone()
         assert migrated == ("a1", legacy_hash, "ACTIVE")
         assert db.execute("SELECT token_hash FROM agents WHERE id='a1'").fetchone()[0] == ""
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] in ("0020_agent_engine_assignments", "0021_proxy_metadata", "0022_studio_visited_targets")
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] in ("0020_agent_engine_assignments", "0021_proxy_metadata", "0022_studio_visited_targets", "0023_app_releases")
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='automation_metrics'").fetchone() == ("automation_metrics",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scripts'").fetchone() == ("scripts",)
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_providers'").fetchone() == ("ai_providers",)
@@ -393,6 +393,13 @@ def test_rate_limit_uses_shared_task_bucket_and_request_size_limit():
     assert oversized.status_code == 413
     assert oversized.json() == {"detail": "Request payload too large"}
     assert oversized.headers["x-frame-options"] == "DENY"
+
+    # Ensure release publish endpoints allow large payloads up to app_update_max_bytes
+    large_header = {"content-length": str(10 * 1024 * 1024), "Authorization": f"Bearer {boot['access_token']}"}
+    for publish_path in ("/api/v1/admin/releases/publish", "/api/admin/releases/publish"):
+        resp = client.post(publish_path, headers=large_header)
+        assert resp.status_code != 413
+
 
 
 def test_health_and_readiness_do_not_expose_sensitive_details():

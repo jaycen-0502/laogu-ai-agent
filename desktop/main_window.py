@@ -5738,11 +5738,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("老谷自动化控制中心")
         self.setMinimumSize(1160, 800)
         self.resize(1320, 900)
-
-        help_menu = self.menuBar().addMenu("帮助")
+        self.menuBar().hide()
         self.check_update_action = QAction("检查更新", self)
-        self.check_update_action.setStatusTip("检查控制中心在线版本更新")
-        help_menu.addAction(self.check_update_action)
 
         root = QWidget()
         root.setObjectName("rootWidget")  # <--- 重要：限制灰色背景范围，解决白底灰色穿透阴影问题
@@ -5803,6 +5800,13 @@ class MainWindow(QMainWindow):
         self.blacklist_config_button.clicked.connect(self._open_blacklist_config)
         self._update_blacklist_button_state()
         status_box.addWidget(self.blacklist_config_button)
+
+        self.check_update_button = QPushButton("🔄 检查更新")
+        self.check_update_button.setObjectName("checkUpdateButton")
+        self.check_update_button.setMinimumHeight(32)
+        self.check_update_button.setToolTip("检查控制中心在线版本更新")
+        self.check_update_button.clicked.connect(self.check_for_updates)
+        status_box.addWidget(self.check_update_button)
 
         header_layout.addLayout(status_box)
         root_layout.addWidget(header)
@@ -6202,11 +6206,15 @@ class MainWindow(QMainWindow):
         return configured.rstrip("/") or "https://api.jaycwl.org"
 
     def check_for_updates(self) -> None:
-        """Start an online release check from the Help menu."""
+        """Start an online release check."""
         if self._update_check_worker is not None and self._update_check_worker.isRunning():
             return
         server_url = self._update_server_url()
-        self.check_update_action.setEnabled(False)
+        if hasattr(self, "check_update_button"):
+            self.check_update_button.setEnabled(False)
+            self.check_update_button.setText("🔄 检查中…")
+        if hasattr(self, "check_update_action"):
+            self.check_update_action.setEnabled(False)
         self.statusBar().showMessage("正在检查在线版本…")
         worker = UpdateCheckWorker(server_url, VERSION, parent=self)
         self._update_check_worker = worker
@@ -6220,8 +6228,8 @@ class MainWindow(QMainWindow):
             self._on_update_check_failed("更新服务器返回了无效数据")
             return
         if not release.has_update:
-            self.statusBar().showMessage("当前已是最新版本", 4000)
-            QMessageBox.information(self, "检查更新", "当前已是最新版本")
+            self.statusBar().showMessage(f"当前已是最新版本 ({VERSION})", 4000)
+            QMessageBox.information(self, "检查更新", f"当前已是最新版本（{VERSION}）\n暂无可用更新。")
             return
         if release.latest_version in UpdateNoticeDialog.ignored_versions:
             self.statusBar().showMessage(f"已忽略版本 {release.latest_version}", 4000)
@@ -6233,11 +6241,18 @@ class MainWindow(QMainWindow):
 
     def _on_update_check_failed(self, message: str) -> None:
         self.statusBar().showMessage("在线版本检查失败", 5000)
-        QMessageBox.warning(self, "检查更新失败", str(message))
+        display_msg = str(message)
+        if "403" in display_msg:
+            display_msg = "更新服务访问受限（HTTP 403），可能受到网络安全策略拦截，请检查网络设置或稍后重试。"
+        QMessageBox.warning(self, "检查更新", display_msg)
 
     def _on_update_check_thread_finished(self) -> None:
         worker = self._update_check_worker
-        self.check_update_action.setEnabled(True)
+        if hasattr(self, "check_update_button"):
+            self.check_update_button.setEnabled(True)
+            self.check_update_button.setText("🔄 检查更新")
+        if hasattr(self, "check_update_action"):
+            self.check_update_action.setEnabled(True)
         if worker is not None:
             worker.deleteLater()
         self._update_check_worker = None

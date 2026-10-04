@@ -31,6 +31,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Laogu-Desktop/0.21.92"
+)
+
 
 @dataclass(frozen=True)
 class ReleaseInfo:
@@ -98,7 +103,11 @@ class UpdateCheckWorker(QThread):
             return
         query = urlencode({"current_version": self.current_version, "channel": self.channel})
         endpoint = f"{self.server_url}/api/v1/app/check-update?{query}"
-        request = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
+        request = Request(
+            endpoint,
+            headers={"Accept": "application/json", "User-Agent": DEFAULT_USER_AGENT},
+            method="GET",
+        )
         try:
             with urlopen(request, timeout=6) as response:
                 status = int(getattr(response, "status", 200) or 200)
@@ -166,7 +175,14 @@ class DownloadWorker(QThread):
             except FileNotFoundError:
                 pass
 
-            request = Request(url, headers={"Accept": "application/zip, application/octet-stream"}, method="GET")
+            request = Request(
+                url,
+                headers={
+                    "Accept": "application/zip, application/octet-stream",
+                    "User-Agent": DEFAULT_USER_AGENT,
+                },
+                method="GET",
+            )
             digest = hashlib.sha256()
             downloaded = 0
             with urlopen(request, timeout=30) as response, temporary.open("wb") as output:

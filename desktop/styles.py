@@ -72,6 +72,16 @@ QPushButton#reauthButton {
     border: 1px solid #FEC84B; border-radius: 8px; font-size: 12px; font-weight: 700;
 }
 QPushButton#reauthButton:hover { color: #7A2E0E; background: #FEF0C7; border-color: #F79009; }
+QPushButton#telegramButton, QPushButton#studioTokenButton, QPushButton#blacklistButton, QPushButton#checkUpdateButton {
+    min-height: 32px; padding: 0 12px; color: #344054; background: #FFFFFF;
+    border: 1px solid #DDE4EE; border-radius: 8px; font-size: 12px; font-weight: 600;
+}
+QPushButton#telegramButton:hover, QPushButton#studioTokenButton:hover, QPushButton#blacklistButton:hover, QPushButton#checkUpdateButton:hover {
+    color: #172033; background: #F8FAFC; border-color: #B4C3D4;
+}
+QPushButton#checkUpdateButton:disabled {
+    color: #98A2B3; background: #F2F4F7; border-color: #E4E7EC;
+}
 QPushButton#miniRunButton, QPushButton#miniStopButton, QPushButton#miniConfigButton, QPushButton#miniDeleteButton {
     min-height: 28px; padding: 0 10px; border-radius: 6px; font-size: 12px; font-weight: 600;
 }

@@ -16,6 +16,9 @@ a = Analysis(
         # Loaded with importlib by agent.script_updater immediately before a
         # configured automation run. PyInstaller cannot discover that dynamic
         # import without an explicit entry.
+        "common.crypto_engine",
+        "cryptography",
+        "cryptography.hazmat.primitives.ciphers.aead",
         "agent.x_automation_engine",
         "agent.automation_safety",
         "agent.history_pool",

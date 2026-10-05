@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 import sys
 
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -10,7 +11,29 @@ from .startup import import_existing_credentials, standalone_agent_processes, st
 from .styles import APP_STYLE
 
 
+def _cleanup_pending_updater_replacements() -> None:
+    """If a previous OTA update wrote updater.exe.new or updater.py.new, promote them now."""
+    base_dir = (
+        Path(sys.executable).resolve().parent
+        if getattr(sys, "frozen", False)
+        else Path(__file__).resolve().parent.parent
+    )
+    import time
+
+    for target_name in ("updater.exe", "updater.py"):
+        new_file = base_dir / f"{target_name}.new"
+        target_file = base_dir / target_name
+        if new_file.is_file():
+            for _ in range(10):
+                try:
+                    new_file.replace(target_file)
+                    break
+                except Exception:
+                    time.sleep(0.2)
+
+
 def main() -> int:
+    _cleanup_pending_updater_replacements()
     configure_windows_app_identity()
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Laogu 账号资产控制中心")
@@ -64,6 +87,19 @@ if __name__ == "__main__":
         exit_code = exc.code if isinstance(exc.code, int) else 0
     except Exception:
         exit_code = 1
+        try:
+            log_dir = (
+                Path(sys.executable).resolve().parent
+                if getattr(sys, "frozen", False)
+                else Path(__file__).resolve().parent.parent
+            ) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            import traceback
+            from datetime import datetime
+            with (log_dir / "startup_crash.log").open("a", encoding="utf-8") as f:
+                f.write(f"[{datetime.now()}] Startup crash:\n{traceback.format_exc()}\n")
+        except Exception:
+            pass
     finally:
         # 彻底在操作系统级别终止进程，避免底层线程池或网络连接死锁导致任务管理器中进程假死残留
         import os

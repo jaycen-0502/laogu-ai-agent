@@ -31,9 +31,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from common.release import VERSION
+
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Laogu-Desktop/0.21.92"
+    f"(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Laogu-Desktop/{VERSION}"
 )
 
 
@@ -395,8 +397,28 @@ class UpdateNoticeDialog(QDialog):
             QMessageBox.warning(self, "无法重启", "未找到 updater.exe，请手动重启应用完成升级。")
             return False
         command.extend([str(os.getpid()), str(zip_path), str(updater_dir)])
+        flags = 0
+        startupinfo = None
+        if sys.platform == "win32":
+            flags = (
+                subprocess.CREATE_NO_WINDOW
+                | subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0  # SW_HIDE
         try:
-            subprocess.Popen(command, cwd=str(updater_dir), close_fds=True)
+            subprocess.Popen(
+                command,
+                cwd=str(updater_dir),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=flags,
+                startupinfo=startupinfo,
+            )
         except OSError as exc:
             QMessageBox.warning(self, "无法重启", f"启动升级程序失败：{exc}")
             return False

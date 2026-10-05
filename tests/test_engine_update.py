@@ -5,6 +5,7 @@ import importlib
 
 from fastapi.testclient import TestClient
 
+from common.crypto_engine import decrypt_engine_code, is_encrypted_engine
 from server.config import ServerSettings
 from server import engine_update_api
 from server.main import create_app
@@ -117,7 +118,9 @@ def test_admin_can_publish_and_agent_can_select_named_engine(monkeypatch, tmp_pa
     assert manifest.json()["trusted_by_admin"] is True
     downloaded = client.get("/api/agent/engines/new-account/source", headers=agent_headers)
     assert downloaded.status_code == 200
-    assert downloaded.content == source
+    assert is_encrypted_engine(downloaded.content) is True
+    assert decrypt_engine_code(downloaded.content) == source
+    assert downloaded.headers["x-laogu-engine-sha256"] == manifest.json()["sha256"]
 
 
 def test_admin_can_assign_engines_by_runtime_id(monkeypatch, tmp_path):

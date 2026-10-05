@@ -5735,7 +5735,7 @@ class MainWindow(QMainWindow):
             self._scroll_main_log_to_bottom_and_resume()
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("老谷自动化控制中心")
+        self.setWindowTitle(f"老谷自动化控制中心 v{VERSION}")
         self.setMinimumSize(1160, 800)
         self.resize(1320, 900)
         self.menuBar().hide()
@@ -5758,7 +5758,24 @@ class MainWindow(QMainWindow):
         
         title_box = QVBoxLayout()
         title_box.setSpacing(3)
-        title_box.addWidget(QLabel("老谷自动化控制中心", objectName="title"))
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        title_row.addWidget(QLabel("老谷自动化控制中心", objectName="title"))
+        version_badge = QLabel(f"v{VERSION}", objectName="headerVersionBadge")
+        version_badge.setStyleSheet(
+            "QLabel {"
+            "  color: #10b981;"
+            "  background: rgba(16, 185, 129, 0.12);"
+            "  border: 1px solid rgba(16, 185, 129, 0.3);"
+            "  border-radius: 9px;"
+            "  padding: 1px 7px;"
+            "  font-size: 11px;"
+            "  font-weight: 600;"
+            "}"
+        )
+        title_row.addWidget(version_badge)
+        title_row.addStretch(1)
+        title_box.addLayout(title_row)
         title_box.addWidget(QLabel("浏览器档案 · 账号状态 · 自动化任务", objectName="subtitle"))
         header_layout.addLayout(title_box)
         header_layout.addStretch(1)

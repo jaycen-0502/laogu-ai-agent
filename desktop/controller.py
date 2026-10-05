@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, Future
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -17,6 +18,8 @@ import time
 
 import urllib.request
 from uuid import uuid4
+
+from common.crypto_engine import decrypt_engine_code, is_encrypted_engine
 
 from agent.account_discovery import AccountDiscovery
 from agent.account_registry import AccountRecord, AccountRegistry
@@ -2160,11 +2163,19 @@ class DesktopController:
         active_path = cache_dir / str(state.get("active_path") or "")
         try:
             active_path.resolve().relative_to(cache_dir.resolve())
-            installed_ok = bool(
-                active_sha
-                and active_path.is_file()
-                and get_file_sha256(active_path) == active_sha
-            )
+            if active_sha and active_path.is_file():
+                file_hash = get_file_sha256(active_path)
+                if file_hash == active_sha:
+                    installed_ok = True
+                else:
+                    raw = active_path.read_bytes()
+                    if is_encrypted_engine(raw):
+                        plain = decrypt_engine_code(raw)
+                        installed_ok = hashlib.sha256(plain).hexdigest() == active_sha
+                    else:
+                        installed_ok = False
+            else:
+                installed_ok = False
         except (OSError, ValueError):
             installed_ok = False
         remote_sha = str(manifest.get("sha256") or "").lower()

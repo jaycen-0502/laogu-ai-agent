@@ -396,53 +396,83 @@ export function ReleasesPage({ user }: { user: User }) {
         )}
       </section>
 
-      {/* 删除确认弹窗 */}
+      {/* 安装包清理确认弹窗 */}
       {deleteTarget && (
         <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: "rgba(0, 0, 0, 0.6)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
+          className="release-modal-overlay"
+          onClick={() => {
+            if (!deleting) setDeleteTarget(null);
           }}
         >
           <div
-            className="panel"
-            style={{
-              width: "440px",
-              padding: "24px",
-              backgroundColor: "var(--bg-surface, #1e1e2d)",
-              borderRadius: "8px",
-              boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-            }}
+            className="release-modal-card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
           >
-            <h3 style={{ marginTop: 0, color: "#ef4444" }}>确认清理安装包文件？</h3>
-            <p style={{ lineHeight: "1.6", margin: "16px 0" }}>
-              您确定要从服务器硬盘中物理删除版本{" "}
-              <strong>{deleteTarget.version}</strong> 的安装包吗？
-            </p>
-            <p className="muted" style={{ fontSize: "13px" }}>
-              - 该操作将立即释放约{" "}
-              <strong>{formatSize(deleteTarget.file_size)}</strong> 硬盘空间。<br />
-              - 该版本的历史更新日志仍会永久保留。<br />
-              - 删除后客户端将无法再下载此历史版本的包。
-            </p>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "flex-end",
-                gap: "12px",
-                marginTop: "24px",
-              }}
-            >
+            <div className="release-modal-header">
+              <div className="release-modal-icon" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18" />
+                  <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </div>
+              <div className="release-modal-title-box">
+                <h3>确认清理安装包文件？</h3>
+                <p>物理删除服务器历史包以释放存储空间</p>
+              </div>
               <button
                 type="button"
+                className="release-modal-close"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                title="关闭"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="release-modal-body">
+              <p style={{ margin: "0 0 14px", lineHeight: "1.6" }}>
+                您确定要从服务器硬盘中物理删除版本{" "}
+                <span className="release-modal-version-tag">
+                  v{deleteTarget.version}
+                </span>
+                <span className="release-modal-channel-badge">
+                  {deleteTarget.channel}
+                </span>{" "}
+                的升级安装包吗？
+              </p>
+
+              <div className="release-modal-info-box">
+                <div className="release-modal-info-item">
+                  <span style={{ color: "#059669", fontWeight: 600 }}>• 释放空间：</span>
+                  <span>
+                    将立即释放服务器约{" "}
+                    <strong style={{ color: "#0f172a" }}>
+                      {formatSize(deleteTarget.file_size)}
+                    </strong>{" "}
+                    物理硬盘空间
+                  </span>
+                </div>
+                <div className="release-modal-info-item">
+                  <span style={{ color: "#0284c7", fontWeight: 600 }}>• 数据存档：</span>
+                  <span>该版本的更新日志及发布记录仍会永久留存展示</span>
+                </div>
+                <div className="release-modal-info-item">
+                  <span style={{ color: "#e11d48", fontWeight: 600 }}>• 影响范围：</span>
+                  <span>清理完成后客户端将无法再直接下载该历史版本的包</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="release-modal-actions">
+              <button
+                type="button"
+                className="release-btn-cancel"
                 disabled={deleting}
                 onClick={() => setDeleteTarget(null)}
               >
@@ -450,7 +480,7 @@ export function ReleasesPage({ user }: { user: User }) {
               </button>
               <button
                 type="button"
-                className="danger"
+                className="release-btn-danger"
                 disabled={deleting}
                 onClick={() => void confirmDeletePackage()}
               >

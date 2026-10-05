@@ -111,7 +111,8 @@ def test_sync_redownloads_a_damaged_only_cached_version(tmp_path: Path):
     active.write_bytes(b"damaged")
 
     assert script_updater.sync_engine_from_server(client, tmp_path) is True
-    assert active.read_bytes() == source
+    assert script_updater.decrypt_engine_code(active.read_bytes()) == source
+    assert script_updater.is_encrypted_engine(active.read_bytes()) is True
     assert client.downloads == 2
 
 
@@ -178,3 +179,82 @@ def test_untrusted_engine_still_rejects_system_modules(tmp_path: Path):
 
     with pytest.raises(script_updater.EngineUpdateError, match="blocked import"):
         script_updater.install_engine_update(manifest, source, tmp_path)
+
+
+def test_encrypted_engine_disk_is_gibberish_and_unparseable(tmp_path: Path):
+    source = (
+        b"# proprietary secret algorithm\n"
+        b"SECRET_KEY = 'super_confidential_token'\n"
+        b"class XAutomationEngine:\n"
+        b"    async def run(self):\n"
+        b"        return SECRET_KEY\n"
+    )
+    digest = hashlib.sha256(source).hexdigest()
+    manifest = {
+        "version": "2.0.0",
+        "sha256": digest,
+        "size": len(source),
+        "read_only": True,
+        "trusted_by_admin": True,
+    }
+
+    assert script_updater.install_engine_update(manifest, source, tmp_path) is True
+    state = script_updater.read_engine_state(tmp_path)
+    disk_file = tmp_path / state["active_path"]
+
+    # 1. Verify file on disk is encrypted binary gibberish
+    content = disk_file.read_bytes()
+    assert b"SECRET_KEY" not in content
+    assert b"super_confidential_token" not in content
+    assert script_updater.is_encrypted_engine(content) is True
+
+    # 2. Verify that trying to parse the file on disk as Python fails
+    with pytest.raises(SyntaxError):
+        compile(content, "disk.py", "exec")
+
+    # 3. Verify that the runtime memory loader can decrypt and run it flawlessly
+    engine_cls = script_updater.get_cached_automation_engine_class(tmp_path)
+    assert engine_cls is not None
+    instance = engine_cls()
+    import asyncio
+    res = asyncio.run(instance.run())
+    assert res == "super_confidential_token"
+
+
+def test_legacy_plaintext_file_auto_migrates_to_encrypted(tmp_path: Path):
+    source = (
+        b"class XAutomationEngine:\n"
+        b"    async def run(self):\n"
+        b"        return 'migrated'\n"
+    )
+    digest = hashlib.sha256(source).hexdigest()
+    manifest = {
+        "version": "1.0.0",
+        "sha256": digest,
+        "size": len(source),
+        "read_only": True,
+        "trusted_by_admin": True,
+    }
+
+    # Simulate legacy install by writing plaintext directly
+    root = script_updater._engine_root(tmp_path)
+    engine_path = root / "versions" / "1.0.0-legacy" / "x_automation_engine.py"
+    engine_path.parent.mkdir(parents=True, exist_ok=True)
+    engine_path.write_bytes(source)
+    (root / "active.json").write_text(json.dumps({
+        "engine_id": "default",
+        "active_version": "1.0.0",
+        "active_sha256": digest,
+        "active_path": str(engine_path.relative_to(root)),
+        "trusted_by_admin": True,
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Before loading, file is plaintext
+    assert script_updater.is_encrypted_engine(engine_path.read_bytes()) is False
+
+    # Loading it automatically executes and migrates it to encrypted ciphertext on disk
+    engine_cls = script_updater.get_cached_automation_engine_class(tmp_path)
+    assert engine_cls is not None
+    # Now file on disk is encrypted!
+    assert script_updater.is_encrypted_engine(engine_path.read_bytes()) is True
+

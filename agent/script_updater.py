@@ -13,9 +13,12 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import types
 from typing import Any
 import urllib.error
 import urllib.request
+
+from common.crypto_engine import decrypt_engine_code, encrypt_engine_code, is_encrypted_engine
 
 
 logger = logging.getLogger("laogu-ai-agent.updater")
@@ -103,22 +106,48 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     _atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
-def _load_module(path: Path, digest: str):
+def _load_module_from_source(code_bytes: bytes, digest: str):
     name = f"laogu_dynamic_x_engine_{digest[:16]}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise EngineUpdateError("Unable to create the engine module loader")
-    module = importlib.util.module_from_spec(spec)
+    try:
+        text = code_bytes.decode("utf-8")
+        code_obj = compile(text, f"<protected_engine_{digest[:8]}>", "exec")
+    except Exception as exc:
+        raise EngineUpdateError(f"Engine source compilation failed: {exc}") from exc
+
+    module = types.ModuleType(name)
+    module.__file__ = f"<protected_engine_{digest[:8]}>"
+    module.__package__ = "agent"
     sys.modules[name] = module
     try:
-        spec.loader.exec_module(module)
-        engine_class = getattr(module, "XAutomationEngine")
+        exec(code_obj, module.__dict__)
+        engine_class = getattr(module, "XAutomationEngine", None)
         if not isinstance(engine_class, type) or not callable(getattr(engine_class, "run", None)):
             raise EngineUpdateError("Engine does not expose a compatible XAutomationEngine")
         return module, engine_class
     except Exception:
         sys.modules.pop(name, None)
         raise
+
+
+def _load_module(path: Path, digest: str):
+    try:
+        raw_bytes = path.read_bytes()
+    except OSError as exc:
+        raise EngineUpdateError(f"Unable to read engine file: {exc}") from exc
+
+    try:
+        code_bytes = decrypt_engine_code(raw_bytes)
+    except Exception as exc:
+        raise EngineUpdateError(f"Failed to decrypt cached engine: {exc}") from exc
+
+    # If the file on disk was legacy plaintext, automatically migrate it to ciphertext on disk
+    if not is_encrypted_engine(raw_bytes):
+        try:
+            _atomic_write(path, encrypt_engine_code(raw_bytes))
+        except Exception:
+            pass
+
+    return _load_module_from_source(code_bytes, digest)
 
 
 def _engine_root(cache_dir: str | os.PathLike[str], engine_id: str = "default") -> Path:
@@ -149,8 +178,15 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
             raise EngineUpdateError("Engine source size does not match its manifest")
     if hashlib.sha256(source).hexdigest() != digest:
         raise EngineUpdateError("Engine SHA-256 verification failed")
+
+    # In-memory decryption & validation
+    try:
+        plaintext_code = decrypt_engine_code(source)
+    except Exception as exc:
+        raise EngineUpdateError(f"Engine decryption failed: {exc}") from exc
+
     trusted_by_admin = manifest.get("trusted_by_admin") is True
-    _validate_code(source, trusted_by_admin=trusted_by_admin)
+    _validate_code(plaintext_code, trusted_by_admin=trusted_by_admin)
 
     root = _engine_root(cache_dir, engine_id)
     engine_path = root / "versions" / f"{version}-{digest[:12]}" / "x_automation_engine.py"
@@ -163,9 +199,12 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
     ):
         return False
 
-    _atomic_write(engine_path, source)
+    # Ensure disk storage is ALWAYS encrypted (pure ciphertext)
+    disk_payload = source if is_encrypted_engine(source) else encrypt_engine_code(plaintext_code)
+    _atomic_write(engine_path, disk_payload)
+
     try:
-        _load_module(engine_path, digest)
+        _load_module_from_source(plaintext_code, digest)
     except Exception as exc:
         engine_path.unlink(missing_ok=True)
         raise EngineUpdateError(f"Engine compatibility check failed: {exc}") from exc
@@ -189,6 +228,7 @@ def install_engine_update(manifest: dict[str, Any], source: bytes, cache_dir: st
             "previous_sha256": previous_sha256,
             "previous_trusted_by_admin": previous_trusted_by_admin,
             "previous_security_warnings": previous_security_warnings,
+            "is_encrypted": True,
         },
     )
     return True
@@ -250,9 +290,13 @@ def get_cached_automation_engine_class(cache_dir: str | os.PathLike[str], engine
         if path is None or not _SHA256.fullmatch(expected):
             continue
         try:
+            raw_bytes = path.read_bytes()
             if get_file_sha256(path) != expected:
-                raise EngineUpdateError("Cached engine integrity check failed")
-            _validate_code(path.read_bytes(), trusted_by_admin=trusted_by_admin)
+                plain_check = decrypt_engine_code(raw_bytes)
+                if hashlib.sha256(plain_check).hexdigest() != expected:
+                    raise EngineUpdateError("Cached engine integrity check failed")
+            plain_code = decrypt_engine_code(raw_bytes)
+            _validate_code(plain_code, trusted_by_admin=trusted_by_admin)
             _, engine_class = _load_module(path, expected)
         except Exception as exc:
             last_error = exc

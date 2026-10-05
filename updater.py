@@ -16,7 +16,9 @@ from pathlib import Path
 import posixpath
 import shutil
 import subprocess
+import sys
 import time
+import traceback
 import zipfile
 
 
@@ -33,6 +35,24 @@ PROTECTED_TOP_LEVEL = {
 }
 _PROTECTED_TOP_LEVEL_CASEFOLD = {item.casefold() for item in PROTECTED_TOP_LEVEL}
 WAIT_TIMEOUT_SECONDS = 15.0
+
+
+def _log(target_dir: Path | None, message: str) -> None:
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{timestamp}] {message}\n"
+    try:
+        if sys.stdout is not None:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+    except Exception:
+        pass
+    if target_dir is not None:
+        try:
+            log_file = target_dir / "updater.log"
+            with log_file.open("a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
 
 
 def _process_exists(pid: int) -> bool:
@@ -62,6 +82,8 @@ def wait_for_parent_exit(parent_pid: int, timeout: float = WAIT_TIMEOUT_SECONDS)
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.25)
+    # Extra brief grace period for Windows kernel handle closure
+    time.sleep(0.5)
     return True
 
 
@@ -119,40 +141,104 @@ def apply_update(zip_path: Path, target_dir: Path) -> None:
                         temp_new = destination.with_suffix(destination.suffix + ".new")
                         with archive.open(info, "r") as source, temp_new.open("wb") as output:
                             shutil.copyfileobj(source, output, length=128 * 1024)
+                        _log(target_dir, f"Locked self-file {destination.name}, wrote to {temp_new.name}")
                     except Exception:
                         pass
                     continue
                 raise
 
 
-def relaunch_client(target_dir: Path) -> subprocess.Popen:
+def relaunch_client(target_dir: Path) -> subprocess.Popen | None:
     executable = target_dir / "Laogu-Desktop.exe"
     if not executable.is_file():
         raise FileNotFoundError(f"Client executable not found: {executable}")
-    flags = 0
+
+    try:
+        os.chdir(str(target_dir))
+    except Exception:
+        pass
+
+    # 1. On Windows, use CreateProcess (subprocess.Popen) with detached flags and SW_SHOWNORMAL
     if sys.platform == "win32":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-    return subprocess.Popen(
+        try:
+            flags = (
+                subprocess.DETACHED_PROCESS
+                | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 1  # SW_SHOWNORMAL (1) - ensures the GUI window is visible!
+            proc = subprocess.Popen(
+                [str(executable)],
+                cwd=str(target_dir),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=flags,
+                startupinfo=startupinfo,
+            )
+            _log(target_dir, f"Relaunched via subprocess.Popen (PID={proc.pid}): {executable}")
+            # Give Windows kernel time to spin up the process before updater exits
+            time.sleep(1.2)
+            exit_code = proc.poll()
+            if exit_code is not None:
+                _log(target_dir, f"Warning: relaunched process exited immediately with code {exit_code}")
+            else:
+                _log(target_dir, f"Relaunched process (PID={proc.pid}) is running healthy")
+            return proc
+        except Exception as exc:
+            _log(target_dir, f"subprocess.Popen failed ({exc}), falling back to os.startfile")
+
+    # 2. Fallback to os.startfile (ShellExecute)
+    if hasattr(os, "startfile"):
+        try:
+            os.startfile(str(executable))
+            _log(target_dir, f"Relaunched via os.startfile: {executable}")
+            time.sleep(1.2)
+            return None
+        except Exception as exc:
+            _log(target_dir, f"os.startfile failed: {exc}")
+            raise
+
+    # 3. Non-Windows POSIX fallback
+    proc = subprocess.Popen(
         [str(executable)],
         cwd=str(target_dir),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         close_fds=True,
-        creationflags=flags,
     )
+    _log(target_dir, f"Relaunched via Popen: {executable}")
+    time.sleep(1.0)
+    return proc
 
 
 def run_update(parent_pid: int, zip_path: Path, target_dir: Path) -> int:
+    _log(target_dir, f"Updater started. parent_pid={parent_pid}, zip={zip_path.name}, target={target_dir}")
     if not wait_for_parent_exit(parent_pid):
-        return 2
+        _log(target_dir, f"Warning: parent pid {parent_pid} wait timed out, proceeding anyway")
+    else:
+        _log(target_dir, f"Parent pid {parent_pid} exited cleanly")
+
     if not zip_path.is_file():
+        _log(target_dir, f"Error: update archive not found at {zip_path}")
         return 3
     try:
+        _log(target_dir, "Applying update archive entries...")
         apply_update(zip_path, target_dir)
+        _log(target_dir, "Update extracted successfully")
+        _log(target_dir, "Relaunching client...")
         relaunch_client(target_dir)
-    except (OSError, ValueError, zipfile.BadZipFile):
+        _log(target_dir, "Client relaunch triggered successfully")
+    except Exception as exc:
+        _log(target_dir, f"Update execution failed: {exc}\n{traceback.format_exc()}")
         return 4
     finally:
         try:
             zip_path.unlink()
+            _log(target_dir, f"Cleaned up {zip_path.name}")
         except OSError:
             pass
     return 0

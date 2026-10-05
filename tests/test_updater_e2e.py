@@ -150,3 +150,65 @@ def test_updater_locked_self_executable_handled(tmp_path: Path, monkeypatch):
     # updater.exe.new was written
     assert (target / "updater.exe.new").read_text(encoding="utf-8") == "new-updater"
 
+
+def test_updater_relaunch_client(tmp_path: Path, monkeypatch):
+    target = tmp_path / "app"
+    target.mkdir()
+    desktop_exe = target / "Laogu-Desktop.exe"
+    desktop_exe.write_text("dummy-binary", encoding="utf-8")
+
+    relaunched = []
+    class DummyProc:
+        pid = 12345
+        def poll(self):
+            return None
+
+    def mock_popen(args, **kwargs):
+        relaunched.append(args[0])
+        return DummyProc()
+
+    def mock_startfile(filepath):
+        relaunched.append(filepath)
+
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+    if hasattr(os, "startfile"):
+        monkeypatch.setattr(os, "startfile", mock_startfile)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    updater.relaunch_client(target)
+    assert len(relaunched) == 1
+    assert "Laogu-Desktop.exe" in str(relaunched[0])
+
+
+def test_updater_run_update_flow(tmp_path: Path, monkeypatch):
+    target = tmp_path / "app"
+    target.mkdir()
+    desktop_exe = target / "Laogu-Desktop.exe"
+    desktop_exe.write_text("old-version", encoding="utf-8")
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as z:
+        z.writestr("Laogu-Desktop.exe", "new-version")
+
+    zip_file = tmp_path / "test_update.zip"
+    zip_file.write_bytes(zip_buf.getvalue())
+
+    relaunched = []
+    def mock_relaunch(tgt):
+        relaunched.append(tgt)
+        return None
+
+    monkeypatch.setattr(updater, "relaunch_client", mock_relaunch)
+    monkeypatch.setattr(updater, "wait_for_parent_exit", lambda pid: True)
+
+    exit_code = updater.run_update(parent_pid=999999, zip_path=zip_file, target_dir=target)
+    assert exit_code == 0
+    assert desktop_exe.read_text(encoding="utf-8") == "new-version"
+    assert len(relaunched) == 1
+    assert not zip_file.exists()
+    assert (target / "updater.log").exists()
+    log_content = (target / "updater.log").read_text(encoding="utf-8")
+    assert "Update extracted successfully" in log_content
+    assert "Client relaunch triggered successfully" in log_content
+
+

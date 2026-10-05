@@ -18,6 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from common.crypto_engine import decrypt_engine_code, encrypt_engine_code, is_encrypted_engine
 from common.release import VERSION
 
 from .models import Agent, AgentEngineGrant, now
@@ -124,6 +125,7 @@ def _engine_manifest(engine_id: str) -> dict:
         raise HTTPException(status_code=503, detail="Automation engine is unavailable") from exc
     if not source or len(source) > MAX_ENGINE_BYTES:
         raise HTTPException(status_code=503, detail="Automation engine is unavailable")
+    encrypted_payload = source if is_encrypted_engine(source) else encrypt_engine_code(source, deterministic=True)
     stored = _read_manifest(engine_id)
     return {
         "engine_id": engine_id,
@@ -131,10 +133,11 @@ def _engine_manifest(engine_id: str) -> dict:
         "description": str(stored.get("description") or ""),
         "engine": "x_automation_engine",
         "version": str(stored.get("version") or VERSION),
-        "sha256": hashlib.sha256(source).hexdigest(),
+        "sha256": hashlib.sha256(encrypted_payload).hexdigest(),
         "source_url": "/api/agent/engine/source" if engine_id == "default" else f"/api/agent/engines/{engine_id}/source",
-        "size": len(source),
+        "size": len(encrypted_payload),
         "read_only": True,
+        "is_encrypted": True,
         "trusted_by_admin": stored.get("trusted_by_admin", False) is True,
         "security_warnings": list(stored.get("security_warnings") or []),
         "enabled": stored.get("enabled", True) is not False,
@@ -282,7 +285,8 @@ def register_engine_update_routes(app: FastAPI, *, get_db: Callable, current_use
         if engine_id == "default" and not path.is_file():
             path = Path(__file__).resolve().parent.parent / "agent" / "x_automation_engine.py"
         source = path.read_bytes()
-        return Response(content=source, media_type="text/x-python; charset=utf-8", headers={
+        encrypted_payload = source if is_encrypted_engine(source) else encrypt_engine_code(source, deterministic=True)
+        return Response(content=encrypted_payload, media_type="application/octet-stream", headers={
             "Cache-Control": "no-store",
             "X-Laogu-Engine-SHA256": item["sha256"],
             "X-Laogu-Engine-Version": item["version"],
@@ -305,7 +309,8 @@ def register_engine_update_routes(app: FastAPI, *, get_db: Callable, current_use
         if not path.is_file():
             path = Path(__file__).resolve().parent.parent / "agent" / "x_automation_engine.py"
         source = path.read_bytes()
-        return Response(content=source, media_type="text/x-python; charset=utf-8", headers={
+        encrypted_payload = source if is_encrypted_engine(source) else encrypt_engine_code(source, deterministic=True)
+        return Response(content=encrypted_payload, media_type="application/octet-stream", headers={
             "Cache-Control": "no-store",
             "X-Laogu-Engine-SHA256": item["sha256"],
             "X-Laogu-Engine-Version": item["version"],
@@ -321,20 +326,22 @@ def register_engine_update_routes(app: FastAPI, *, get_db: Callable, current_use
         description = (request.headers.get("x-laogu-engine-description") or request.query_params.get("description") or "").strip()[:500]
         if not _VERSION.fullmatch(version):
             raise HTTPException(status_code=422, detail="脚本版本号无效")
-        source = await request.body()
-        security_warnings = _validate_source(source)
-        digest = hashlib.sha256(source).hexdigest()
+        body_bytes = await request.body()
+        plain_source = decrypt_engine_code(body_bytes) if is_encrypted_engine(body_bytes) else body_bytes
+        security_warnings = _validate_source(plain_source)
+        encrypted_payload = body_bytes if is_encrypted_engine(body_bytes) else encrypt_engine_code(plain_source)
+        digest = hashlib.sha256(encrypted_payload).hexdigest()
         target = _engine_dir(engine_id)
         target.mkdir(parents=True, exist_ok=True)
         temporary = target / ".x_automation_engine.py.tmp"
-        temporary.write_bytes(source)
+        temporary.write_bytes(encrypted_payload)
         temporary.replace(_source_path(engine_id))
         _manifest_path(engine_id).write_text(json.dumps({
             "engine_id": engine_id, "name": name, "description": description,
-            "version": version, "sha256": digest, "size": len(source), "enabled": True,
+            "version": version, "sha256": digest, "size": len(encrypted_payload), "enabled": True,
             "read_only": True, "trusted_by_admin": True, "security_warnings": security_warnings,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"ok": True, "engine_id": engine_id, "name": name, "version": version, "sha256": digest, "size": len(source), "trusted_by_admin": True, "security_warnings": security_warnings}
+        return {"ok": True, "engine_id": engine_id, "name": name, "version": version, "sha256": digest, "size": len(encrypted_payload), "trusted_by_admin": True, "security_warnings": security_warnings}
 
     @app.post("/api/admin/engine/{engine_id}/toggle")
     async def toggle_engine(engine_id: str, request: Request, user=Depends(current_user)):

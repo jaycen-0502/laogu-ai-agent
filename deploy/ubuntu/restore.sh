@@ -254,6 +254,16 @@ install -o root -g laogu -m 640 "$WORK/extracted/server.env" /etc/laogu/server.e
 if [ -f "$WORK/extracted/backup-age-recipient.txt" ]; then
   install -o root -g root -m 600 "$WORK/extracted/backup-age-recipient.txt" /etc/laogu/backup-age-recipient.txt
 fi
+if [ -f "$WORK/extracted/license/Laogu-License-Issuer.pem" ] || [ -f "$WORK/extracted/license/Laogu-License-Password.txt" ]; then
+  if [ ! -f "$WORK/extracted/license/Laogu-License-Issuer.pem" ] || [ ! -f "$WORK/extracted/license/Laogu-License-Password.txt" ]; then
+    echo "恢复包中的授权签发材料不完整" >&2
+    exit 1
+  fi
+  install -d -o root -g laogu -m 750 /etc/laogu/license
+  install -o root -g laogu -m 640 "$WORK/extracted/license/Laogu-License-Issuer.pem" /etc/laogu/license/Laogu-License-Issuer.pem
+  install -o root -g laogu -m 640 "$WORK/extracted/license/Laogu-License-Password.txt" /etc/laogu/license/Laogu-License-Password.txt
+  echo "已恢复远程授权签发材料"
+fi
 
 DB_PASSWORD="$(python3 - /etc/laogu/server.env <<'PY'
 import sys
@@ -299,6 +309,7 @@ runuser -u laogu -- bash -c "cd '$APP/web'; npm ci; npm run build"
 test -s "$APP/web/dist/index.html"
 
 install -o root -g root -m 644 "$APP/deploy/ubuntu/laogu-server.service" /etc/systemd/system/laogu-server.service
+install -o root -g root -m 700 "$APP/deploy/ubuntu/laogu-setup.sh" /usr/local/sbin/laogu-setup
 install -d -o root -g root -m 0755 /etc/systemd/system/laogu-server.service.d
 install -o root -g root -m 644 "$APP/deploy/ubuntu/laogu-engine-data.conf" /etc/systemd/system/laogu-server.service.d/engine-data.conf
 install -o root -g root -m 700 "$APP/deploy/ubuntu/laogu-upgrade-from-github" /usr/local/sbin/laogu-upgrade-from-github

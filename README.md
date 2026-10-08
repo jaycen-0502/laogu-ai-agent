@@ -158,6 +158,30 @@ git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent \
 
 - [Ubuntu 24.04 一键部署与灾备恢复](deploy/ubuntu/ONE_CLICK_DEPLOY_ZH_CN.md)
 
+### 菜单式一键向导
+
+如果仓库当前是公开的、不想记住多个命令，可以在新服务器执行下面三步。向导会提供“全新安装、备份恢复、在线升级、验收、Telegram 备份”菜单，并在危险操作前二次确认：
+
+```bash
+apt-get update && apt-get install -y curl ca-certificates
+curl -fsSL --proto '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/jaycen-0502/laogu-ai-agent/main/deploy/ubuntu/laogu-setup.sh \
+  -o /tmp/laogu-setup.sh
+chmod 700 /tmp/laogu-setup.sh
+sudo bash /tmp/laogu-setup.sh --repo jaycen-0502/laogu-ai-agent --ref v0.21.94
+```
+
+生产环境建议固定到已经验收的版本标签，不要直接使用 `main`。私有仓库需要提供只读 GitHub 访问权限；向导只在当前进程中使用 Token，不写入配置文件。
+
+如果仓库是私有的，不要把 Token 写进下载命令；先按上面的 Deploy Key 说明完成只读 SSH 配置，再执行：
+
+```bash
+git clone git@github.com:jaycen-0502/laogu-ai-agent.git /opt/laogu-ai-agent
+cd /opt/laogu-ai-agent
+git checkout v0.21.94
+sudo bash deploy/ubuntu/laogu-setup.sh --repo jaycen-0502/laogu-ai-agent --ref v0.21.94
+```
+
 ## 恢复现有生产数据的一键命令
 
 适用场景：原服务器故障，要把 Telegram 里的最新加密备份恢复到全新备用服务器。
@@ -201,13 +225,13 @@ sudo journalctl -u laogu-backup.service -n 80 --no-pager
 
 ## 灾备
 
-- 每日使用 age 公钥加密 PostgreSQL、精简源码、应用数据和生产配置；
+- 每日使用 age 公钥加密 PostgreSQL、精简源码、应用数据、生产配置和（如果服务器已配置）远程授权签发材料；
 - 加密恢复包上传 Telegram；
 - Telegram 目标必须是配置管理员用户 ID 对应的私人聊天，拒绝群组/频道；
 - 本机自动备份只保留最近两份，第三份及更旧自动删除；
 - Telegram 聊天记录不会由服务器自动删除；
 - 每周检查磁盘、服务、数据库和备份状态；
-- 私钥不提交 GitHub，也不包含在恢复包中。
+- age 解密私钥、Telegram Bot Token 不提交 GitHub，也不放入恢复包；远程授权签发材料只会以 age 加密形式进入备份包。
 
 ### 查找 age 备份公钥
 
@@ -237,7 +261,8 @@ sudo age-keygen -y /root/restore/laogu-backup-recovery.key
 `/etc/laogu/backup-age-recipient.txt`；`age` 私钥必须离线保存，不能发送给助手、提交 GitHub
 或放进 Telegram 备份。仓库只包含查找和备份脚本，不保存任何真实密钥。
 
-恢复包中的 `database.dump` 恢复用户、工作区、Agent、任务、许可证和审计数据；
+恢复包中的 `database.dump` 恢复用户、工作区、Agent、任务、许可证和审计数据；如果备份时存在
+`/etc/laogu/license/` 下的两个签发文件，恢复脚本也会自动恢复它们；
 `server.env` 恢复数据库连接、JWT 和 AI 凭证加密密钥；Telegram Bot Token 不在包内，
 恢复后必须重新输入。HTTPS 证书不搬迁，由 Certbot 在新服务器重新申请。
 
@@ -252,6 +277,7 @@ age 私钥或 TLS 私钥。生产仓库应保持 Private，并使用只读 Deplo
 |---|---|
 | `deploy/ubuntu/install.sh` | 全新服务器安装 |
 | `deploy/ubuntu/restore.sh` | 交互式恢复生产数据 |
+| `deploy/ubuntu/laogu-setup.sh` | 中文菜单式全新安装、恢复、升级和验收向导 |
 | `deploy/ubuntu/verify.sh` | 部署完成验收 |
 | `deploy/ubuntu/install-backup.sh` | Telegram 加密备份和每周检查 |
 | `deploy/ubuntu/ONE_CLICK_DEPLOY_ZH_CN.md` | 完整中文小白教程 |

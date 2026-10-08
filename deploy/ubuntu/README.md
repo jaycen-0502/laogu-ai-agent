@@ -2,10 +2,34 @@
 
 新服务器请优先阅读 [一键部署与灾备恢复教程](./ONE_CLICK_DEPLOY_ZH_CN.md)。
 
+- `laogu-setup.sh`：中文菜单向导，选择全新安装、加密备份恢复、GitHub 升级、验收或 Telegram 备份
 - `install.sh`：全新服务器安装；拒绝覆盖已有系统
 - `restore.sh`：从 age 加密恢复包重建故障服务器
 - `verify.sh`：生产环境验收
 - `install-backup.sh`：安装 Telegram 加密备份和每周检查
+
+## 小白菜单向导
+
+在全新的 Ubuntu 24.04 服务器上执行。公开仓库可以直接下载；私有仓库请先配置只读 Deploy Key，再从已克隆的源码目录运行向导。
+
+```bash
+apt-get update && apt-get install -y curl ca-certificates
+curl -fsSL --proto '=https' --tlsv1.2 \
+  https://raw.githubusercontent.com/jaycen-0502/laogu-ai-agent/main/deploy/ubuntu/laogu-setup.sh \
+  -o /tmp/laogu-setup.sh
+chmod 700 /tmp/laogu-setup.sh
+sudo bash /tmp/laogu-setup.sh --repo jaycen-0502/laogu-ai-agent --ref v0.21.94
+```
+
+菜单含义：
+
+1. 全新安装：只用于空白 Ubuntu 服务器；检测到生产配置会停止。
+2. 从加密备份恢复：自动寻找 `/root/restore` 中的 `.tar.gz.age`、校验文件和 age 私钥。
+3. GitHub 在线升级：先备份数据库，再检查迁移、构建前端和健康状态。
+4. 部署验收：检查 PostgreSQL、Nginx、后端、HTTPS 和 Alembic 版本。
+5. Telegram 备份：配置或重新绑定加密自动备份。
+
+建议使用正式标签（例如 `v0.21.94`），不要让生产系统直接跟随未经测试的开发分支。脚本会在真正安装或恢复前再次确认；恢复脚本还要求输入大写 `RESTORE`。
 
 ## 已部署服务器一键升级
 

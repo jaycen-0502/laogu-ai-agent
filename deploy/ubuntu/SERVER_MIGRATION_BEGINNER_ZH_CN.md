@@ -65,7 +65,7 @@ New-Item -ItemType Directory -Force C:\Laogu-Migration
 | 授权签发私钥 | `/etc/laogu/license/Laogu-License-Issuer.pem` |
 | 私钥密码文件 | `/etc/laogu/license/Laogu-License-Password.txt` |
 
-重要：当前 `laogu-backup.service` 生成的灾备包不会自动包含上述两个授权签发文件。因此，完整迁移时必须单独安全复制它们。缺少它们可能不影响普通页面登录，但会导致在线签发或续期授权不可用。
+当前版本的 `laogu-backup.service` 会在检测到上述两个文件都存在时，将它们放入 age 加密灾备包；Telegram 只收到加密文件，恢复脚本会自动还原。旧版本生成的备份包可能没有这两个文件，遇到旧包时仍需单独安全复制它们。
 
 以下文件不能上传 GitHub、普通网盘、聊天工具或交给其他人：
 
@@ -541,4 +541,3 @@ laogu-backup.service
 - [ ] Cloudflare 已恢复预期代理状态和 `Full (strict)`。
 - [ ] 敏感临时文件已安全清理并保留离线恢复副本。
 - [ ] 旧服务器暂未删除，具备短期回退条件。
-

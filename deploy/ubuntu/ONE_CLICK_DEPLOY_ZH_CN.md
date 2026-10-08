@@ -65,6 +65,15 @@ sudo journalctl -u laogu-backup.service -n 80 --no-pager
 看到 `BACKUP_OK` 且 Telegram 收到文件，才算备份通过。自动备份成功上传后，服务器本地
 `/var/backups/laogu-auto/` 只保留最近两份 `.tar.gz.age` 及其 `.sha256` 文件；Telegram 聊天记录不会自动删除。
 
+如果旧服务器已经配置了远程授权签发材料，备份脚本会先将其放入 age 加密包，再发送到 Telegram：
+
+```text
+/etc/laogu/license/Laogu-License-Issuer.pem
+/etc/laogu/license/Laogu-License-Password.txt
+```
+
+Telegram 不会收到明文私钥。恢复脚本会自动还原这两个文件；旧版本生成的备份包可能不包含它们，遇到旧包时需要单独安全复制。
+
 #### 忘记 age 公钥时怎么找
 
 服务器安装完成后，当前备份公钥保存在 `/etc/laogu/backup-age-recipient.txt`。执行：

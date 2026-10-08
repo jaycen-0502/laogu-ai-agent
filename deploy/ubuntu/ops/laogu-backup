@@ -6,6 +6,9 @@ APP=/opt/laogu-ai-agent
 ENGINE_DATA=/var/lib/laogu/agent-data
 DEST=/var/backups/laogu-auto
 RECIPIENT_FILE=/etc/laogu/backup-age-recipient.txt
+LICENSE_DIR=/etc/laogu/license
+LICENSE_ISSUER="$LICENSE_DIR/Laogu-License-Issuer.pem"
+LICENSE_PASSWORD="$LICENSE_DIR/Laogu-License-Password.txt"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 HOST="$(hostname)"
 WORK=""
@@ -92,32 +95,55 @@ else
   : > "$WORK/engine-data.tar.gz"
 fi
 
-echo "3/7 备份服务器配置"
+echo "3/8 备份远程授权签发材料"
+LICENSE_INCLUDED=0
+if [ -f "$LICENSE_ISSUER" ] || [ -f "$LICENSE_PASSWORD" ]; then
+  if [ ! -f "$LICENSE_ISSUER" ] || [ ! -f "$LICENSE_PASSWORD" ]; then
+    echo "授权签发材料不完整：私钥和密码文件必须同时存在" >&2
+    exit 1
+  fi
+  install -d -m 700 "$WORK/license"
+  install -m 600 "$LICENSE_ISSUER" "$WORK/license/Laogu-License-Issuer.pem"
+  install -m 600 "$LICENSE_PASSWORD" "$WORK/license/Laogu-License-Password.txt"
+  LICENSE_INCLUDED=1
+  echo "授权签发材料已纳入 age 加密包"
+else
+  echo "未发现授权签发材料，继续生成普通恢复包"
+fi
+
+echo "4/8 备份服务器配置"
 install -m 600 /etc/laogu/server.env "$WORK/server.env"
 install -m 600 "$RECIPIENT_FILE" "$WORK/backup-age-recipient.txt"
 systemctl cat laogu-server > "$WORK/laogu-server.service.txt"
 nginx -T > "$WORK/nginx-config.txt" 2> "$WORK/nginx-check.txt"
 
-echo "4/7 生成恢复信息"
+echo "5/8 生成恢复信息"
 {
   echo "backup_time=$(date --iso-8601=seconds)"
   echo "hostname=$HOST"
   echo "api_version=$(grep -o 'version=\"[^\"]*\"' "$APP/server/main.py" | head -1)"
   echo "database_migration=$(cd "$APP" && runuser -u laogu -p -- .venv/bin/alembic current 2>/dev/null | tail -1)"
+  echo "license_signing_material_included=$LICENSE_INCLUDED"
 } > "$WORK/manifest.txt"
 
+CHECKSUM_FILES=(database.dump application-source.tar.gz application-data.tar.gz engine-data.tar.gz server.env \
+  laogu-server.service.txt nginx-config.txt)
+if [ "$LICENSE_INCLUDED" -eq 1 ]; then
+  CHECKSUM_FILES+=(license/Laogu-License-Issuer.pem license/Laogu-License-Password.txt)
+fi
 (
   cd "$WORK"
-  sha256sum database.dump application-source.tar.gz application-data.tar.gz engine-data.tar.gz server.env \
-    laogu-server.service.txt nginx-config.txt > SHA256SUMS
+  sha256sum "${CHECKSUM_FILES[@]}" > SHA256SUMS
 )
 
-echo "5/7 生成并加密恢复包"
+echo "6/8 生成并加密恢复包"
 PLAIN="$WORK/laogu-recovery-$STAMP.tar.gz"
-tar -C "$WORK" -czf "$PLAIN" \
-  database.dump database-contents.txt application-source.tar.gz application-data.tar.gz engine-data.tar.gz server.env \
-  backup-age-recipient.txt laogu-server.service.txt nginx-config.txt \
-  nginx-check.txt manifest.txt SHA256SUMS
+PAYLOAD_FILES=(database.dump database-contents.txt application-source.tar.gz application-data.tar.gz engine-data.tar.gz server.env \
+  backup-age-recipient.txt laogu-server.service.txt nginx-config.txt nginx-check.txt manifest.txt SHA256SUMS)
+if [ "$LICENSE_INCLUDED" -eq 1 ]; then
+  PAYLOAD_FILES+=(license/Laogu-License-Issuer.pem license/Laogu-License-Password.txt)
+fi
+tar -C "$WORK" -czf "$PLAIN" "${PAYLOAD_FILES[@]}"
 gzip -t "$PLAIN"
 
 FINAL_TMP="$DEST/.laogu-recovery-$STAMP.tar.gz.age.tmp"
@@ -136,7 +162,7 @@ if [ "$SIZE_BYTES" -gt $((45 * 1024 * 1024)) ]; then
   exit 1
 fi
 
-echo "6/7 上传 Telegram"
+echo "7/8 上传 Telegram"
 HASH="$(awk '{print $1}' "$FINAL.sha256")"
 /usr/local/sbin/laogu-telegram document "$FINAL" \
   "✅ 老谷系统自动备份成功
@@ -144,9 +170,10 @@ HASH="$(awk '{print $1}' "$FINAL.sha256")"
 时间：$(date '+%F %T %Z')
 文件：$(basename "$FINAL")
 大小：$SIZE_HUMAN
-SHA256：$HASH"
+SHA256：$HASH
+远程授权签发材料：$([ "$LICENSE_INCLUDED" -eq 1 ] && echo '已加密包含' || echo '未包含')"
 
-echo "7/7 只保留最近两份自动备份"
+echo "8/8 只保留最近两份自动备份"
 OLD_BACKUPS="$(find "$DEST" -maxdepth 1 -type f -name 'laogu-recovery-*.tar.gz.age' \
   -printf '%T@ %p\n' | sort -nr | awk 'NR > 2 {sub(/^[^ ]+ /, ""); print}')"
 if [ -n "$OLD_BACKUPS" ]; then

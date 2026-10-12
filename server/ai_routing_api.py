@@ -87,6 +87,7 @@ def register_ai_routing_routes(
     """注册动态模型路由与 X 业务端点"""
 
     # ================= 1. Web 后台：通道配置热更新与读取 =================
+    @app.get("/api/admin/config")
     @app.get("/admin/config")
     def get_relay_config(db: Session = Depends(get_db)):
         init_routing_defaults(db)
@@ -102,6 +103,7 @@ def register_ai_routing_routes(
             },
         }
 
+    @app.post("/api/admin/config/update")
     @app.post("/admin/config/update")
     def update_config(cfg: RelayConfigUpdate, db: Session = Depends(get_db)):
         """后台一键更改中转站、默认模型及版本"""
@@ -123,6 +125,7 @@ def register_ai_routing_routes(
             raise HTTPException(status_code=400, detail=f"保存配置异常: {e}")
 
     # ================= 2. Web 后台：单模型即时测速/测活 =================
+    @app.post("/api/admin/model/ping")
     @app.post("/admin/model/ping")
     def ping_model_endpoint(req: ModelTestRequest, db: Session = Depends(get_db)):
         """后台测试特定模型是否可用及响应耗时"""
@@ -141,6 +144,7 @@ def register_ai_routing_routes(
             )
 
     # ================= 3. Web 后台：模型字典管理 =================
+    @app.get("/api/admin/models")
     @app.get("/admin/models")
     def list_models(db: Session = Depends(get_db)):
         init_routing_defaults(db)
@@ -184,6 +188,7 @@ def register_ai_routing_routes(
             "data": model_list,
         }
 
+    @app.post("/api/admin/models")
     @app.post("/admin/models")
     def create_model(item: ModelRegistryCreate, db: Session = Depends(get_db)):
         existing = db.execute(
@@ -205,6 +210,7 @@ def register_ai_routing_routes(
         db.refresh(m)
         return {"code": 200, "message": "模型添加成功", "data": {"id": m.id, "model_code": m.model_code}}
 
+    @app.put("/api/admin/models/{model_id}")
     @app.put("/admin/models/{model_id}")
     def update_model(model_id: int, item: ModelRegistryUpdate, db: Session = Depends(get_db)):
         m = db.get(AIModelRegistry, model_id)
@@ -223,6 +229,7 @@ def register_ai_routing_routes(
         db.commit()
         return {"code": 200, "message": "模型更新成功"}
 
+    @app.delete("/api/admin/models/{model_id}")
     @app.delete("/admin/models/{model_id}")
     def delete_model(model_id: int, db: Session = Depends(get_db)):
         m = db.get(AIModelRegistry, model_id)
@@ -231,6 +238,7 @@ def register_ai_routing_routes(
         db.delete(m)
         db.commit()
         return {"code": 200, "message": "模型删除成功"}
+
 
     # ================= 4. Web 后台：X 账号人设与模型独立绑定 =================
     @app.get("/api/x/personas")

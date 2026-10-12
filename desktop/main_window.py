@@ -177,7 +177,7 @@ class AnimatedMultiSelectMenu(QFrame):
             self.container.setVisible(False)
             self.arrow_label.setText("▼")
         else:
-            self.container.setMaximumHeight(260)
+            self.container.setMaximumHeight(360)
             self.container.setVisible(True)
             self.arrow_label.setText("▲")
 
@@ -191,8 +191,11 @@ class AnimatedMultiSelectMenu(QFrame):
             self.summary_label.setText("全部关闭")
             self.summary_label.setStyleSheet("color: #667085; background: #F2F4F7; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600;")
         else:
-            items_str = "/".join(c[:4] for c in checked)
-            self.summary_label.setText(f"已选 {len(checked)} 项: {items_str}")
+            if len(checked) <= 2:
+                items_str = "/".join(c[:4] for c in checked)
+                self.summary_label.setText(f"已选 {len(checked)} 项: {items_str}")
+            else:
+                self.summary_label.setText(f"已选 {len(checked)}/{total} 项")
             self.summary_label.setStyleSheet("color: #2457D6; background: #EFF4FF; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 600;")
 
     def toggle_expand(self) -> None:
@@ -299,6 +302,18 @@ SAFETY_HINTS: dict[str, tuple[str, str]] = {
         "过滤机器人账号",
         "自动识别并跳过用户名、推特 ID 中包含 bot、_bot、机器人等自动化特征的账号，防止与机器人互刷消耗配额。",
     ),
+    "filter_mental_health": (
+        "过滤抑郁/精神疾病/废人消极博主",
+        "自动拦截并跳过带有抑郁症、精神疾病诊断/通院、OD过量服药、自残、废人/社会不适应等负面消极特征的博主，防止触碰此类账号。",
+    ),
+    "filter_underage": (
+        "过滤23岁以内及在校学生博主",
+        "自动拦截并跳过 23 岁以内（如0几后、显式年龄<=23）、在读高中生、初中生、大学生及高校生等低龄未成年与学生群体。",
+    ),
+    "filter_accounts_with_links": (
+        "过滤主页/简介外链博主",
+        "自动拦截并跳过在个人主页外链字段或个人简介中挂有外链（如 marshmallow、odaibako 问答箱、lit.link、linktr.ee、个人博客及独立站）的博主，一律不予关注或点赞。",
+    ),
     "filter_blacklist": (
         "全字段敏感词/黑名单过滤",
         "开启后对候选博主的昵称、ID、个人简介与最新推文进行全文本扫描，只要命中敏感特征词立即一票否决跳过；关闭后不校验敏感词。可在主界面【敏感词库】自由配置词条与一键总开关。",
@@ -367,7 +382,68 @@ SAFETY_HINTS: dict[str, tuple[str, str]] = {
         "真人新人智能识别 (新手小白精准吸纳)",
         "推特官方为新注册用户默认分配带 7~8 位随机数字的用户名（如 @Name12345678）。很多初级真实新手因未修改用户名而被传统脚本误杀。开启本功能后，系统不会粗暴淘汰数字后缀，而是综合研判其是否拥有正常生活头像与真实原创推文，智能吸纳极高回关率的初级新手真人，仅在【超长数字 + 默认初始头像】或【超长数字 + 纯推广外链】等双重劣质特征重叠时进行一票否决淘汰。",
     ),
+    "block_video_streams": (
+        "阻断非必要大体积视频流 (极速省流防卡)",
+        "开启后在底层直接阻断推特大体积视频切片与缓冲，不影响博主头像、图片和文字展示，降低约 60% 内存与显存消耗，防止多开卡顿卡屏。",
+    ),
+    "vision_filter": (
+        "真人级视觉审视引擎 (多模态图片识别与配图扫毒)",
+        "像真人眼睛一样审视推特博主头像及推文配图。端侧零耗时启发式初筛可秒级拦截默认蛋头、系统剪影，解析推特官方 Alt 实体标签（识别真车/摩托车）；多模态视觉接口可进一步穿透图片，自动拦截宣传海报、二维码、兼职副业招募和二次元引流，精准锁定日本真实车主。",
+    ),
 }
+
+TOOLTIP_MENTAL_HEALTH_HTML = """
+<div style="background-color: #FFFFFF; color: #1E293B; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; padding: 6px; min-width: 290px; max-width: 380px;">
+  <div style="font-weight: 700; color: #1E40AF; font-size: 13px; margin-bottom: 5px;">
+    🛡️ 过滤抑郁 / 精神疾病 / 自残消极博主
+  </div>
+  <div style="color: #334155; font-size: 12px; line-height: 1.5; margin-bottom: 6px;">
+    底层自动识别并跳过具有抑郁症、自残、严重精神心理疾病、消极厌世或社会不适应特征的账号。
+  </div>
+  <div style="background: #F1F5F9; border-radius: 5px; padding: 5px 8px; font-size: 11px; color: #475467; line-height: 1.4; margin-bottom: 6px;">
+    <b>覆盖特征:</b> 抑郁症、自残、厌世、想死、社恐、ADHD、BPD、PTSD、うつ病、メンヘラ等
+  </div>
+  <div style="color: #059669; font-size: 11px; font-weight: 600;">
+    ✓ 推荐默认开启 · 全面净化账号触达池
+  </div>
+</div>
+""".strip()
+
+TOOLTIP_UNDERAGE_HTML = """
+<div style="background-color: #FFFFFF; color: #1E293B; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; padding: 6px; min-width: 290px; max-width: 380px;">
+  <div style="font-weight: 700; color: #1E40AF; font-size: 13px; margin-bottom: 5px;">
+    🛡️ 过滤 23 岁以内及在校学生博主
+  </div>
+  <div style="color: #334155; font-size: 12px; line-height: 1.5; margin-bottom: 6px;">
+    底层自动识别并跳过 23 岁及以下年轻群体与在校学生，避免触达无商业或消费能力的低龄博主。
+  </div>
+  <div style="background: #F1F5F9; border-radius: 5px; padding: 5px 8px; font-size: 11px; color: #475467; line-height: 1.4; margin-bottom: 6px;">
+    <b>覆盖特征:</b> 显式年龄&le;23岁、00后/05后、高中生、大学生、受験生、JK、高校生等
+  </div>
+  <div style="color: #059669; font-size: 11px; font-weight: 600;">
+    ✓ 推荐默认开启 · 精准聚焦成熟高净值受众
+  </div>
+</div>
+""".strip()
+
+TOOLTIP_LINKS_HTML = """
+<div style="background-color: #FFFFFF; color: #1E293B; font-family: 'Microsoft YaHei UI', 'Segoe UI', sans-serif; padding: 6px; min-width: 290px; max-width: 380px;">
+  <div style="font-weight: 700; color: #1E40AF; font-size: 13px; margin-bottom: 5px;">
+    🛡️ 过滤主页 / 简介外链引流博主
+  </div>
+  <div style="color: #334155; font-size: 12px; line-height: 1.5; margin-bottom: 6px;">
+    底层自动识别并跳过在主页外链栏或个人简介挂有各类外链、问答箱的引流营销账号。
+  </div>
+  <div style="background: #F1F5F9; border-radius: 5px; padding: 5px 8px; font-size: 11px; color: #475467; line-height: 1.4; margin-bottom: 6px;">
+    <b>覆盖特征:</b> 问答箱 (Marshmallow, Peing)、聚合外链 (Linktree, Litlink)、独立站等<br>
+    <span style="color: #059669; font-weight: 600;">✓ 自动保留官方推特备用副号 (x.com)，不误伤优质博主</span>
+  </div>
+  <div style="color: #059669; font-size: 11px; font-weight: 600;">
+    ✓ 推荐默认开启 · 杜绝营销与导流博主
+  </div>
+</div>
+""".strip()
+
 
 class SmartSuffixFilter(QObject):
     """
@@ -889,9 +965,9 @@ class TaskConfigDialog(QDialog):
 
         self.profile_visit_ratio_input = self._ratio_spin(active.get("profile_visit_ratio"), 0.80)
         self.profile_visit_ratio_input.setFixedWidth(130)
-        self.profile_visit_ratio_input.setToolTip("推文拓客时点击进入博主个人主页深度终审推文与简介的触发概率（默认 0.80 即 80%，保留自定义）。\n推荐设置 0.80~1.00；设为 1.00 时将 100% 强制逐个进主页核验，彻底杜绝漏网账号。")
+        self.profile_visit_ratio_input.setToolTip("推文拓客时点击进入博主个人主页深度终审的触发概率（默认 0.80 即 80%，保留自定义）。\n推荐设置 0.80~1.00；设为 1.00 时为 100% 强制进主页终审，深度拟人浏览防风控。")
 
-        profile_visit_hint = QLabel("💡 推荐 0.80~1.00 (1.00 强制进主页)", objectName="dialogHint")
+        profile_visit_hint = QLabel("💡 推荐 0.80 (进主页深度终审)", objectName="dialogHint")
         profile_visit_hint.setStyleSheet("color: #0284c7; font-size: 11px;")
 
         ai_label = QLabel("AI 评论")
@@ -906,8 +982,32 @@ class TaskConfigDialog(QDialog):
         interaction_layout.addWidget(self.profile_visit_ratio_input)
         interaction_layout.addSpacing(8)
         interaction_layout.addWidget(profile_visit_hint)
-        interaction_layout.addStretch(1)
         run_form.addRow("深度互动配比", interaction_box)
+
+        # 私信/加密会话安全解锁密码（运行前填写，遇弹窗自动模拟输入解锁）
+        dm_pwd_widget = QWidget()
+        dm_pwd_layout = QHBoxLayout(dm_pwd_widget)
+        dm_pwd_layout.setContentsMargins(0, 0, 0, 0)
+        dm_pwd_layout.setSpacing(8)
+
+        self.dm_password_input = QLineEdit(str(active.get("dm_password") or ""))
+        self.dm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.dm_password_input.setPlaceholderText("私信/PIN密码（若私信弹出密码输入要求，自动模拟打字解锁防卡死）")
+        self.dm_password_input.setMinimumHeight(32)
+
+        self.toggle_dm_pwd_btn = QPushButton("👁️")
+        self.toggle_dm_pwd_btn.setFixedSize(34, 32)
+        self.toggle_dm_pwd_btn.setToolTip("查看/隐藏私信密码")
+        self.toggle_dm_pwd_btn.clicked.connect(self._toggle_dm_password_visibility)
+
+        dm_pwd_hint = QLabel("💡 运行前填写；脚本运行中若遇私信密码/PIN验证弹窗，自动模拟输入提交")
+        dm_pwd_hint.setStyleSheet("color: #059669; font-size: 11px;")
+
+        dm_pwd_layout.addWidget(self.dm_password_input, 1)
+        dm_pwd_layout.addWidget(self.toggle_dm_pwd_btn)
+        dm_pwd_layout.addWidget(dm_pwd_hint)
+
+        run_form.addRow("私信安全密码", dm_pwd_widget)
 
         chain_hop_box = QWidget()
         chain_hop_vbox = QVBoxLayout(chain_hop_box)
@@ -1037,6 +1137,23 @@ class TaskConfigDialog(QDialog):
         self.filter_bot_input = QCheckBox("过滤机器特征账号 (Bot)")
         self.filter_bot_input.setChecked(bool(active.get("filter_bot_accounts", True)))
         self.filter_bot_input.setToolTip("自动识别并跳过用户名、推特 ID 中包含 bot、_bot、机器人等自动化特征的账号。")
+        self._register_inspector_hint(self.filter_bot_input, "filter_bot")
+
+        self.filter_mental_health_input = QCheckBox("过滤抑郁/精神疾病/废人消极")
+        self.filter_mental_health_input.setChecked(bool(active.get("filter_mental_health_accounts", True)))
+        self.filter_mental_health_input.setToolTip(TOOLTIP_MENTAL_HEALTH_HTML)
+        self._register_inspector_hint(self.filter_mental_health_input, "filter_mental_health")
+
+        self.filter_underage_input = QCheckBox("过滤23岁以内及在校学生")
+        self.filter_underage_input.setChecked(bool(active.get("filter_underage_and_youth", True)))
+        self.filter_underage_input.setToolTip(TOOLTIP_UNDERAGE_HTML)
+        self._register_inspector_hint(self.filter_underage_input, "filter_underage")
+
+        self.filter_accounts_with_links_input = QCheckBox("过滤主页/简介外链博主")
+        self.filter_accounts_with_links_input.setChecked(bool(active.get("filter_accounts_with_links", True)))
+        self.filter_accounts_with_links_input.setToolTip(TOOLTIP_LINKS_HTML)
+        self._register_inspector_hint(self.filter_accounts_with_links_input, "filter_accounts_with_links")
+
         self.filter_blacklist_input = QCheckBox("全字段敏感词/黑名单过滤")
         self.filter_blacklist_input.setChecked(bool(active.get("blacklist_filter_enabled", True)))
         self.filter_blacklist_input.setToolTip("开启后，对候选博主的名字、ID、Bio与最新推文进行敏感词扫描，命中任意词一票否决跳过；关闭后不校验敏感词。可在主界面【敏感词库】配置词条。")
@@ -1044,7 +1161,15 @@ class TaskConfigDialog(QDialog):
 
         self.account_filter_menu = AnimatedMultiSelectMenu(
             "🛡️ 账号与敏感词过滤库",
-            [self.filter_verified_input, self.filter_parody_input, self.filter_bot_input, self.filter_blacklist_input],
+            [
+                self.filter_verified_input,
+                self.filter_parody_input,
+                self.filter_bot_input,
+                self.filter_mental_health_input,
+                self.filter_underage_input,
+                self.filter_accounts_with_links_input,
+                self.filter_blacklist_input,
+            ],
             default_expanded=False,
         )
         self.account_filter_menu.setFixedWidth(280)
@@ -1369,6 +1494,23 @@ class TaskConfigDialog(QDialog):
         block_video_vbox.addWidget(self.block_video_streams_input)
         block_video_vbox.addWidget(block_video_hint)
         safety_grid.addWidget(block_video_box, 11, 1, 1, 2)
+
+        # Row 12: 真人级多模态视觉审视 (自定义开启，头像配图扫毒，识别真实车主，过滤广告海报与二维码)
+        safety_grid.addWidget(_make_safety_label("真人视觉审视"), 12, 0)
+        vision_filter_box = QWidget()
+        vision_filter_vbox = QVBoxLayout(vision_filter_box)
+        vision_filter_vbox.setContentsMargins(0, 0, 0, 0)
+        vision_filter_vbox.setSpacing(2)
+        self.vision_filter_enabled_input = QCheckBox("👁️ 真人级视觉审视引擎（头像/配图扫毒，秒级识别车主与广告图）")
+        self.vision_filter_enabled_input.setChecked(bool(active.get("vision_filter_enabled", False)))
+        self.vision_filter_enabled_input.setToolTip("开启后，像真人眼睛一样审视博主头像及推文配图。端侧毫秒级初筛拦截默认头像与广告Alt标签，多模态大模型可进一步识别真实车辆与排查二维码广告海报。（默认关闭，勾选即启用）")
+        self._register_inspector_hint(self.vision_filter_enabled_input, "vision_filter")
+        vision_filter_hint = QLabel("💡 模拟真人审视头像与推文配图，智能识别真车主与生活实拍，自动拦截隐藏二维码与广告海报", objectName="dialogHint")
+        vision_filter_hint.setStyleSheet("color: #0284c7; font-size: 11px;")
+        vision_filter_hint.setWordWrap(True)
+        vision_filter_vbox.addWidget(self.vision_filter_enabled_input)
+        vision_filter_vbox.addWidget(vision_filter_hint)
+        safety_grid.addWidget(vision_filter_box, 12, 1, 1, 2)
 
         safety_layout.addLayout(safety_grid)
 
@@ -1799,6 +1941,12 @@ class TaskConfigDialog(QDialog):
         self.filter_verified_input.setChecked(bool(active.get("filter_verified_accounts", True)))
         self.filter_parody_input.setChecked(bool(active.get("filter_parody_accounts", True)))
         self.filter_bot_input.setChecked(bool(active.get("filter_bot_accounts", True)))
+        if hasattr(self, "filter_mental_health_input"):
+            self.filter_mental_health_input.setChecked(bool(active.get("filter_mental_health_accounts", True)))
+        if hasattr(self, "filter_underage_input"):
+            self.filter_underage_input.setChecked(bool(active.get("filter_underage_and_youth", True)))
+        if hasattr(self, "filter_accounts_with_links_input"):
+            self.filter_accounts_with_links_input.setChecked(bool(active.get("filter_accounts_with_links", True)))
         if hasattr(self, "filter_blacklist_input"):
             self.filter_blacklist_input.setChecked(bool(active.get("blacklist_filter_enabled", True)))
         self.batch_jitter_enabled_input.setChecked(bool(active.get("batch_jitter_enabled", True)))
@@ -1891,6 +2039,8 @@ class TaskConfigDialog(QDialog):
             self.smart_newbie_recognition_enabled_input.setChecked(bool(active.get("smart_newbie_recognition_enabled", True)))
         if hasattr(self, "block_video_streams_input"):
             self.block_video_streams_input.setChecked(bool(active.get("block_video_streams", True)))
+        if hasattr(self, "vision_filter_enabled_input"):
+            self.vision_filter_enabled_input.setChecked(bool(active.get("vision_filter_enabled", False)))
         # Do not discard the server/cached choices already loaded by the
         # parallel engine-list request. This used to make a published engine
         # flash briefly, then disappear when the task config callback arrived.
@@ -2037,6 +2187,14 @@ class TaskConfigDialog(QDialog):
             parsed = float(default)
         widget.setValue(max(0.0, min(1.0, parsed)))
 
+    def _toggle_dm_password_visibility(self) -> None:
+        if self.dm_password_input.echoMode() == QLineEdit.EchoMode.Password:
+            self.dm_password_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.toggle_dm_pwd_btn.setText("🔒")
+        else:
+            self.dm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.toggle_dm_pwd_btn.setText("👁️")
+
     def config(self) -> dict[str, Any]:
         engine = self.engine_input.currentData() or {"engine_id": "default", "engine_name": "默认自动化引擎"}
         raw_kw = self.keyword_input.text().strip()[:500]
@@ -2095,6 +2253,9 @@ class TaskConfigDialog(QDialog):
             "filter_verified_accounts": self.filter_verified_input.isChecked(),
             "filter_parody_accounts": self.filter_parody_input.isChecked(),
             "filter_bot_accounts": self.filter_bot_input.isChecked(),
+            "filter_mental_health_accounts": self.filter_mental_health_input.isChecked() if hasattr(self, "filter_mental_health_input") else True,
+            "filter_underage_and_youth": self.filter_underage_input.isChecked() if hasattr(self, "filter_underage_input") else True,
+            "filter_accounts_with_links": self.filter_accounts_with_links_input.isChecked() if hasattr(self, "filter_accounts_with_links_input") else True,
             "blacklist_filter_enabled": self.filter_blacklist_input.isChecked() if hasattr(self, "filter_blacklist_input") else True,
             **{f"allow_{action}": checkbox.isChecked() for action, checkbox in self.action_permission_inputs.items()},
             "allow_retweet": self.allow_retweet_input.isChecked(),
@@ -2117,6 +2278,8 @@ class TaskConfigDialog(QDialog):
             "graphql_scout_filter_enabled": self.graphql_scout_filter_enabled_input.isChecked() if hasattr(self, "graphql_scout_filter_enabled_input") else True,
             "smart_newbie_recognition_enabled": self.smart_newbie_recognition_enabled_input.isChecked() if hasattr(self, "smart_newbie_recognition_enabled_input") else True,
             "block_video_streams": self.block_video_streams_input.isChecked() if hasattr(self, "block_video_streams_input") else True,
+            "vision_filter_enabled": self.vision_filter_enabled_input.isChecked() if hasattr(self, "vision_filter_enabled_input") else False,
+            "dm_password": self.dm_password_input.text().strip(),
         }
 
 
@@ -2402,6 +2565,89 @@ class BlacklistConfigDialog(QDialog):
         switch_row.addWidget(self.check_tweets_cb)
         switch_row.addStretch(1)
         c_layout.addLayout(switch_row)
+
+        # 行 1.5: 底层专属独立防护卡片（高质感 Fluent 卡片，清爽明亮）
+        dedicated_guard_card = QFrame()
+        dedicated_guard_card.setObjectName("dedicatedGuardCard")
+        dedicated_guard_card.setStyleSheet("""
+            QFrame#dedicatedGuardCard {
+                background: #F8FAFC;
+                border: 1px solid #E2E8F0;
+                border-radius: 8px;
+            }
+            QCheckBox {
+                font-size: 12px;
+                color: #1E293B;
+                font-weight: 500;
+                spacing: 6px;
+            }
+            QCheckBox:hover {
+                color: #2563EB;
+            }
+            QToolTip {
+                background-color: #FFFFFF;
+                color: #1E293B;
+                border: 1px solid #CBD5E1;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 12px;
+            }
+        """)
+        d_card_layout = QVBoxLayout(dedicated_guard_card)
+        d_card_layout.setContentsMargins(12, 8, 12, 8)
+        d_card_layout.setSpacing(6)
+
+        # 头部标题与徽章行
+        guard_header_row = QHBoxLayout()
+        guard_header_row.setContentsMargins(0, 0, 0, 0)
+        guard_header_row.setSpacing(8)
+
+        guard_lbl = QLabel("🛡️ 底层专属防护")
+        guard_lbl.setStyleSheet("font-size: 12px; font-weight: 700; color: #1E40AF; border: none; background: transparent;")
+        guard_header_row.addWidget(guard_lbl)
+
+        badge_lang = QLabel("中/英/日多语言深度识别")
+        badge_lang.setStyleSheet("background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 600;")
+        guard_header_row.addWidget(badge_lang)
+
+        badge_default = QLabel("推荐默认全开")
+        badge_default.setStyleSheet("background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 600;")
+        guard_header_row.addWidget(badge_default)
+
+        guard_tip = QLabel("• 命中任一规则自动秒级跳过，不触发点赞与关注（悬停查看详情）")
+        guard_tip.setStyleSheet("color: #64748B; font-size: 11px; border: none; background: transparent;")
+        guard_header_row.addWidget(guard_tip)
+
+        guard_header_row.addStretch(1)
+        d_card_layout.addLayout(guard_header_row)
+
+        # 三个复选框横排
+        guard_checks_row = QHBoxLayout()
+        guard_checks_row.setContentsMargins(0, 0, 0, 0)
+        guard_checks_row.setSpacing(18)
+
+        self.filter_mental_health_cb = QCheckBox("过滤抑郁/精神疾病/自残消极")
+        self.filter_mental_health_cb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.filter_mental_health_cb.setChecked(bool(current_cfg.get("filter_mental_health_accounts", True)))
+        self.filter_mental_health_cb.setToolTip(TOOLTIP_MENTAL_HEALTH_HTML)
+        guard_checks_row.addWidget(self.filter_mental_health_cb)
+
+        self.filter_underage_cb = QCheckBox("过滤23岁以内及在校学生")
+        self.filter_underage_cb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.filter_underage_cb.setChecked(bool(current_cfg.get("filter_underage_and_youth", True)))
+        self.filter_underage_cb.setToolTip(TOOLTIP_UNDERAGE_HTML)
+        guard_checks_row.addWidget(self.filter_underage_cb)
+
+        self.filter_accounts_with_links_cb = QCheckBox("过滤主页/简介外链引流")
+        self.filter_accounts_with_links_cb.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.filter_accounts_with_links_cb.setChecked(bool(current_cfg.get("filter_accounts_with_links", True)))
+        self.filter_accounts_with_links_cb.setToolTip(TOOLTIP_LINKS_HTML)
+        guard_checks_row.addWidget(self.filter_accounts_with_links_cb)
+
+        guard_checks_row.addStretch(1)
+        d_card_layout.addLayout(guard_checks_row)
+
+        c_layout.addWidget(dedicated_guard_card)
 
         # 行 2: 快捷录入栏 (Quick Add Bar) - 高质感 Modern Card
         add_card = QFrame()
@@ -2812,6 +3058,12 @@ class BlacklistConfigDialog(QDialog):
 
     def _reset_to_defaults(self) -> None:
         self.blacklist_enabled_cb.setChecked(True)
+        if hasattr(self, "filter_mental_health_cb"):
+            self.filter_mental_health_cb.setChecked(True)
+        if hasattr(self, "filter_underage_cb"):
+            self.filter_underage_cb.setChecked(True)
+        if hasattr(self, "filter_accounts_with_links_cb"):
+            self.filter_accounts_with_links_cb.setChecked(True)
         self._words = list(DEFAULT_BLACKLIST_WORDS)
         self._sync_words_to_editor()
         self.check_name_cb.setChecked(True)
@@ -2851,6 +3103,9 @@ class BlacklistConfigDialog(QDialog):
                 "check_bio": self.check_bio_cb.isChecked(),
                 "check_tweets": self.check_tweets_cb.isChecked(),
             },
+            "filter_mental_health_accounts": self.filter_mental_health_cb.isChecked() if hasattr(self, "filter_mental_health_cb") else True,
+            "filter_underage_and_youth": self.filter_underage_cb.isChecked() if hasattr(self, "filter_underage_cb") else True,
+            "filter_accounts_with_links": self.filter_accounts_with_links_cb.isChecked() if hasattr(self, "filter_accounts_with_links_cb") else True,
         }
         if hasattr(self.controller, "save_blacklist_config"):
             self.controller.save_blacklist_config(data)
@@ -2895,8 +3150,14 @@ class TelegramConfigDialog(QDialog):
         # 读取当前配置
         cfg = self.controller.get_telegram_config() if hasattr(self.controller, "get_telegram_config") else {}
 
+        from agent.telegram_notifier import is_valid_user_chat_id
+
         self.enabled_checkbox = QCheckBox("启用 Telegram 战报通知")
-        self.enabled_checkbox.setChecked(bool(cfg.get("enabled", False)))
+        init_enabled = bool(cfg.get("enabled", False))
+        init_cid = str(cfg.get("chat_id") or "").strip()
+        if not init_enabled and is_valid_user_chat_id(init_cid):
+            init_enabled = True
+        self.enabled_checkbox.setChecked(init_enabled)
         form.addRow("", self.enabled_checkbox)
 
         self.bot_mode_combo = QComboBox()
@@ -2913,13 +3174,62 @@ class TelegramConfigDialog(QDialog):
         self.bot_token_row_label = QLabel("私有 Bot Token")
         form.addRow(self.bot_token_row_label, self.bot_token_input)
 
+        chat_id_container = QWidget()
+        chat_id_vbox = QVBoxLayout(chat_id_container)
+        chat_id_vbox.setContentsMargins(0, 0, 0, 0)
+        chat_id_vbox.setSpacing(4)
+
+        chat_id_hbox = QHBoxLayout()
+        chat_id_hbox.setContentsMargins(0, 0, 0, 0)
+        chat_id_hbox.setSpacing(8)
+
         self.chat_id_input = QLineEdit(str(cfg.get("chat_id") or ""))
-        self.chat_id_input.setPlaceholderText("例如：123456789 (您的 Telegram 数字 ID)")
+        self.chat_id_input.setPlaceholderText("例如：88888888 (或点击右侧自动获取)")
         self.chat_id_input.setMinimumHeight(32)
-        form.addRow("您的 Chat ID", self.chat_id_input)
+        chat_id_hbox.addWidget(self.chat_id_input, 1)
+
+        self.auto_detect_btn = QPushButton("⚡ 自动获取本机飞机ID")
+        self.auto_detect_btn.setMinimumHeight(32)
+        self.auto_detect_btn.setToolTip("自动扫描本地历史真实配置与飞机最新会话，一键识别并填入专属私人 ID，防止用错或串号")
+        self.auto_detect_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #0EA5E9;
+                color: #FFFFFF;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 0 12px;
+                border-radius: 6px;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #0284C7;
+            }
+            QPushButton:pressed {
+                background-color: #0369A1;
+            }
+            QPushButton:disabled {
+                background-color: #94A3B8;
+                color: #F1F5F9;
+            }
+        """)
+        self.auto_detect_btn.clicked.connect(self._auto_detect_chat_id)
+        chat_id_hbox.addWidget(self.auto_detect_btn)
+        chat_id_vbox.addLayout(chat_id_hbox)
+
+        self.chat_id_status_label = QLabel()
+        init_cid = str(cfg.get("chat_id") or "").strip()
+        if init_cid and init_cid not in {"112233", "123456789", "987654321", "111222", "555666"}:
+            self.chat_id_status_label.setText(f"🛡️ 已默认加载本地真实私人 ID: {init_cid}（防用错防串号）")
+            self.chat_id_status_label.setStyleSheet("color: #10B981; font-size: 11px; font-weight: 500;")
+        else:
+            self.chat_id_status_label.setText("💡 点击右侧按钮可一键自动获取并绑定本机 Telegram 私人 ID")
+            self.chat_id_status_label.setStyleSheet("color: #64748B; font-size: 11px;")
+        chat_id_vbox.addWidget(self.chat_id_status_label)
+
+        form.addRow("您的 Chat ID", chat_id_container)
 
         tip_label = QLabel(
-            "💡 提示：Telegram 规定须先与机器人互动一次。请在 Telegram 搜索 @xchengxutz_bot 并点击底部的【Start】(开始)。"
+            "💡 提示：Telegram 机制规定须先与机器人互动一次。请在 Telegram 搜索 @xchengxutz_bot 并点击底部的【Start】(开始)。"
         )
         tip_label.setStyleSheet("color: #64748B; font-size: 12px;")
         form.addRow("", tip_label)
@@ -2980,6 +3290,68 @@ class TelegramConfigDialog(QDialog):
         footer_layout.addWidget(save_btn)
 
         shell.addWidget(footer)
+
+    def _auto_detect_chat_id(self):
+        use_custom = self.bot_mode_combo.currentData() == "custom"
+        token = self.bot_token_input.text().strip()
+        proxy = self.proxy_input.text().strip()
+
+        self.auto_detect_btn.setEnabled(False)
+        self.auto_detect_btn.setText("⏳ 正在探测飞机…")
+        self.chat_id_status_label.setText("正在探测本机 Telegram 私人 ID 与账号信息...")
+        self.chat_id_status_label.setStyleSheet("color: #0EA5E9; font-size: 11px;")
+        QApplication.processEvents()
+
+        try:
+            res = self.controller.auto_detect_telegram_chat_id(
+                bot_token=token,
+                proxy_url=proxy,
+                use_custom=use_custom,
+            )
+        except Exception as exc:
+            res = {"success": False, "message": f"探测发生异常: {exc}"}
+
+        self.auto_detect_btn.setEnabled(True)
+        self.auto_detect_btn.setText("⚡ 自动获取本机飞机ID")
+
+        if res.get("success"):
+            cid = str(res.get("chat_id") or "")
+            self.chat_id_input.setText(cid)
+            if not self.proxy_input.text().strip() and res.get("proxy_used"):
+                self.proxy_input.setText(str(res["proxy_used"]))
+            disp = res.get("display_title") or res.get("name") or cid
+            self.chat_id_status_label.setText(f"✅ 已成功识别并绑定：{disp} (ID: {cid})")
+            self.chat_id_status_label.setStyleSheet("color: #10B981; font-size: 11px; font-weight: bold;")
+
+            # 核心联动：一键获取成功后，立即联动勾选“启用 Telegram 战报通知”并持久化保存
+            self.enabled_checkbox.setChecked(True)
+            cfg_data = {
+                "enabled": True,
+                "use_custom_bot": self.bot_mode_combo.currentData() == "custom",
+                "bot_token": self.bot_token_input.text().strip(),
+                "chat_id": cid,
+                "proxy_url": self.proxy_input.text().strip(),
+                "notify_on_account_finish": self.notify_on_finish_cb.isChecked(),
+                "notify_on_all_finish": True,
+                "notify_on_risk_alert": self.notify_on_risk_alert_cb.isChecked(),
+            }
+            if hasattr(self.controller, "save_telegram_config"):
+                self.controller.save_telegram_config(cfg_data)
+
+            QMessageBox.information(
+                self,
+                "获取成功并已启用",
+                f"已成功获取并填入您的 Telegram 私人 ID，战报通知已自动勾选启用！\n\n"
+                f"👤 账号身份：{disp}\n"
+                f"🆔 私人 ID：{cid}\n\n"
+                f"✅ 战报通知：已默认勾选启用 · 自动保存生效！\n"
+                f"您可以直接点击左下方【🔔 发送测试消息】进行联调验证。"
+            )
+        else:
+            self.chat_id_status_label.setText("❌ 未能自动获取，请参阅提示指引")
+            self.chat_id_status_label.setStyleSheet("color: #EF4444; font-size: 11px;")
+            msg = res.get("message") or "未能探测到有效的 Telegram 私人 ID"
+            QMessageBox.information(self, "获取指引", msg)
 
     def _send_test(self):
         chat_id = self.chat_id_input.text().strip()
@@ -5427,6 +5799,7 @@ class MainWindow(QMainWindow):
         self._status_refresh_in_flight = False
         self._dashboard_refresh_in_flight = False
         self._config_load_in_flight: set[str] = set()
+        self._last_challenge_alert_time: dict[str, float] = {}
         self._config_dialogs: dict[str, TaskConfigDialog] = {}
         self._automation_engines_cache: list[dict[str, Any]] | None = None
         self._account_view_signature: tuple[Any, ...] | None = None
@@ -5493,6 +5866,7 @@ class MainWindow(QMainWindow):
         self._schedule_watchdog_timer.start()
 
         QTimer.singleShot(100, lambda: self._run_job("检查 API 连接", self.controller.health, self._health_finished))
+        QTimer.singleShot(2500, lambda: self.check_for_updates(silent=True))
 
     def _handle_schedule_event_in_main_thread(self, profile_id: str, state: str, data: dict) -> None:
         if state == "WAITING_SCHEDULE":
@@ -5518,6 +5892,27 @@ class MainWindow(QMainWindow):
             err = str(data.get("error", ""))
             self.statusBar().showMessage(f"档案 {profile_id} 定时任务触发失败: {err[:50]}")
             self._log(f"[自动化调度] ❌ 档案 {profile_id} 定时任务触发失败: {err}")
+        elif state == "CHALLENGE_REQUIRED":
+            account_tag = str(data.get("account_tag", "") or profile_id)
+            err = str(data.get("error", ""))
+            target_url = str(data.get("url", ""))
+            now = time.monotonic()
+            last_t = self._last_challenge_alert_time.get(profile_id, 0.0)
+            self.statusBar().showMessage(f"🚨 账号【{account_tag}】触发安全核验挑战 (Cloudflare/邮箱)，自动化已安全暂停！", 12000)
+            self._log(f"🚨🚨🚨 [风控安全熔断] 账号【{account_tag}】(ID: {profile_id}) 触发平台安全挑战认证 (Cloudflare / 邮箱验证码)！")
+            self._log(f"🛡️ [防风控人工接管] 自动化已立即主动暂停，特意为您保留了浏览器窗口，请前往浏览器手动完成核验！")
+            if now - last_t >= 10.0:
+                self._last_challenge_alert_time[profile_id] = now
+                QMessageBox.warning(
+                    self,
+                    "触发 X 平台安全认证挑战",
+                    f"账号【{account_tag}】(ID: {profile_id}) 在运行时检测到平台安全认证挑战 (Cloudflare / 邮箱验证码)！\n\n"
+                    f"🛡️【防风控安全熔断】：\n"
+                    f"为防止机器盲目操作导致风控升级，自动化操作已立即【主动安全暂停】！\n\n"
+                    f"👉【请手动处理】：\n"
+                    f"系统已特意为您保留了浏览器窗口，请直接切换到该账号的浏览器窗口中，手动点击 Cloudflare 勾选框或输入邮箱验证码。\n\n"
+                    f"完成验证后，账号即可恢复正常使用！"
+                )
         self._load_registry()
 
     def _schedule_watchdog_tick(self) -> None:
@@ -5817,6 +6212,13 @@ class MainWindow(QMainWindow):
         self.blacklist_config_button.clicked.connect(self._open_blacklist_config)
         self._update_blacklist_button_state()
         status_box.addWidget(self.blacklist_config_button)
+
+        self.ai_persona_button = QPushButton("🎭 AI人设")
+        self.ai_persona_button.setObjectName("aiPersonaButton")
+        self.ai_persona_button.setMinimumHeight(32)
+        self.ai_persona_button.setToolTip("配置各账号本地专属 AI 角色人设、口吻与模型绑定（本地永久定锚防漂移）")
+        self.ai_persona_button.clicked.connect(self._open_ai_persona_config)
+        status_box.addWidget(self.ai_persona_button)
 
         self.check_update_button = QPushButton("🔄 检查更新")
         self.check_update_button.setObjectName("checkUpdateButton")
@@ -6222,41 +6624,48 @@ class MainWindow(QMainWindow):
             configured = ""
         return configured.rstrip("/") or "https://api.jaycwl.org"
 
-    def check_for_updates(self) -> None:
+    def check_for_updates(self, *args: Any, silent: bool = False) -> None:
         """Start an online release check."""
         if self._update_check_worker is not None and self._update_check_worker.isRunning():
             return
         server_url = self._update_server_url()
-        if hasattr(self, "check_update_button"):
+        if hasattr(self, "check_update_button") and not silent:
             self.check_update_button.setEnabled(False)
             self.check_update_button.setText("🔄 检查中…")
-        if hasattr(self, "check_update_action"):
+        if hasattr(self, "check_update_action") and not silent:
             self.check_update_action.setEnabled(False)
-        self.statusBar().showMessage("正在检查在线版本…")
+        if not silent:
+            self.statusBar().showMessage("正在检查在线版本…")
         worker = UpdateCheckWorker(server_url, VERSION, parent=self)
         self._update_check_worker = worker
-        worker.check_finished.connect(lambda release: self._on_update_check_finished(release, server_url))
-        worker.check_failed.connect(self._on_update_check_failed)
+        worker.check_finished.connect(lambda release: self._on_update_check_finished(release, server_url, silent=silent))
+        worker.check_failed.connect(lambda msg: self._on_update_check_failed(msg, silent=silent))
         worker.finished.connect(self._on_update_check_thread_finished)
         worker.start()
 
-    def _on_update_check_finished(self, release: object, server_url: str) -> None:
+    def _on_update_check_finished(self, release: object, server_url: str, silent: bool = False) -> None:
         if not isinstance(release, ReleaseInfo):
-            self._on_update_check_failed("更新服务器返回了无效数据")
+            if not silent:
+                self._on_update_check_failed("更新服务器返回了无效数据", silent=False)
             return
         if not release.has_update:
-            self.statusBar().showMessage(f"当前已是最新版本 ({VERSION})", 4000)
-            QMessageBox.information(self, "检查更新", f"当前已是最新版本（{VERSION}）\n暂无可用更新。")
+            if not silent:
+                self.statusBar().showMessage(f"当前已是最新版本 ({VERSION})", 4000)
+                QMessageBox.information(self, "检查更新", f"当前已是最新版本（{VERSION}）\n暂无可用更新。")
             return
-        if release.latest_version in UpdateNoticeDialog.ignored_versions:
-            self.statusBar().showMessage(f"已忽略版本 {release.latest_version}", 4000)
+        # 若为强制更新，即便之前点了忽略，也必须强制提醒
+        if release.latest_version in UpdateNoticeDialog.ignored_versions and not getattr(release, "is_mandatory", False):
+            if not silent:
+                self.statusBar().showMessage(f"已忽略版本 {release.latest_version}", 4000)
             return
         self._update_notice_dialog = UpdateNoticeDialog(release, server_url=server_url, parent=self)
         self._update_notice_dialog.exec()
         self._update_notice_dialog.deleteLater()
         self._update_notice_dialog = None
 
-    def _on_update_check_failed(self, message: str) -> None:
+    def _on_update_check_failed(self, message: str, silent: bool = False) -> None:
+        if silent:
+            return
         self.statusBar().showMessage("在线版本检查失败", 5000)
         display_msg = str(message)
         if "403" in display_msg:
@@ -7398,16 +7807,26 @@ class MainWindow(QMainWindow):
             self._log(f"[自动化状态] profile={profile_id} error={error_msg[:300]}")
 
         if status == "CHALLENGE_REQUIRED" or "account/access" in error_msg or "account/access" in target_url:
-            self.statusBar().showMessage(f"档案 {profile_id} 触发人机验证，任务已自动终止")
-            self._log(f"风控警报：档案 {profile_id} 遇到人机验证 (account/access)，自动化已停止")
+            account = self._account_rows_by_id.get(profile_id)
+            account_name = (account.profile_name if account else "") or profile_id
+            now = time.monotonic()
+            last_t = self._last_challenge_alert_time.get(profile_id, 0.0)
+            self.statusBar().showMessage(f"🚨 账号【{account_name}】触发安全核验 (Cloudflare/邮箱)，自动化已安全暂停！", 12000)
+            self._log(f"🚨🚨🚨 [风控安全熔断] 账号【{account_name}】(ID: {profile_id}) 触发平台安全挑战认证 (Cloudflare / 邮箱验证码)！")
+            self._log(f"🛡️ [防风控人工接管] 自动化已立即主动暂停，特意为您保留了浏览器窗口，请前往浏览器手动完成核验！")
 
-            QMessageBox.warning(
-                self,
-                "触发 X 平台人机验证",
-                f"档案【{profile_id}】在运行时触发了 Cloudflare / X 平台人机验证。\n\n"
-                f"出于账号安全保护，自动化任务已【强制终止】。\n\n"
-                f"请切到对应的浏览器窗口手动完成验证，完成后即可重新启动。"
-            )
+            if now - last_t >= 10.0:
+                self._last_challenge_alert_time[profile_id] = now
+                QMessageBox.warning(
+                    self,
+                    "触发 X 平台安全认证挑战",
+                    f"账号【{account_name}】(ID: {profile_id}) 在运行时检测到平台安全认证挑战 (Cloudflare / 邮箱验证码)！\n\n"
+                    f"🛡️【防风控安全熔断】：\n"
+                    f"为防止机器盲目操作导致风控升级，自动化操作已立即【主动安全暂停】！\n\n"
+                    f"👉【请手动处理】：\n"
+                    f"系统已特意为您保留了浏览器窗口，请直接切换到该账号的浏览器窗口中，手动点击 Cloudflare 勾选框或输入邮箱验证码。\n\n"
+                    f"完成验证后，账号即可恢复正常使用！"
+                )
             self._load_local_statistics()
             return
 
@@ -7642,6 +8061,12 @@ class MainWindow(QMainWindow):
 
     def _open_studio_token_config(self) -> None:
         dialog = StudioTokenConfigDialog(self.controller, parent=self)
+        dialog.exec()
+
+    def _open_ai_persona_config(self) -> None:
+        from desktop.ai_persona_dialog import AIPersonaConfigDialog
+        records = list(self._account_rows_by_id.values())
+        dialog = AIPersonaConfigDialog(self.controller, accounts=records, parent=self)
         dialog.exec()
 
     def _open_blacklist_config(self) -> None:

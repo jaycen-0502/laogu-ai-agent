@@ -82,9 +82,11 @@ def generate_ai_reply(
     tweet_text: str,
     custom_api_key: str = "",
     custom_base_url: str = "",
-    model_candidates: list[str] | str | None = None
+    model_candidates: list[str] | str | None = None,
+    persona_system_prompt: str = "",
+    temperature: float = 0.85,
 ) -> str:
-    """日本本地化 AI 深度分析与评论生成器（CoT思维链分析语境/地域方言/情绪后输出纯平语）"""
+    """本地化 AI 深度分析与评论生成器（结合本地角色人设定锚与思维链分析）"""
     global _RECENT_REPLIES_CACHE
 
     if not tweet_text or len(tweet_text.strip()) < 5:
@@ -102,20 +104,29 @@ def generate_ai_reply(
     else:
         models = remote_cfg.get("models") or ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
 
-    # 💡 系统角色定义：日本本地 SNS 深度分析专家 (强行封锁敬语)[cite: 3, 4]
-    system_prompt = (
-        "You are an expert in Japanese social media nuance and local dialects (関東弁, 関西弁, 博多弁, etc.). "
-        "Your role is to analyze a tweet's emotion, intent, and language style, and then reply in natural, casual Japanese (タメ口). "
-        "CRITICAL RULE: NEVER use polite forms or honorifics like 'です', 'ます', 'ございます', or 'でしょうか'."
-    )
+    if persona_system_prompt and persona_system_prompt.strip():
+        system_prompt = (
+            f"{persona_system_prompt.strip()}\n\n"
+            "【底层定锚执行规约】：\n"
+            "- 严格遵循上述人设与口吻。\n"
+            "- 敬语（です・ます・ございます等）完全禁止，严禁机械客服腔。\n"
+            "- 文末句号（。）绝对禁止。\n"
+            "- 20字以内地道推特日常短句，仅输出最终回复内容。"
+        )
+    else:
+        # 系统角色定义：日本本地 SNS 深度分析
+        system_prompt = (
+            "You are an expert in Japanese social media nuance. "
+            "Your role is to analyze a tweet's emotion, intent, and language style, and then reply in natural, casual Japanese (タメ口). "
+            "CRITICAL RULE: NEVER use polite forms or honorifics like 'です', 'ます', 'ございます', or 'でしょうか'."
+        )
 
-    # 💡 引入思维链 (Chain of Thought)：先分析，后生成[cite: 3, 4]
+    # 先分析，后生成
     prompt = (
-        "以下のツイートを深層分析し、最適で自然なタメ口リプライを作成してください。\n\n"
+        "以下のツイートを分析し、最適で自然なタメ口リプライを作成してください。\n\n"
         "【分析ステップ】\n"
-        "1. 言語・方言の特定：標準的なネット口語か、関西弁・博多弁などの地方の方言が含まれているか判断する。\n"
-        "2. 感情・ニュアンスの特定：共感、驚き、情報共有、愚痴、喜びなど、投稿者の感情を読み取る。\n"
-        "3. 返信の決定：敬語を100%排除し、相手の感情と方言のテンションに合わせた最も適したリアルなタメ口フレーズを考案する。\n\n"
+        "1. 感情・ニュアンスの特定：共感、驚き、情報共有、愚痴、喜びなど、投稿者の感情を読み取る。\n"
+        "2. 返信の決定：敬語を100%排除し、相手の感情のテンションに合わせた最も適したリアルなタメ口フレーズを作成する。\n\n"
         "【厳格な出力ルール】\n"
         "- 敬語（です・ます・ございます等）は完全禁止。\n"
         "- 文末の句点（。）は絶対禁止。\n"
@@ -123,6 +134,8 @@ def generate_ai_reply(
         "- 余計な解説は出力せず、最終的な【返信テキストのみ】を直接出力すること。\n\n"
         f"対象ツイート：\"{tweet_text[:300]}\""
     )
+
+    target_temp = float(temperature) if temperature and 0.1 <= float(temperature) <= 1.5 else 0.85
 
     if API_KEY and not API_KEY.startswith("sk-你的"):
         endpoint = BASE_URL.rstrip("/")
@@ -141,7 +154,7 @@ def generate_ai_reply(
                         {"role": "user", "content": prompt}
                     ],
                     "max_tokens": 50,
-                    "temperature": 0.85,
+                    "temperature": target_temp,
                 }
                 req = urllib.request.Request(
                     endpoint,
@@ -239,7 +252,7 @@ class AutomationConfig:
     outreach_mode: str = "keyword"      # 拓客工作模式: "keyword" (关键词推文), "keyword_chain" (关键词种子·无限顺藤摸瓜), "network_hop" (纯私域关注列表)
     target_url: str = "https://x.com/home"
     account_tag: str = "默认"
-    profile_visit_ratio: float = 0.80
+    profile_visit_ratio: float = 0.80   # 默认 0.80，即 80% 深入个人主页深度拜访，20% 在名片层轻量触达
     home_browse_ratio: float = 0.20
     ai_reply_ratio: float = 0.0        # 默认不开启 AI 评论回复（0.0 关闭，保留用户自定义开启）
     bookmark_ratio: float = 0.25       # 25% 概率执行保存书签
@@ -255,6 +268,11 @@ class AutomationConfig:
     filter_verified_accounts: bool = True
     filter_parody_accounts: bool = True
     filter_bot_accounts: bool = True
+    filter_mental_health_accounts: bool = True      # 过滤抑郁症/精神疾病/自残消极/废人账号 (默认开启)
+    filter_underage_and_youth: bool = True          # 过滤23岁以内及年轻学生博主 (默认开启)
+    max_age_filter_threshold: int = 23              # 低龄过滤年龄阈值 (默认 23 岁及以内一票否决)
+    filter_empty_bio: bool = False                  # 是否过滤个人主页完全空白的账号 (默认放行)
+    filter_accounts_with_links: bool = True         # 是否过滤主页/简介带有外链的博主 (默认开启，不予点赞关注)
     single_batch_mode: bool = False
     cloud_dedup_enabled: bool = False
     cloud_dedup_server_url: str = "https://api.jaycwl.org"
@@ -306,6 +324,12 @@ class AutomationConfig:
     block_video_streams: bool = True               # 极速省流防卡：是否底层阻断推特大体积视频流切片预加载（默认开启，释放60%内存与显存占用，防多开卡屏）
     dry_run: bool = False                           # 预演模式（只浏览不执行真实互动）
     follow_burst_cooling_enabled: bool = True       # 高频爆发降频冷却（连续关注达到阈值时自动拟人微歇）
+    # --- 💡 2026 前沿特性：真人级 AI 视觉审视引擎 ---
+    vision_filter_enabled: bool = False             # 是否启用真人级 AI 视觉审视引擎（纯内置零配置，默认保持开关可选）
+    # --- 🎭 本地专属 AI 账号人设与模型绑定配置 ---
+    ai_persona: dict[str, Any] = field(default_factory=dict)
+    # --- 🔑 私信安全验证密码（遇到密码弹窗时自动模拟打字输入解锁防卡死） ---
+    dm_password: str = ""
 
 
 
@@ -466,6 +490,11 @@ class AutomationConfig:
             filter_verified_accounts=boolean("filter_verified_accounts", True),
             filter_parody_accounts=boolean("filter_parody_accounts", True),
             filter_bot_accounts=boolean("filter_bot_accounts", True),
+            filter_mental_health_accounts=boolean("filter_mental_health_accounts", True),
+            filter_underage_and_youth=boolean("filter_underage_and_youth", True),
+            max_age_filter_threshold=integer("max_age_filter_threshold", 23, 10, 100),
+            filter_empty_bio=boolean("filter_empty_bio", False),
+            filter_accounts_with_links=boolean("filter_accounts_with_links", True),
             single_batch_mode=boolean("single_batch_mode", False),
             cloud_dedup_enabled=cloud_dedup_enabled,
             cloud_dedup_server_url=server_url,
@@ -509,6 +538,9 @@ class AutomationConfig:
             block_video_streams=boolean("block_video_streams", True),
             dry_run=boolean("dry_run", False),
             follow_burst_cooling_enabled=boolean("follow_burst_cooling_enabled", True),
+            vision_filter_enabled=boolean("vision_filter_enabled", values.get("vision_enabled", False)),
+            ai_persona=dict(values.get("ai_persona") or {}) if isinstance(values.get("ai_persona"), dict) else {},
+            dm_password=str(values.get("dm_password") or values.get("direct_message_password") or (values.get("ai_persona") or {}).get("dm_password") or "").strip(),
         )
 
 
@@ -602,6 +634,94 @@ class AccountFilterGuard:
         "fanpage", "fan page", "parody account", "ファンアカウント", "非公式アカウント"
     ]
 
+    MENTAL_HEALTH_KEYWORDS = [
+        # 1. 日文特征 (抑郁与重大精神心理疾病/自残消极/废人)
+        "うつ病", "鬱病", "うつ期", "鬱期", "鬱持ち", "うつ持ち", "鬱",
+        "躁鬱", "躁うつ", "双極性障害", "双極症", "適応障害",
+        "パニック障害", "不安障害", "統合失調症", "解離性障害", "解離",
+        "境界性パーソナリティ障害", "精神疾患", "精神病", "メンヘラ", "めんへら",
+        "発達障害", "自閉スペクトラム", "アスペルガー",
+        "自傷", "自傷行為", "リスカ", "リストカット", "アムカ", "アームカット",
+        "レグカ", "レッグカット", "オーバードーズ", "過剰服薬", "希死念慮",
+        "死にたい", "消えたい", "死にたがり", "心中", "自死", "遺書",
+        "廃人", "社不", "社会不適合者", "ヒキニート", "ひきこもり", "引きこもり",
+        "不登校", "生活保護", "生保", "酒カス", "ヤニカス",
+        "病み垢", "病み", "やみあか", "闇垢", "通院中", "閉鎖病棟",
+        "精神障害者手帳", "障害者手帳", "摂食障害", "拒食症", "過食嘔吐", "カショオ", "情緒不安定",
+        "ff外リプはブロック", "ff外リプブロック",
+        # 2. 中文特征 (抑郁/双相/精神心理疾病/自残轻生/废人消极)
+        "抑郁症", "重度抑郁", "中度抑郁", "抑郁", "确诊抑郁",
+        "双相情感障碍", "双相", "躁郁症", "躁郁",
+        "精神分裂", "精神障碍", "焦虑症", "惊恐障碍", "惊恐发作", "心理障碍", "神经衰弱", "心理疾病",
+        "自残", "割腕", "自杀", "厌世", "想死", "轻生", "不想活了", "自戕", "重开", "遗书", "过量服药",
+        "精神病院", "精神科", "抗抑郁药", "心理咨询", "精神残疾",
+        "社恐", "玉玉症", "玉玉", "躺平废人", "烂命一条",
+        # 3. 英文特征 (Depression / Bipolar / Self-Harm / Mental Health)
+        "depression", "depressed", "major depressive", "bipolar disorder", "bipolar",
+        "schizophrenia", "anxiety disorder", "panic disorder", "panic attack",
+        "mental health", "mental illness", "psychiatric",
+        "self-harm", "self harm", "cutting", "suicidal", "suicide", "want to die", "wanna die", "kill myself", "end my life",
+        "eating disorder", "anorexia", "bulimia", "hikikomori"
+    ]
+
+    MENTAL_ABBR_REGEX = re.compile(r'(?:^|[^a-z0-9])(adhd|asd|bpd|ptsd|ocd|mdd|did|od)(?:[^a-z0-9]|$)', re.IGNORECASE)
+
+    # 年龄过滤正则 (支持中、英、日三语显式年龄与 23 岁以内识别)
+    RE_EXPLICIT_AGE = re.compile(r'(?<!\d)([1-9]|1\d|2\d)\s*[岁歳才]', re.IGNORECASE)
+    RE_ENGLISH_AGE = re.compile(r'(?<!\d)([1-9]|1\d|2\d)\s*(?:yo|y/o|y\.o\.|years\s*old)|(?:age\s*[:：]?\s*([1-9]|1\d|2\d)(?!\d))', re.IGNORECASE)
+    RE_AGE_WITH_ROLE = re.compile(r'(?<!\d)([1-9]|1\d|2\d)\s*(?:岁|歳|才)?\s*(?:の)?(?:在读|在校|学生|大学生|高校生|女大|男大|初中生|社会人|フリーター|ニート)', re.IGNORECASE)
+    RE_AGE_GENDER = re.compile(r'(?:(?:男|女|🚹|🚺)\s*(?:[:：/|\s])*\s*([1-9]|1\d|2\d)(?!\d))|(?:(?<!\d)([1-9]|1\d|2\d)\s*(?:[:：/|\s])*\s*(?:男|女|🚹|🚺))', re.IGNORECASE)
+    RE_YOUTH_SLASH_AGE = re.compile(r'(?<!\d)(0[0-9]|1[0-2])\s*/\s*([1-9]|1\d|2\d)(?!\d)', re.IGNORECASE)
+    RE_YOUTH_PREFIX = re.compile(
+        r'(?<![\d\.\-])'
+        r'(0[0-9]|1[0-2])'
+        r'(?:'
+            r'\s*(?:line|組|生|世代|后|後|男|女|🚹|🚺|高|大|中|jk|jc|dk)'
+            r'|'
+            r'(?:\s*[\(/（]\s*(?:[1-9]|1\d|2\d)\s*[\)/）])'
+            r'|'
+            r'(?:(?<=^0[0-9])|(?<=[\r\n]0[0-9])|(?<=^1[0-2])|(?<=[\r\n]1[0-2]))'
+            r'(?:\s+|[/|・\-_](?!\d{2,}))'
+            r'|'
+            r'(?:[\s/|・])(?=\s*(?:[ぁ-んァ-ヶー一-龥]|高校|大学|高中|初中|病み|千葉|東京|学生|趣味))'
+        r')',
+        re.IGNORECASE
+    )
+    STUDENT_KEYWORDS = [
+        # 日文学生
+        "高校生", "高1", "高2", "高3", "大学生", "大1", "大2", "大3", "大4",
+        "女子大生", "女子大学生", "専門学生", "専1", "専2", "浪人生", "受験生",
+        # 中文学生
+        "高中生", "初中生", "中学生", "在校生", "在校大学生", "在读学生",
+        "高一生", "高二生", "高三生", "考研党", "高考生", "中考生", "女大学生", "男大学生", "女大", "男大",
+        # 英文学生与低龄
+        "high school student", "high schooler", "college student", "university student",
+        "freshman", "sophomore", "undergrad", "undergraduate", "minor", "underage", "under 18", "under 21"
+    ]
+    RE_STUDENT_ABBR = re.compile(r'(?:^|[^a-z0-9])(jk|fjk|sjk|ljk|dk|jc|fjc|sjc|ljc|jd|fjd|sjd|ljd)(?:[^a-z0-9]|$)', re.IGNORECASE)
+
+    # 外链/问答箱/聚合引流特征词库与正则 (支持中、英、日主页链接特征与平台)
+    LINK_HUB_KEYWORDS = [
+        # 主流聚合/问答箱/创作者平台
+        "odaibako.net", "marshmallow-qa.com", "peing.net", "lit.link",
+        "linktr.ee", "profcard.info", "privatter.net", "poipiku.com",
+        "fantia.jp", "fanbox.cc", "coconala.com", "suzuri.jp", "booth.pm",
+        "youtube.com", "youtu.be", "tiktok.com", "instagram.com",
+        "line.me", "lin.ee", "profcard", "potofu.me", "skeb.jp",
+        "html.co.jp", "twpf.jp", "minne.com", "creema.jp",
+        "carrd.co", "beacons.ai", "bio.link", "patreon.com", "ko-fi.com",
+        # 日文外链口令
+        "プロフリンク", "リンク先", "固定リンク",
+        # 中文外链口令
+        "主页链接", "主页外链", "点击下方链接", "置顶链接", "看主页链接", "链接看主页", "进群链接", "主页网站", "专属链接",
+        # 英文外链口令
+        "link in bio", "links in bio", "link in my bio", "link below", "links below", "my linktree", "check my bio", "check out my bio", "my website"
+    ]
+    RE_EXTERNAL_LINK = re.compile(
+        r'(?:https?://[^\s]+|t\.co/[^\s]+|bit\.ly/[^\s]+|[a-z0-9\-_]+\.(?:net|com|jp|org|link|me|io|info|cc|to|app|xyz|site|club|top|fun|live)/[^\s]+)',
+        re.IGNORECASE
+    )
+
     BOT_CJK_REGEX = re.compile(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]bot|bot[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]', re.IGNORECASE)
     BOT_BOUNDARY_REGEX = re.compile(r'(?:^|[^a-z0-9])bot(?:[^a-z0-9]|$)', re.IGNORECASE)
     BOT_PREFIX_REGEX = re.compile(r'^bot(?:[_\-.]|\d+)', re.IGNORECASE)
@@ -627,6 +747,72 @@ class AccountFilterGuard:
         for kw in cls.AD_KEYWORDS:
             if kw in text_lower:
                 return True, f"广告/营销/副業账号 (特征词: {kw})"
+
+        return False, ""
+
+    @classmethod
+    def is_mental_health_or_depression(cls, text: str) -> tuple[bool, str]:
+        if not text:
+            return False, ""
+        text_lower = text.lower()
+        for kw in cls.MENTAL_HEALTH_KEYWORDS:
+            if kw in text_lower:
+                return True, f"抑郁/精神疾病/自残消极/废人特征 (特征词: {kw})"
+        m_abbr = cls.MENTAL_ABBR_REGEX.search(text_lower)
+        if m_abbr:
+            return True, f"精神/发育障碍缩写 (特征: {m_abbr.group(1).upper()})"
+        return False, ""
+
+    @classmethod
+    def is_underage_or_youth(cls, text: str, max_age: int = 23) -> tuple[bool, str]:
+        if not text:
+            return False, ""
+        text_lower = text.lower()
+
+        # 1. 显式年龄识别 (例如: 18~23岁/才, 18yo, 19 years old, age 19)
+        m_age = cls.RE_EXPLICIT_AGE.search(text)
+        if m_age:
+            age_val = int(m_age.group(1))
+            if age_val <= max_age:
+                return True, f"{max_age}岁以内显式年龄 (标明: {age_val}岁/才)"
+
+        m_en_age = cls.RE_ENGLISH_AGE.search(text)
+        if m_en_age:
+            val_s = m_en_age.group(1) or m_en_age.group(2)
+            if val_s and int(val_s) <= max_age:
+                return True, f"{max_age}岁以内英文年龄 (标明: {val_s} yo)"
+
+        m_role = cls.RE_AGE_WITH_ROLE.search(text)
+        if m_role:
+            age_val = int(m_role.group(1))
+            if age_val <= max_age:
+                return True, f"{max_age}岁以内年龄声明 (标明: {age_val}岁)"
+
+        m_ag = cls.RE_AGE_GENDER.search(text)
+        if m_ag:
+            val_str = m_ag.group(1) or m_ag.group(2)
+            if val_str and int(val_str) <= max_age:
+                return True, f"{max_age}岁以内年龄 (标明: {val_str}岁)"
+
+        m_slash = cls.RE_YOUTH_SLASH_AGE.search(text)
+        if m_slash:
+            slash_age = int(m_slash.group(2))
+            if slash_age <= max_age:
+                return True, f"{max_age}岁以内生年/年龄简写 (标明: {m_slash.group(0)})"
+
+        # 2. 0几后生年缩写 (00~10年出生的年轻人, 00后/05后/05line等)
+        m_year = cls.RE_YOUTH_PREFIX.search(text)
+        if m_year:
+            return True, f"{max_age}岁以内0几后生年缩写 (标明: {m_year.group(1)}后)"
+
+        # 3. 在校学生身份 (中/英/日)
+        for sk in cls.STUDENT_KEYWORDS:
+            if sk.lower() in text_lower:
+                return True, f"在校学生群体 (特征: {sk})"
+
+        m_stu = cls.RE_STUDENT_ABBR.search(text_lower)
+        if m_stu:
+            return True, f"在校学生缩写 (特征: {m_stu.group(1).upper()})"
 
         return False, ""
 
@@ -662,6 +848,49 @@ class AccountFilterGuard:
         return False, ""
 
     @classmethod
+    def has_external_link(cls, text: str = "", user_url: str = "", urls: list[str] | None = None) -> tuple[bool, str]:
+        """检测博主个人主页或简介中是否包含外部链接、问答箱或引流工具 (如 odaibako, marshmallow, lit.link 等)."""
+        def _clean_url_str(raw_val: Any) -> str:
+            if isinstance(raw_val, dict):
+                for k in ("expanded_url", "url", "display_url"):
+                    sv = raw_val.get(k)
+                    if sv and isinstance(sv, str) and sv.strip():
+                        return sv.strip()
+                return ""
+            s = str(raw_val or "").strip()
+            # 过滤异常字典转义字符串如 "{'url': ''}", "{}", "None", "null" 等
+            if not s or s.startswith("{") or s.startswith("[") or s in ("None", "null", "http://", "https://"):
+                return ""
+            return s
+
+        def _is_internal_x_url(raw_u: str) -> bool:
+            clean_u = raw_u.strip().lower()
+            return any(tw in clean_u for tw in ("twitter.com", "x.com", "pic.twitter.com"))
+
+        clean_user_url = _clean_url_str(user_url)
+        if clean_user_url and not _is_internal_x_url(clean_user_url):
+            return True, f"主页附带外链网站 ({clean_user_url[:45]})"
+
+        if urls:
+            for u in urls:
+                clean_item_url = _clean_url_str(u)
+                if clean_item_url and not _is_internal_x_url(clean_item_url):
+                    return True, f"主页附带外部链接 ({clean_item_url[:45]})"
+
+        text_lower = (text or "").lower()
+        for hub in cls.LINK_HUB_KEYWORDS:
+            if hub.lower() in text_lower:
+                return True, f"主页/简介包含外链引流特征 (特征: {hub})"
+
+        for m_url in cls.RE_EXTERNAL_LINK.finditer(text or ""):
+            matched_url = m_url.group(0)
+            if _is_internal_x_url(matched_url):
+                continue
+            return True, f"主页/简介包含外部链接 (命中: {matched_url[:45]})"
+
+        return False, ""
+
+    @classmethod
     def check_candidate_account(
         cls,
         name: str = "",
@@ -669,6 +898,8 @@ class AccountFilterGuard:
         card_or_dom_text: str = "",
         has_verified_badge: bool = False,
         config: Any = None,
+        user_url: str = "",
+        urls: list[str] | None = None,
     ) -> tuple[bool, str]:
         filter_verified = getattr(config, "filter_verified_accounts", True) if config else True
         if filter_verified and has_verified_badge:
@@ -691,6 +922,37 @@ class AccountFilterGuard:
         is_bad, bad_reason = cls.is_spam_or_nsfw(combined_text)
         if is_bad:
             return True, bad_reason
+
+        # 个人主页简介空白过滤
+        filter_empty_bio = getattr(config, "filter_empty_bio", False) if config else False
+        if filter_empty_bio and not card_or_dom_text.strip():
+            return True, "个人主页简介完全空白"
+
+        # 抑郁/精神疾病/自残消极/废人账号过滤 (默认开启)
+        filter_mental = getattr(config, "filter_mental_health_accounts", True) if config else True
+        if filter_mental:
+            is_mental, m_reason = cls.is_mental_health_or_depression(combined_text)
+            if is_mental:
+                return True, m_reason
+
+        # 23岁以内及年轻学生博主过滤 (默认开启)
+        filter_youth = getattr(config, "filter_underage_and_youth", True) if config else True
+        if filter_youth:
+            max_age = getattr(config, "max_age_filter_threshold", 23) if config else 23
+            is_youth, y_reason = cls.is_underage_or_youth(combined_text, max_age=max_age)
+            if is_youth:
+                return True, y_reason
+
+        # 外链博主过滤（问答箱/引流聚合页/独立站等，默认开启，不予点赞关注）
+        filter_links = getattr(config, "filter_accounts_with_links", True) if config else True
+        if filter_links:
+            is_link, l_reason = cls.has_external_link(
+                text=combined_text,
+                user_url=user_url,
+                urls=urls,
+            )
+            if is_link:
+                return True, l_reason
 
         # 动态全字段黑名单词库（一票否决制）
         bl_enabled = getattr(config, "blacklist_filter_enabled", True) if config else True
@@ -844,7 +1106,11 @@ async def human_move_to_fast(page: Any, element: Any, personality: ProfilePerson
             await asyncio.sleep(step_delay)
 
         personality.current_mouse_pos = (target_x, target_y)
-        await element.hover()
+        # 🛡️ 限制 hover 超时为 2.5 秒，防止推特吸顶栏或浮动层遮挡时陷入 30 秒底层死等
+        try:
+            await element.hover(timeout=2500)
+        except Exception:
+            pass
         # 视线聚焦与微停顿：对数正态分布 (0.45s ~ 1.65s)
         dwell = max(0.45, min(1.65, random.lognormvariate(-0.15, 0.32)))
         await asyncio.sleep(dwell)
@@ -926,10 +1192,17 @@ async def safe_human_click(page: Any, element: Any, personality: ProfilePersonal
                 pass
 
     # 🛡️ 稳健兜底保障：若拟人贝塞尔微操由于 DPI 缩放或页面微偏移未能触发点击，
-    # 立即平滑执行标准 element.click()，确保高价值目标不被跳过，恢复 9月7日版本稳定点击成功率
+    # 依次启用 Playwright 穿透强制点击与底层 DOM 事件派发，确保高价值目标 100% 达成
     try:
         if hasattr(element, "click"):
-            await element.click(timeout=2500)
+            await element.click(timeout=2500, force=True)
+            return True
+    except Exception:
+        pass
+
+    try:
+        if hasattr(element, "evaluate"):
+            await element.evaluate("el => el.click()")
             return True
     except Exception:
         pass
@@ -1142,6 +1415,13 @@ class XAutomationEngine:
         self._follow_limit_reached: bool = False
         self._consecutive_write_403_count: int = 0
 
+        # 👁️ 真人级 AI 视觉多模态审视引擎实例
+        self.vision_inspector: Any = None
+
+        # ⏱️ 极速模式风控加固：近 15 分钟动作滑动窗口与接口异常时间戳
+        self._sliding_window_actions: list[float] = []
+        self._last_api_error_time: float = 0.0
+
 
     async def _cloud_claim_target(self, target_handle: str, config: AutomationConfig | None = None) -> tuple[bool, str]:
         cfg = config or getattr(self, "config", None)
@@ -1345,6 +1625,67 @@ class XAutomationEngine:
             pass
         return f"handle:{fallback}" if fallback else ""
 
+    async def _handle_dm_password_prompt_if_present(self, page: Any) -> bool:
+        """检测到私信密码/PIN或安全确认弹窗时，自动拟人模拟打字输入并提交解锁"""
+        dm_pwd = getattr(self._active_config, "dm_password", "") or ""
+        if not dm_pwd:
+            return False
+
+        try:
+            pwd_selector = (
+                'div[role="dialog"] input[type="password"], '
+                'div[role="dialog"] input[name="password"], '
+                'div[role="dialog"] input[autocomplete="current-password"], '
+                'input[data-testid="KeyConfirmationPasswordInput"], '
+                'input[data-testid="confirmationPasswordInput"], '
+                'input[name="pin"], '
+                'input[name="password"]'
+            )
+            pwd_input = await page.query_selector(pwd_selector)
+            if not pwd_input:
+                return False
+
+            if hasattr(pwd_input, "is_visible") and not await pwd_input.is_visible():
+                return False
+
+            self._print("🔐 [私信安全验证] 检测到推特私信/加密会话密码确认弹窗，正在自动模拟输入解锁...")
+
+            if not await safe_human_click(page, pwd_input, self.personality):
+                await pwd_input.click()
+            await asyncio.sleep(random.uniform(0.4, 0.8))
+
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
+            await asyncio.sleep(0.3)
+
+            await human_type_text(page, pwd_input, dm_pwd)
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+
+            confirm_selector = (
+                'button[data-testid="KeyConfirmationPasswordConfirmButton"], '
+                'button[data-testid="KeyConfirmationPasswordSubmitButton"], '
+                'button[data-testid="confirmationSheetConfirm"], '
+                'div[role="dialog"] button:has-text("Confirm"), '
+                'div[role="dialog"] button:has-text("确认"), '
+                'div[role="dialog"] button:has-text("Unlock"), '
+                'div[role="dialog"] button:has-text("解锁"), '
+                'div[role="dialog"] button:has-text("Next"), '
+                'div[role="dialog"] button:has-text("下一步")'
+            )
+            confirm_btn = await page.query_selector(confirm_selector)
+            if confirm_btn and hasattr(confirm_btn, "is_visible") and await confirm_btn.is_visible():
+                if not await safe_human_click(page, confirm_btn, self.personality):
+                    await confirm_btn.click()
+            else:
+                await page.keyboard.press("Enter")
+
+            await asyncio.sleep(random.uniform(1.8, 2.8))
+            self._print("✅ [私信安全验证] 私信解锁密码已成功模拟输入提交，安全解除弹窗！")
+            return True
+        except Exception as err:
+            self.logger.debug("处理私信密码弹窗非阻断提示: %s", err)
+            return False
+
     async def _dismiss_modal_dialogs(self, page: Any) -> None:
         try:
             if hasattr(page, "query_selector"):
@@ -1547,6 +1888,8 @@ class XAutomationEngine:
 
             if hasattr(scope, "query_selector"):
                 following_btn = await scope.query_selector('button[data-testid$="-unfollow"]')
+                if not following_btn and hasattr(page, "query_selector"):
+                    following_btn = await page.query_selector('div[data-testid="UserProfileHeader_Root"] button[data-testid$="-unfollow"], div[data-testid="primaryColumn"] button[data-testid$="-unfollow"]')
                 if following_btn and (not hasattr(following_btn, "is_visible") or await following_btn.is_visible()):
                     return True, "FOLLOWED"
 
@@ -1555,6 +1898,13 @@ class XAutomationEngine:
                     'button[aria-label*="Pending"], button[aria-label*="Requested"], '
                     'button[aria-label*="リクエスト中"], button[aria-label*="已申请"]'
                 )
+                if not pending_btn and hasattr(page, "query_selector"):
+                    pending_btn = await page.query_selector(
+                        'div[data-testid="UserProfileHeader_Root"] button[data-testid*="pending"], '
+                        'div[data-testid="UserProfileHeader_Root"] button[aria-label*="Pending"], '
+                        'div[data-testid="UserProfileHeader_Root"] button[aria-label*="Requested"], '
+                        'div[data-testid="UserProfileHeader_Root"] button[aria-label*="リクエスト中"]'
+                    )
                 if pending_btn and (not hasattr(pending_btn, "is_visible") or await pending_btn.is_visible()):
                     return True, "REQUESTED"
 
@@ -1695,6 +2045,60 @@ class XAutomationEngine:
 
         if purged:
             self.logger.debug("🧹 已触发 Chromium 渲染进程主动垃圾回收 (Heap GC)，释放脱落 DOM 与图片视频缓存")
+        return purged
+
+    async def _perform_batch_silent_maintenance(self, page: Any, context: Any = None) -> bool:
+        """批次间定期轻量静默清障与生命周期维护 (Anti-Bloat & Anti-Leak)：
+        在每个批次结束的“拟人安全休息”期间无感调用：
+        1. 下发 CDP HeapProfiler.collectGarbage 强制 V8 堆内存回收；
+        2. 评估页面级 window.gc() (若 Chromium 启动带 flag 或可调)；
+        3. 暂停非活动视频/音频播放，解除脱落媒体与 DOM 引用；
+        4. 重置页面滚动生命周期垃圾，确保多账号连续挂机 24 小时以上依然轻快稳定。
+        """
+        if not page or (callable(getattr(page, "is_closed", None)) and page.is_closed() is True):
+            return False
+        self._print("🧹 [定期静默清障] 执行批次级 window.gc() 与 V8 堆内存深度回收，泄放游离 DOM 与多媒体解码缓存...")
+        purged = False
+        try:
+            ctx = context or getattr(page, "context", None)
+            if ctx and hasattr(ctx, "new_cdp_session"):
+                cdp = await ctx.new_cdp_session(page)
+                try:
+                    await cdp.send("HeapProfiler.collectGarbage")
+                    purged = True
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        await cdp.detach()
+                    except Exception:
+                        pass
+        except Exception as cdp_err:
+            self.logger.debug("批次 CDP 垃圾回收异常: %s", cdp_err)
+
+        try:
+            if page and hasattr(page, "evaluate"):
+                await page.evaluate("""() => {
+                    try {
+                        if (window.gc) { window.gc(); }
+                        // 暂停视口外音频视频并释放缓存引用
+                        const media = document.querySelectorAll('video, audio');
+                        media.forEach(m => {
+                            try {
+                                m.pause();
+                                if (m.src && m.src.startsWith('blob:')) {
+                                    URL.revokeObjectURL(m.src);
+                                }
+                            } catch(e) {}
+                        });
+                    } catch(e) {}
+                }""")
+                purged = True
+        except Exception as eval_err:
+            self.logger.debug("页面级 gc/媒体泄放异常: %s", eval_err)
+
+        self._last_renderer_gc_time = time.time()
+        self._scroll_actions_since_last_gc = 0
         return purged
 
     async def _recover_crashed_page(self, context: Any, old_page: Any = None, fallback_url: str = "https://x.com/home") -> Any:
@@ -2176,6 +2580,7 @@ class XAutomationEngine:
 
     async def _assert_no_challenge(self, page: Any) -> None:
         await self._check_run_control()
+        await self._handle_dm_password_prompt_if_present(page)
         await self._dismiss_modal_dialogs(page)
         if self._risk_reason:
             risk = self._risk_reason
@@ -2241,14 +2646,29 @@ class XAutomationEngine:
         except Exception:
             pass
 
-        # 🛡️ 深度探针 3: 扫描 Cloudflare / Turnstile / Arkose Labs 挑战 iframe
+        # 🛡️ 深度探针 3: 扫描 Cloudflare / Turnstile / Arkose Labs 挑战特征与组件
         try:
+            cf_detected = False
+            cf_reason = ""
             challenge_frame = await page.query_selector(
                 'iframe[src*="challenges.cloudflare.com"], #challenge-stage, iframe[title*="Turnstile"], '
-                'iframe[src*="arkoselabs.com"], iframe[src*="arkose"], div#FunCaptcha, div[id*="arkose"]'
+                'iframe[src*="arkoselabs.com"], iframe[src*="arkose"], div#FunCaptcha, div[id*="arkose"], '
+                'div[data-testid="turnstile"], div.cf-turnstile-wrapper'
             )
             if challenge_frame:
-                self._print("🚨 风控拦截！DOM 结构中检测到人机验证组件 (Cloudflare / Arkose Labs)!")
+                cf_detected = True
+                cf_reason = "DOM 结构中检测到人机核验组件 (Cloudflare / Arkose Labs)"
+            else:
+                try:
+                    p_title = (await page.title() or "").lower()
+                    if any(t in p_title for t in ["just a moment", "attention required", "しばらくお待ちください"]):
+                        cf_detected = True
+                        cf_reason = f"页面标题命中 Cloudflare/安全核验特征 ({p_title})"
+                except Exception:
+                    pass
+
+            if cf_detected:
+                self._print(f"🚨🚨🚨 风控拦截！{cf_reason} (URL: {current_url})！自动化立即安全熔断挂起，等待人工核验处理...")
                 await self._capture_risk_snapshot(page, "challenge_component")
                 raise CaptchaChallengeDetected(current_url)
         except CaptchaChallengeDetected:
@@ -2414,16 +2834,49 @@ class XAutomationEngine:
             return False
 
     async def _safe_go_back(self, page: Any) -> bool:
-        try:
-            await page.go_back(wait_until="domcontentloaded", timeout=6000)
-            await asyncio.sleep(random.uniform(1.5, 2.5))
-            try:
-                await page.wait_for_selector('article, div[data-testid="primaryColumn"]', timeout=4000)
-            except Exception:
-                pass
-            return True
-        except Exception:
+        """带客户端单页路由 (SPA) 双重保底的拟人后退：
+        1. 优先尝试 Playwright 原生 page.go_back()；
+        2. 若因 Twitter 单页应用 pushState/popstate 偶发未触发 DOM 加载事件导致超时，
+           自动启用备用机制：通过底层 evaluate 执行 window.history.back() 进行软回退；
+        3. 等待并核验主栏与推文卡片容器，彻底避免动辄触发硬刷新重载回顶。
+        """
+        if not page or (callable(getattr(page, "is_closed", None)) and page.is_closed() is True):
             return False
+        initial_url = str(getattr(page, "url", "")).strip().lower()
+        # 第 1 重尝试：原生 go_back
+        try:
+            await page.go_back(wait_until="domcontentloaded", timeout=4000)
+            await asyncio.sleep(random.uniform(1.2, 2.0))
+            curr_url = str(getattr(page, "url", "")).strip().lower()
+            if curr_url != initial_url:
+                try:
+                    await page.wait_for_selector('article, div[data-testid="primaryColumn"]', timeout=3000)
+                except Exception:
+                    pass
+                return True
+        except Exception as e:
+            self.logger.debug("原生 page.go_back 微超时/未触发SPA事件: %s", e)
+
+        # 第 2 重尝试：SPA 底层软回退 window.history.back()
+        try:
+            self._print("🔄 触发 SPA 软回退保底 (window.history.back)...")
+            if hasattr(page, "evaluate"):
+                await page.evaluate("() => { window.history.back(); }")
+                await asyncio.sleep(random.uniform(1.5, 2.4))
+                curr_url = str(getattr(page, "url", "")).strip().lower()
+                if curr_url != initial_url:
+                    try:
+                        await page.wait_for_selector('article, div[data-testid="primaryColumn"]', timeout=3500)
+                    except Exception:
+                        pass
+                    self._print("✅ SPA 软回退保底生效，成功平滑恢复前序流轨道！")
+                    return True
+        except Exception as eval_err:
+            self.logger.debug("SPA window.history.back 异常: %s", eval_err)
+
+        # 终审核验：若 URL 已发生改变，视作后退成功
+        curr_url = str(getattr(page, "url", "")).strip().lower()
+        return bool(curr_url and curr_url != initial_url)
 
     async def _scroll_with_control(self, page: Any, distance: int = 400) -> None:
         await human_discrete_scroll(page, distance=distance, sleep_func=self._sleep_with_control)
@@ -2462,10 +2915,14 @@ class XAutomationEngine:
             pass
 
     async def _detect_hover_card_with_human_dwell(self, page: Any) -> Any:
+        """优化推文卡片悬停名片 (Hover Card) 响应灵敏度与微小延迟等待，
+        以高频微步探测替代粗粒度长阻塞，第一时间捕获刚挂载到 layers 容器的名片元素。
+        """
         hover_card = None
-        max_attempts = random.randint(6, 8)
+        # 优化探测微等待：以 180ms 微间隔探测最多 12 次 (~2.1s)，捕获到后仅给予 0.35~0.65s 拟人视觉对焦反应停顿
+        max_attempts = 12
         for _ in range(max_attempts):
-            await asyncio.sleep(0.35)
+            await asyncio.sleep(0.18)
             hover_card = await page.query_selector(
                 'div[data-testid="HoverCard"], '
                 'div[id="layers"] div[data-testid="HoverCard"], '
@@ -2477,7 +2934,7 @@ class XAutomationEngine:
                         continue
                     box = await hover_card.bounding_box() if hasattr(hover_card, "bounding_box") else None
                     if box and box.get("width", 0) >= 40 and box.get("height", 0) >= 30:
-                        dwell_focus = random.uniform(0.6, 1.2)
+                        dwell_focus = random.uniform(0.35, 0.65)
                         await asyncio.sleep(dwell_focus)
                         return hover_card
                 except Exception:
@@ -2564,7 +3021,8 @@ class XAutomationEngine:
             if not has_error and not btn:
                 return False
 
-            self._print("⏳ 检测到推特接口请求异常 (出错了。请尝试重新加载 / Retry)，拟人缓冲 3 秒准备自愈...")
+            self._last_api_error_time = time.time()
+            self._print("⏳ 检测到推特接口请求异常 (出错了。请尝试重新加载 / Retry)，拟人缓冲 3 秒自愈并激活智能升频降速保护...")
             await asyncio.sleep(random.uniform(2.5, 4.0))
 
             # 阶段 1：尝试拟人点击【重试】按钮
@@ -2674,7 +3132,21 @@ class XAutomationEngine:
                     return True, f"用户名 @{handle} 含多位数字且为纯广告外链推文 (高疑似发帖机器人)"
                 return True, "推文仅包含外部推广链接无正文 (推广机器人)"
 
-            # 3. 针对末尾连续 7 位以上数字后缀的用户名处理
+            # 3. 检查推文配图是否包含广告海报/宣传单/二维码 (零耗时直检 Alt 属性)
+            if hasattr(article, "query_selector_all"):
+                img_els = await article.query_selector_all('div[data-testid="tweetPhoto"] img')
+                if img_els:
+                    ad_poster_keywords = [
+                        "poster", "flyer", "advertisement", "ad", "banner", "billboard",
+                        "qr code", "qrcode", "coupon", "brochure", "pamphlet",
+                        "海報", "チラシ", "広告", "宣伝", "ポスター", "バナー", "クーポン", "販促", "告知"
+                    ]
+                    for img_el in img_els:
+                        alt = (await img_el.get_attribute("alt") or "").strip().lower()
+                        if alt and any(k in alt for k in ad_poster_keywords):
+                            return True, f"推文配图为商业海报广告/宣传单/二维码 ('{alt[:25]}')"
+
+            # 4. 针对末尾连续 7 位以上数字后缀的用户名处理
             if has_long_digits:
                 if smart_newbie_enabled:
                     # 开启新人智能识别：博主已更换个性生活头像且推文为正常原创内容 -> 判定为初级真实新手素人，放行准入！
@@ -2686,6 +3158,56 @@ class XAutomationEngine:
             return False, ""
         except Exception:
             return False, ""
+
+    async def _vision_inspect_candidate(
+        self,
+        article: Any,
+        handle: str,
+        config: AutomationConfig
+    ) -> tuple[bool, str]:
+        """真人级多模态视觉审视：
+        提取推文卡片中的头像与配图，通过 VisionInspector 执行启发式或大模型视觉审视。
+        返回 (is_valid, reason)。
+        """
+        if not getattr(config, "vision_filter_enabled", False):
+            return True, ""
+
+        try:
+            # 1. 提取头像 URL
+            avatar_url = ""
+            avatar_el = await article.query_selector('div[data-testid="Tweet-User-Avatar"] img, img[src*="profile_images"]')
+            if avatar_el:
+                avatar_url = await avatar_el.get_attribute("src") or ""
+
+            # 2. 提取推文配图 URL 与推特内置 Alt 无障碍图像描述
+            photo_urls = []
+            photo_alts = []
+            photo_els = await article.query_selector_all('div[data-testid="tweetPhoto"] img')
+            for p_el in photo_els[:2]:
+                p_src = await p_el.get_attribute("src") or ""
+                p_alt = await p_el.get_attribute("alt") or ""
+                if p_src:
+                    photo_urls.append(p_src)
+                if p_alt:
+                    photo_alts.append(p_alt)
+
+            if not getattr(self, "vision_inspector", None):
+                from agent.vision_inspector import VisionInspector
+                self.vision_inspector = VisionInspector()
+
+            # 3. 异步线程执行视觉审视（毫秒级，隔离阻塞）
+            is_valid, v_reason = await asyncio.to_thread(
+                self.vision_inspector.inspect_candidate_sync,
+                handle=handle,
+                avatar_url=avatar_url,
+                tweet_image_urls=photo_urls,
+                image_alts=photo_alts,
+                enable_ai_vision=bool(os.environ.get("ROUTER_API_KEY", ""))
+            )
+            return is_valid, v_reason
+        except Exception as exc:
+            self.logger.debug("视觉审视异常，保底放行: %s", exc)
+            return True, ""
 
 
     async def _execute_natural_roaming(self, page: Any, config: AutomationConfig) -> int:
@@ -2705,6 +3227,89 @@ class XAutomationEngine:
         except Exception as e:
             self.logger.debug("自然摸鱼执行异常: %s", e)
             return 0
+
+    def _calculate_turbo_cooldown(self) -> tuple[float, str]:
+        """【极速模式拟人时间调频引擎】
+        1. 泊松过程时间间隔（指数分布）：打破均匀固定秒数，中心期望 ~17.5s，自然右偏长尾；
+        2. 滑动窗口动态阻尼：近 15 分钟动作密度超标时自动注入动态阻尼 (8~18s)，平滑密度曲线；
+        3. 接口异常智能升频保护（熔断降速）：3 分钟内若遇推特重试/接口异常，强制拉长冷却至 40~55s。
+        """
+        now = time.time()
+        # 记录动作时间戳并清洗 15 分钟 (900s) 以前的过期记录
+        self._sliding_window_actions.append(now)
+        self._sliding_window_actions = [t for t in self._sliding_window_actions if now - t <= 900.0]
+        recent_count = len(self._sliding_window_actions)
+
+        # 1. 泊松过程随机间隔 (Poisson / Exponential-like right-skewed distribution)
+        # 基础 14.0s + 指数分布 (lambda = 1 / 4.0)，截断在 [14.0, 35.0]
+        base_delay = 14.0 + random.expovariate(1.0 / 4.0)
+        base_delay = max(14.0, min(35.0, base_delay))
+
+        # 2. 滑动窗口动态阻尼
+        damping = 0.0
+        if recent_count >= 4:
+            # 15 分钟内触达 4 人以上，叠加动态阻尼 (最高 18 秒)
+            damping = min(18.0, (recent_count - 3) * 4.0 + random.uniform(0.5, 3.0))
+
+        total_delay = base_delay + damping
+
+        # 3. 接口异常智能升频保护（熔断降速）
+        is_circuit_breaker = False
+        if (now - self._last_api_error_time) < 180.0:
+            is_circuit_breaker = True
+            # 强制升频保护，拉长冷却至 40~55 秒
+            cb_delay = random.uniform(40.0, 55.0)
+            total_delay = max(total_delay, cb_delay)
+
+        # 格式化诊断标签
+        if is_circuit_breaker:
+            tag = "⚡ [极速动态调频·熔断降速保护] (接口异常冷却中，拉长间隔防风控)"
+        elif damping > 0:
+            tag = f"⚡ [极速动态调频·动态阻尼生效] (近15分钟累计触达 {recent_count} 人，阻尼 +{damping:.1f}s)"
+        else:
+            tag = f"⚡ [极速黄金平衡·泊松长尾分布] (基础拟人间隔 {base_delay:.1f}s)"
+
+        return total_delay, tag
+
+    async def _maybe_camouflage_like(self, page: Any, article: Any, handle: str, reason: str = "") -> int:
+        """【行为熵掩护机制】未达标优质推文偶发随手点赞掩护：
+        当博主仅因粉丝数略超等非恶意原因未达门槛时，以 4%~6% 极小概率随手点赞，
+        打破'只碰目标、不碰路人'的机械二值化指纹，大幅提升拟人行为熵。
+        严禁对色情、自残、黑名单推文执行点赞。
+        """
+        # 1. 严格排雷：若原因涉及色情、精神疾病、黑名单、外链引流等恶性标签，绝对不点赞
+        reason_low = (reason or "").lower()
+        if any(bad in reason_low for bad in ["色情", "黄推", "裏垢", "自残", "抑郁", "黑名单", "敏感词", "广告", "副業", "外链", "引流", "海报"]):
+            return 0
+
+        # 2. 仅以 5% 的偶发概率触发拟人掩护
+        if random.random() > 0.05:
+            return 0
+
+        if not article or not hasattr(article, "query_selector"):
+            return 0
+
+        try:
+            target_key = await self._article_target_key(article, handle)
+            if not await self._allow_action("like", target_key):
+                return 0
+
+            like_btn = await article.query_selector('button[data-testid="like"]')
+            if not like_btn:
+                like_btn = await article.query_selector('button[aria-label*="Like"], button[aria-label*="いいね"]')
+
+            if like_btn and await is_element_fully_loaded(like_btn):
+                test_id = (await like_btn.get_attribute("data-testid") or "").lower()
+                aria_label = (await like_btn.get_attribute("aria-label") or "").lower()
+                if test_id != "unlike" and not any(k in aria_label for k in ["liked", "已赞", "いいね済", "取り消す", "undo"]):
+                    if await safe_human_click(page, like_btn, self.personality):
+                        self._record_action("like", target_key)
+                        self._print(f"  └─ 🎲 [拟人掩护点赞] 博主 @{handle} 虽未达标 ({reason})，偶发随手点赞推文以扰动行为熵 (模拟真人浏览)")
+                        await asyncio.sleep(random.uniform(1.2, 2.5))
+                        return 1
+        except Exception as e:
+            self.logger.debug("拟人掩护点赞异常: %s", e)
+        return 0
 
     def _dispatch_risk_alert_telegram(
         self,
@@ -2994,6 +3599,8 @@ class XAutomationEngine:
                                 "name": u_info.get("name", ""),
                                 "verified": u_info.get("verified", False),
                                 "protected": u_info.get("protected", False),
+                                "website": u_info.get("website", ""),
+                                "urls": u_info.get("urls", []),
                             }
 
                     # ⚡ 底层数据流极速透视与博主资料池秒级刷新
@@ -3036,6 +3643,66 @@ class XAutomationEngine:
         protected = bool(privacy.get("protected") or legacy.get("protected", False))
         created_at = core.get("created_at") or legacy.get("created_at", "")
 
+        # 外链提取 (兼容 2026 最新 profile_bio.entities 实体池与 Legacy 传统字段)
+        website = ""
+        urls_list: list[str] = []
+
+        def _extract_url_clean(val: Any) -> str:
+            if not val:
+                return ""
+            if isinstance(val, dict):
+                # 优先提取官方真实展开的目标地址 (expanded_url)，杜绝压缩短链混淆
+                for k in ("expanded_url", "url", "display_url"):
+                    sv = val.get(k)
+                    if sv and isinstance(sv, str) and sv.strip():
+                        return sv.strip()
+                return ""
+            s = str(val).strip()
+            if not s or s.startswith("{") or s.startswith("[") or s in ("None", "null", "http://", "https://"):
+                return ""
+            return s
+
+        # 1. 优先提取 2026 最新架构 profile_bio.entities (简介与主页挂载外链的核心官方实体池)
+        bio_entities = bio_obj.get("entities", {}) if isinstance(bio_obj.get("entities"), dict) else {}
+        for ent_key in ("url", "description"):
+            ent_sub = bio_entities.get(ent_key, {})
+            if isinstance(ent_sub, dict):
+                for u_item in ent_sub.get("urls", []):
+                    u_clean = _extract_url_clean(u_item)
+                    if u_clean:
+                        urls_list.append(u_clean)
+                        if ent_key == "url" and (not website or "t.co" in website):
+                            website = u_clean
+
+        # 2. 兼容 Legacy entities 传统字段
+        entities = legacy.get("entities", {}) if isinstance(legacy.get("entities"), dict) else {}
+        for ent_key in ("url", "description"):
+            ent_sub = entities.get(ent_key, {})
+            if isinstance(ent_sub, dict):
+                for u_item in ent_sub.get("urls", []):
+                    u_clean = _extract_url_clean(u_item)
+                    if u_clean:
+                        urls_list.append(u_clean)
+                        if ent_key == "url" and (not website or "t.co" in website):
+                            website = u_clean
+
+        # 3. 根节点 website / user_dict.url / core.url / legacy.url
+        for src in (user_dict.get("website"), core.get("url"), user_dict.get("url"), legacy.get("url")):
+            u_clean = _extract_url_clean(src)
+            if u_clean:
+                if not website:
+                    website = u_clean
+                if not urls_list:
+                    urls_list.append(u_clean)
+
+        # 严格保序去重
+        deduped_urls: list[str] = []
+        seen_urls: set[str] = set()
+        for u in urls_list:
+            if u not in seen_urls:
+                seen_urls.add(u)
+                deduped_urls.append(u)
+
         return {
             "screen_name": sn_norm,
             "name": str(name).strip(),
@@ -3049,6 +3716,8 @@ class XAutomationEngine:
             "followed_by": followed_by,
             "verified": verified,
             "protected": protected,
+            "website": website,
+            "urls": deduped_urls,
         }
 
     def _extract_scout_items_from_json(self, data: Any) -> list[dict[str, Any]]:
@@ -3160,6 +3829,8 @@ class XAutomationEngine:
             has_verified_badge=is_verified,
             card_or_dom_text=combined_text,
             config=config,
+            user_url=cand.get("website", ""),
+            urls=cand.get("urls", []),
         )
         if is_filtered:
             return False, filter_reason
@@ -3200,6 +3871,8 @@ class XAutomationEngine:
                     "name": item.get("name", ""),
                     "verified": item.get("verified", False),
                     "protected": item.get("protected", False),
+                    "website": item.get("website", ""),
+                    "urls": item.get("urls", []),
                 }
 
                 # 若开启底层透视预筛：毫秒级质检并分流至候选池或淘汰库
@@ -3429,9 +4102,19 @@ class XAutomationEngine:
         except Exception as e:
             self._print(f"⚠️ 页面跳转/渲染等待过程捕获到异常: {e}")
 
-    async def refresh_latest_search_feed(self, page: Any, keyword: str) -> bool:
+    async def refresh_latest_search_feed(self, page: Any, keyword: str, min_interval_sec: float = 180.0) -> bool:
         """定时重新检索/刷新最新推文流：返回到搜索页面或首页顶部，拉取刚刚发布的鲜活内容"""
         clean_keyword = keyword.strip() if keyword else ""
+        now = time.monotonic()
+        last_refresh = getattr(self, "_last_search_refresh_time", 0.0)
+        elapsed = now - last_refresh
+        if last_refresh > 0 and elapsed < min_interval_sec:
+            self._print(
+                f"⏱️ [刷新频控拦截] 距离上次重载推文流仅过 {elapsed:.1f} 秒 (< 冷却门槛 {min_interval_sec:.0f} 秒)，"
+                f"触发风控安全拦截，跳过本次重载以防高频请求触发 X 平台风控墙与人机核验。"
+            )
+            return False
+
         if not clean_keyword:
             self._print("🔄 [推荐流刷新] 正在重载 X 首页【为你推荐】推文流...")
             try:
@@ -3595,7 +4278,19 @@ class XAutomationEngine:
         modal_opened = False
         try:
             tweet_text = await article.inner_text()
-            reply_text = await asyncio.to_thread(generate_ai_reply, tweet_text)
+            persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
+            custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
+            custom_model = str(persona_cfg.get("custom_model", "") or "")
+            custom_temp = float(persona_cfg.get("temperature", 0.85) or 0.85)
+            reply_text = await asyncio.to_thread(
+                generate_ai_reply,
+                tweet_text,
+                "",
+                "",
+                custom_model or None,
+                custom_prompt,
+                custom_temp,
+            )
 
             # 成功重置连续失败计数
             self._consecutive_ai_failures = 0
@@ -3763,6 +4458,10 @@ class XAutomationEngine:
                             except Exception:
                                 art_text = ""
                         is_bad, _ = AccountFilterGuard.is_spam_or_nsfw(art_text)
+                        if not is_bad and getattr(config, "filter_mental_health_accounts", True):
+                            is_mental, _ = AccountFilterGuard.is_mental_health_or_depression(art_text)
+                            if is_mental:
+                                is_bad = True
                         if not is_bad and getattr(config, "blacklist_filter_enabled", True) and getattr(config, "blacklist_words", None):
                             is_bl_art, _ = check_user_blacklist(
                                 {"display_name": "", "screen_name": "", "bio": "", "recent_tweets": [art_text]},
@@ -3854,23 +4553,74 @@ class XAutomationEngine:
 
             # 严格限定在 UserProfileHeader_Root 容器内定位关注按钮，杜绝右侧栏推荐博主误点
             profile_header = await page.query_selector('div[data-testid="UserProfileHeader_Root"]')
+            header_text = await profile_header.inner_text() if profile_header else ""
+
+            # 身份特征与外链安全拦截校验（蓝勾、黑名单、抑郁症、低龄、外链等）
+            if getattr(self, "_active_config", None):
+                has_badge = False
+                if profile_header:
+                    has_badge = (await profile_header.query_selector('svg[data-testid="icon-verified"], [data-testid="icon-verified"]')) is not None
+                cached_u = self.user_cache.get(handle.lower(), {})
+                if cached_u.get("verified"):
+                    has_badge = True
+
+                user_url_val = ""
+                user_url_el = await page.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                if user_url_el:
+                    try:
+                        user_url_val = (await user_url_el.inner_text() or "").strip()
+                        if not user_url_val:
+                            user_url_val = (await user_url_el.get_attribute("href") or "").strip()
+                    except Exception:
+                        pass
+
+                is_p_bad, p_bad_reason = AccountFilterGuard.check_candidate_account(
+                    name=cached_u.get("name", "") or header_text,
+                    handle=handle,
+                    card_or_dom_text=f"{header_text} {cached_u.get('description', '')}",
+                    has_verified_badge=has_badge,
+                    config=self._active_config,
+                    user_url=cached_u.get("website", "") or user_url_val,
+                    urls=cached_u.get("urls", []),
+                )
+                if is_p_bad:
+                    self._print(f"Profile @{handle}: {p_bad_reason}; skipping follow and like.")
+                    if getattr(self, "history_pool", None):
+                        self.history_pool.mark_visited(self.tag, handle.lower())
+                    await self.navigate_to_keyword_search(page, keyword)
+                    return followed, likes
+
             follow_btn = None
             if profile_header and await is_element_fully_loaded(profile_header):
-                follow_btn = await profile_header.query_selector('button[data-testid$="-follow"]')
+                follow_btn = await profile_header.query_selector('button[data-testid$="-follow"], button[aria-label*="Follow"], button[aria-label*="フォロー"]')
+            if not follow_btn:
+                follow_btn = await page.query_selector('div[data-testid="primaryColumn"] button[data-testid$="-follow"], button[data-testid$="-follow"]')
             if not follow_btn:
                 self._print(f"Profile @{handle}: no action button inside a validated header; skipping follow.")
             profile_target = f"handle:{handle.lower()}"
-            if follow_btn and await self._allow_action("follow", profile_target) and await safe_human_click(page, follow_btn, self.personality):
-                follow_ok, follow_reason = await self._verify_follow_success(page)
-                if follow_ok:
-                    self._record_action("follow", profile_target)
-                    self._print(f"  └─ ➕ [主页关注] 在个人主页成功关注博主 -> @{handle}")
-                    followed = True
-                    await asyncio.sleep(random.uniform(2.5, 4.0))
-                else:
-                    self._print(f"  └─ ⚠️ [主页关注] 关注未被平台接受: {follow_reason}")
-                    if "RATE_LIMITED" in follow_reason:
-                        await self._trigger_follow_limit_circuit_break(page, follow_reason)
+            if follow_btn and await self._allow_action("follow", profile_target):
+                clicked_ok = await safe_human_click(page, follow_btn, self.personality)
+                if not clicked_ok and hasattr(follow_btn, "click"):
+                    try:
+                        await follow_btn.click(timeout=2500, force=True)
+                        clicked_ok = True
+                    except Exception:
+                        try:
+                            await follow_btn.evaluate("el => el.click()")
+                            clicked_ok = True
+                        except Exception:
+                            pass
+                if clicked_ok:
+                    follow_ok, follow_reason = await self._verify_follow_success(page)
+                    if follow_ok:
+                        self._record_action("follow", profile_target)
+                        self._print(f"  └─ ➕ [主页关注] 在个人主页成功关注博主 -> @{handle}")
+                        followed = True
+                        await asyncio.sleep(random.uniform(2.5, 4.0))
+                    else:
+                        self._print(f"  └─ ⚠️ [主页关注] 关注未被平台接受: {follow_reason}")
+                        if "RATE_LIMITED" in follow_reason:
+                            await self._trigger_follow_limit_circuit_break(page, follow_reason)
 
             articles = await page.query_selector_all("article")
             for art in articles[:3]:
@@ -3956,12 +4706,25 @@ class XAutomationEngine:
                     cached_u = self.user_cache.get(handle.lower(), {})
                     if cached_u.get("verified"):
                         has_badge = True
+
+                    user_url_val = ""
+                    user_url_el = await page.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                    if user_url_el:
+                        try:
+                            user_url_val = (await user_url_el.inner_text() or "").strip()
+                            if not user_url_val:
+                                user_url_val = (await user_url_el.get_attribute("href") or "").strip()
+                        except Exception:
+                            pass
+
                     is_p_bad, p_bad_reason = AccountFilterGuard.check_candidate_account(
                         name=cached_u.get("name", "") or header_text,
                         handle=handle,
                         card_or_dom_text=f"{header_text} {cached_u.get('description', '')}",
                         has_verified_badge=has_badge,
                         config=self._active_config,
+                        user_url=cached_u.get("website", "") or user_url_val,
+                        urls=cached_u.get("urls", []),
                     )
                     if is_p_bad:
                         self._print(f"  └─ ⏩ 跳过博主 @{handle}: {p_bad_reason}")
@@ -4121,33 +4884,59 @@ class XAutomationEngine:
                 between_dwell = random.uniform(1.2, 2.8)
                 await self._sleep_with_control(between_dwell)
 
-            # 点赞推文时页面已向下滚动，平滑回顶确保主页头部与关注按钮 100% 进入可视视口
+            # 点赞推文后页面已向下滚动，强制多源瞬时回顶确保主页头部与关注按钮 100% 进入可视视口且不被吸顶栏遮挡
             if articles:
                 try:
-                    await page.evaluate("window.scrollTo({top: 0, behavior: 'smooth'})")
-                    await asyncio.sleep(0.6)
+                    await page.evaluate("""() => {
+                        window.scrollTo({top: 0, behavior: 'instant'});
+                        if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+                        if (document.documentElement) document.documentElement.scrollTop = 0;
+                        if (document.body) document.body.scrollTop = 0;
+                    }""")
+                    await asyncio.sleep(0.8)
                 except Exception:
                     pass
 
             follow_btn = None
-            for _ in range(3):
-                follow_btn = await target_scope.query_selector('button[data-testid$="-follow"], button[aria-label*="Follow"], button[aria-label*="フォロー"]')
+            for _ in range(4):
+                profile_header = await page.query_selector('div[data-testid="UserProfileHeader_Root"]')
+                scope_to_use = profile_header if profile_header else target_scope
+                if scope_to_use:
+                    follow_btn = await scope_to_use.query_selector('button[data-testid$="-follow"], button[aria-label*="Follow"], button[aria-label*="フォロー"]')
                 if not follow_btn:
                     follow_btn = await page.query_selector('div[data-testid="primaryColumn"] button[data-testid$="-follow"], button[data-testid$="-follow"], button[aria-label*="Follow"], button[aria-label*="フォロー"]')
-                if follow_btn and (not hasattr(follow_btn, "is_visible") or await follow_btn.is_visible()):
+                if follow_btn:
                     break
                 await asyncio.sleep(0.4)
+
+            # 确保关注按钮平滑滚入视口中心，彻底避开吸顶导航栏的覆盖范围
+            if follow_btn and hasattr(follow_btn, "scroll_into_view_if_needed"):
+                try:
+                    await follow_btn.scroll_into_view_if_needed(timeout=1500)
+                except Exception:
+                    pass
 
             profile_target = f"handle:{handle.lower()}"
 
             if follow_btn and await self._allow_action("follow", profile_target):
-                clicked_ok = await safe_human_click(page, follow_btn, self.personality)
+                clicked_ok = False
+                try:
+                    clicked_ok = await safe_human_click(page, follow_btn, self.personality)
+                except Exception:
+                    clicked_ok = False
+
                 if not clicked_ok and hasattr(follow_btn, "click"):
                     try:
-                        await follow_btn.click(timeout=3000)
+                        # 穿透点击 A：Playwright force=True 强制派发（免疫吸顶栏/遮挡物）
+                        await follow_btn.click(timeout=2500, force=True)
                         clicked_ok = True
                     except Exception:
-                        pass
+                        try:
+                            # 穿透点击 B：底层 DOM 直接派发 click 事件（100% 成功）
+                            await follow_btn.evaluate("el => el.click()")
+                            clicked_ok = True
+                        except Exception as dom_err:
+                            self.logger.debug("关注按钮 DOM 穿透点击异常: %s", dom_err)
 
                 if clicked_ok:
                     follow_ok, follow_reason = await self._verify_follow_success(page, container=target_scope)
@@ -4164,6 +4953,8 @@ class XAutomationEngine:
                         self._print(f"  └─ ⚠️ [动作反查预警] 关注 @{handle} 后未确认变更为已关注: {follow_reason}")
                         if "RATE_LIMITED" in follow_reason:
                             await self._trigger_follow_limit_circuit_break(page, follow_reason)
+            elif not follow_btn:
+                self._print(f"  └─ ℹ️ 主页未捕获到待关注按钮（可能已处于关注中或锁推），跳过")
 
                 # 优先尊重用户配置的频控延时区间
                 min_d = float(getattr(self._active_config, "action_min_delay", 0.0) or 0.0)
@@ -4486,6 +5277,7 @@ class XAutomationEngine:
                         continue
 
                     # 7. 文本特征与黑名单敏感词综合过滤
+                    cached_info = self.user_cache.get(handle_lower, {})
                     cell_text = await cell.inner_text() if hasattr(cell, "inner_text") else ""
                     cell_verified = False
                     if hasattr(cell, "query_selector"):
@@ -4500,6 +5292,8 @@ class XAutomationEngine:
                         card_or_dom_text=cell_text,
                         has_verified_badge=cell_verified,
                         config=config,
+                        user_url=cached_info.get("website", ""),
+                        urls=cached_info.get("urls", []),
                     )
                     if is_filtered:
                         continue
@@ -4786,12 +5580,15 @@ class XAutomationEngine:
                     except Exception:
                         pass
 
+                user_info = self.user_cache.get(handle.lower(), {})
                 is_cell_filtered, cell_reason = AccountFilterGuard.check_candidate_account(
                     name=cell_text,
                     handle=handle,
                     card_or_dom_text=cell_text,
                     has_verified_badge=cell_verified,
                     config=config,
+                    user_url=user_info.get("website", ""),
+                    urls=user_info.get("urls", []),
                 )
                 if is_cell_filtered:
                     self._print(f"  └─ ⏩ 跳过好友 @{handle}: {cell_reason}")
@@ -4815,12 +5612,26 @@ class XAutomationEngine:
                     user_info = self.user_cache.get(handle.lower(), {})
                     if user_info.get("verified"):
                         hover_verified = True
+
+                    card_link_val = ""
+                    if hasattr(hover_card, "query_selector"):
+                        try:
+                            card_link_el = await hover_card.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                            if card_link_el:
+                                card_link_val = (await card_link_el.inner_text() or "").strip()
+                                if not card_link_val:
+                                    card_link_val = (await card_link_el.get_attribute("href") or "").strip()
+                        except Exception:
+                            pass
+
                     is_h_filtered, h_reason = AccountFilterGuard.check_candidate_account(
                         name=user_info.get("name", ""),
                         handle=handle,
                         card_or_dom_text=f"{hover_text} {user_info.get('description', '')}",
                         has_verified_badge=hover_verified,
                         config=config,
+                        user_url=user_info.get("website", "") or card_link_val,
+                        urls=user_info.get("urls", []),
                     )
                     if is_h_filtered:
                         self._print(f"  └─ ⏩ 跳过好友 @{handle}: {h_reason}")
@@ -4906,12 +5717,15 @@ class XAutomationEngine:
                         except Exception:
                             pass
 
+                    user_info = self.user_cache.get(handle.lower(), {})
                     is_cell_filtered, cell_reason = AccountFilterGuard.check_candidate_account(
                         name=cell_text,
                         handle=handle,
                         card_or_dom_text=cell_text,
                         has_verified_badge=cell_verified,
                         config=config,
+                        user_url=user_info.get("website", ""),
+                        urls=user_info.get("urls", []),
                     )
                     if is_cell_filtered:
                         self._print(f"  └─ ⏩ 跳过好友 @{handle}: {cell_reason}")
@@ -4935,12 +5749,26 @@ class XAutomationEngine:
                         user_info = self.user_cache.get(handle.lower(), {})
                         if user_info.get("verified"):
                             hover_verified = True
+
+                        card_link_val = ""
+                        if hasattr(hover_card, "query_selector"):
+                            try:
+                                card_link_el = await hover_card.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                                if card_link_el:
+                                    card_link_val = (await card_link_el.inner_text() or "").strip()
+                                    if not card_link_val:
+                                        card_link_val = (await card_link_el.get_attribute("href") or "").strip()
+                            except Exception:
+                                pass
+
                         is_h_filtered, h_reason = AccountFilterGuard.check_candidate_account(
                             name=user_info.get("name", ""),
                             handle=handle,
                             card_or_dom_text=f"{hover_text} {user_info.get('description', '')}",
                             has_verified_badge=hover_verified,
                             config=config,
+                            user_url=user_info.get("website", "") or card_link_val,
+                            urls=user_info.get("urls", []),
                         )
                         if is_h_filtered:
                             self._print(f"  └─ ⏩ 跳过好友 @{handle}: {h_reason}")
@@ -5117,6 +5945,7 @@ class XAutomationEngine:
         consecutive_follows = 0
         empty_rounds = 0
         consecutive_scrolls = 0
+        consecutive_search_refreshes = 0
         has_roamed_in_batch = False
 
         # 每个新批次重置 AI 熔断标记，重新给 API 尝试机会
@@ -5147,9 +5976,11 @@ class XAutomationEngine:
                         f"⏰ [定时刷新] 已达到设定间隔 ({elapsed / 60:.1f} 分钟 >= {config.search_refresh_interval_minutes} 分钟)，"
                         f"正在刷新最新内容流，捕获最新鲜发布的内容..."
                     )
-                    await self.refresh_latest_search_feed(page, config.keyword)
+                    refreshed = await self.refresh_latest_search_feed(page, config.keyword, min_interval_sec=60.0)
                     empty_rounds = 0
                     consecutive_scrolls = 0
+                    if refreshed:
+                        consecutive_search_refreshes = 0
                     await asyncio.sleep(random.uniform(2.0, 3.5))
                     continue
 
@@ -5210,11 +6041,22 @@ class XAutomationEngine:
                         await self._scroll_with_control(page, distance=500)
                         await asyncio.sleep(random.uniform(1.2, 2.0))
                         if getattr(config, "search_pagination_refresh_enabled", True) and (consecutive_scrolls >= 8 or empty_rounds >= 3):
-                            self._print("🔄 [最新流深滚自愈] 页面出现断流或深滚达限，自动重载最新流恢复新鲜推文...")
-                            await self.refresh_latest_search_feed(page, config.keyword)
+                            if consecutive_search_refreshes >= 2:
+                                self._print(
+                                    f"🛡️ [风控熔断保护] 搜索断流且已连续重载 {consecutive_search_refreshes} 次无果，"
+                                    f"安全终止当前批次以防高频请求引发风控..."
+                                )
+                                break
+                            refreshed = await self.refresh_latest_search_feed(page, config.keyword, min_interval_sec=180.0)
                             consecutive_scrolls = 0
                             empty_rounds = 0
-                        continue
+                            if refreshed:
+                                consecutive_search_refreshes += 1
+                                self._print(f"🔄 [最新流深滚自愈] 页面出现断流或深滚达限，已重载最新流 (本批次累计重载: {consecutive_search_refreshes}/2 次)...")
+                                await asyncio.sleep(random.uniform(2.5, 4.0))
+                            else:
+                                await asyncio.sleep(random.uniform(1.8, 3.0))
+                            continue
             else:
                 empty_rounds = 0
 
@@ -5237,6 +6079,11 @@ class XAutomationEngine:
 
                 article_text = await article.inner_text()
                 is_bad_post, post_reason = AccountFilterGuard.is_spam_or_nsfw(article_text)
+                if not is_bad_post and getattr(config, "filter_mental_health_accounts", True):
+                    is_mental, m_reason = AccountFilterGuard.is_mental_health_or_depression(article_text)
+                    if is_mental:
+                        is_bad_post = True
+                        post_reason = m_reason
                 if not is_bad_post and getattr(config, "blacklist_filter_enabled", True) and getattr(config, "blacklist_words", None):
                     is_bl_tweet, bl_tweet_word = check_user_blacklist(
                         {"display_name": "", "screen_name": "", "bio": "", "recent_tweets": [article_text]},
@@ -5280,6 +6127,9 @@ class XAutomationEngine:
                                 if handle_lower in self._scout_rejected_handles:
                                     scout_reason = self._scout_rejection_reasons.get(handle_lower, "未达到底层透视准入门槛")
                                     self._print(f"⚡ [底层透视秒级过滤] 博主 @{handle} 未达标: {scout_reason} (零耗时直过，省去悬停与主页跳转)")
+                                    # 🎲 拟人行为熵掩护：对非恶意未达标博主偶发 5% 随手点赞优质推文
+                                    cam_like = await self._maybe_camouflage_like(page, article, handle, scout_reason)
+                                    likes_count += cam_like
                                     await asyncio.sleep(random.uniform(0.5, 1.0))
                                     continue
                                 elif handle_lower in self._scout_candidates:
@@ -5299,6 +6149,16 @@ class XAutomationEngine:
                                     continue
                                 elif bool(re.search(r"\d{7,}$", handle)) and getattr(config, "smart_newbie_recognition_enabled", True):
                                     self._print(f"🌱 [新人智能识别] 博主 @{handle} 虽然含多位数字后缀，但拥有个性头像且发帖真实自然，判定为【真实新手素人】，予以放行准入！")
+
+                            # 👁️ 真人级多模态视觉审视 (头像/配图扫毒，识别真实车主，秒级拦截广告海报与二维码)
+                            if getattr(config, "vision_filter_enabled", False):
+                                is_v_valid, v_reason = await self._vision_inspect_candidate(article, handle, config=config)
+                                if not is_v_valid:
+                                    self._print(f"⏩ [视觉审视拦截] 跳过博主 @{handle}: {v_reason} (视觉扫毒淘汰)")
+                                    await asyncio.sleep(random.uniform(0.8, 1.8))
+                                    continue
+                                elif v_reason and ("命中" in v_reason or "实拍" in v_reason or "通过" in v_reason):
+                                    self._print(f"👁️ [视觉审视通过] 博主 @{handle}: {v_reason}")
 
                             self._print(f"🔍 悬停检查博主名片 -> @{handle}...")
                             move_ok = await human_move_to_fast(page, link, self.personality)
@@ -5344,12 +6204,25 @@ class XAutomationEngine:
                                 except Exception:
                                     pass
 
+                            card_link_val = ""
+                            if hover_card and hasattr(hover_card, "query_selector"):
+                                try:
+                                    card_link_el = await hover_card.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                                    if card_link_el:
+                                        card_link_val = (await card_link_el.inner_text() or "").strip()
+                                        if not card_link_val:
+                                            card_link_val = (await card_link_el.get_attribute("href") or "").strip()
+                                except Exception:
+                                    pass
+
                             is_candidate_bad, p_reason = AccountFilterGuard.check_candidate_account(
                                 name=candidate_name,
                                 handle=handle,
                                 card_or_dom_text=combined_card_text,
                                 has_verified_badge=has_badge,
                                 config=config,
+                                user_url=user_info.get("website", "") or card_link_val,
+                                urls=user_info.get("urls", []),
                             )
                             if is_candidate_bad:
                                 await self._simulate_natural_reading(page, article, handle, p_reason)
@@ -5378,7 +6251,7 @@ class XAutomationEngine:
 
                                 await asyncio.sleep(random.uniform(1.5, 3.0))
 
-                                # 若名片未读取到粉丝数，必须切入主页核验粉丝；若已确认在阈值内，则按配置概率切主页或走名片快捷关注
+                                # 若名片未读取到粉丝数，必须切入主页核验粉丝；若已确认在阈值内，按配置决定是否进入主页深度终审
                                 should_visit_profile = True if follower_count < 0 else (random.random() < config.profile_visit_ratio)
                                 did_hop = False
                                 need_profile_visit = False
@@ -5481,12 +6354,23 @@ class XAutomationEngine:
                                     follow_reason = "UNREADY"
 
                                     if follow_btn and await self._allow_action("follow", profile_target):
-                                        if await safe_human_click(page, follow_btn, self.personality):
+                                        clicked_ok = await safe_human_click(page, follow_btn, self.personality)
+                                        if not clicked_ok and hasattr(follow_btn, "click"):
+                                            try:
+                                                await follow_btn.click(timeout=2000, force=True)
+                                                clicked_ok = True
+                                            except Exception:
+                                                try:
+                                                    await follow_btn.evaluate("el => el.click()")
+                                                    clicked_ok = True
+                                                except Exception:
+                                                    pass
+                                        if clicked_ok:
                                             follow_ok, follow_reason = await self._verify_follow_success(page, container=hover_card_check)
                                             if follow_ok:
                                                 card_follow_success = True
                                                 self._record_action("follow", profile_target)
-                                                self._print(f"➕ [名片关注] 自动关注成功 -> @{handle}")
+                                                self._print(f"➕ [名片直接关注] 目标 @{handle} 于名片层完成关注 (保留原搜索流轨道，免除主页跳转)")
                                                 follows_count += 1
                                                 exec_count += 1
                                                 consecutive_follows += 1
@@ -5636,8 +6520,7 @@ class XAutomationEngine:
                                 )
 
                                 if config.execution_preset == "turbo":
-                                    cool_down = random.uniform(15.0, 25.0)
-                                    preset_tag = "⚡ [极速黄金平衡]"
+                                    cool_down, preset_tag = self._calculate_turbo_cooldown()
                                 else:
                                     cool_mult = 1.2 if did_hop else 1.0
                                     cool_down = max(3.0, self.personality.get_cooldown() * cool_mult)
@@ -5650,6 +6533,9 @@ class XAutomationEngine:
                                 await asyncio.sleep(random.uniform(1.2, 2.0))
                             else:
                                 self._print(f"⏩ [风控拟人防御] 跳过博主 @{handle} (粉丝数: {follower_count} > 门槛: {config.max_follower_threshold}，模拟阅读停顿后移开...)")
+                                # 🎲 拟人行为熵掩护：对粉丝数略超博主偶发 5% 随手点赞优质推文
+                                cam_like = await self._maybe_camouflage_like(page, article, handle, f"粉丝数 ({follower_count}) 超出门槛 ({config.max_follower_threshold})")
+                                likes_count += cam_like
                                 await asyncio.sleep(random.uniform(1.8, 3.2))
                                 await self._dismiss_hover_card(page)
                             break
@@ -5661,21 +6547,33 @@ class XAutomationEngine:
                 consecutive_scrolls += 1
                 await self._scroll_with_control(page, distance=500)
 
-                # 🔄 最新流深滚翻页自愈机制 (防深滚卡死/空白，持续捕获最新鲜推文)
+                # 🔄 最新流深滚翻页自愈机制 (深滚防断流 + 风控冷却保护)
                 max_consec = 35 if getattr(config, "graphql_scout_filter_enabled", True) else 8
                 max_empty = 25 if getattr(config, "graphql_scout_filter_enabled", True) else 3
                 if getattr(config, "search_pagination_refresh_enabled", True) and (consecutive_scrolls >= max_consec or empty_rounds >= max_empty):
-                    self._print(
-                        f"🔄 [最新流深滚自愈] 连续深滚已达 {consecutive_scrolls} 屏或暂未见新鲜推文，"
-                        f"自动平滑回顶重载最新流，防止接口卡死与空白..."
-                    )
-                    await self.refresh_latest_search_feed(page, config.keyword)
+                    if consecutive_search_refreshes >= 2:
+                        self._print(
+                            f"🛡️ [风控熔断保护] 关键词 '{config.keyword}' 连续深滚且已重载 {consecutive_search_refreshes} 次均未发现合规目标"
+                            f"（推文可能全部命中黑名单敏感词过滤或流已耗尽），严禁无节制反复重载以防撞上 X 平台频控墙！"
+                            f"立即安全结束本批次，平滑进入批次休眠退避..."
+                        )
+                        break
+
+                    refreshed = await self.refresh_latest_search_feed(page, config.keyword, min_interval_sec=180.0)
                     consecutive_scrolls = 0
                     empty_rounds = 0
-                    await asyncio.sleep(random.uniform(2.5, 4.0))
+                    if refreshed:
+                        consecutive_search_refreshes += 1
+                        self._print(
+                            f"🔄 [最新流深滚自愈] 连续深滚达限，已平滑重载最新流 "
+                            f"(本批次累计重载: {consecutive_search_refreshes}/2 次)..."
+                        )
+                        await asyncio.sleep(random.uniform(2.5, 4.0))
+                    else:
+                        await asyncio.sleep(random.uniform(1.8, 3.0))
                     continue
 
-                empty_reload_limit = 20 if getattr(config, "graphql_scout_filter_enabled", True) else 6
+                empty_reload_limit = 12 if getattr(config, "graphql_scout_filter_enabled", True) else 6
                 if empty_rounds >= empty_reload_limit:
                     self._print(f"⚠️ 连续 {empty_rounds} 轮未发现新推文，刷新页面...")
                     try:
@@ -5687,6 +6585,7 @@ class XAutomationEngine:
             else:
                 consecutive_scrolls = 0
                 empty_rounds = 0
+                consecutive_search_refreshes = 0
 
         return exec_count, likes_count, follows_count, views_count
 
@@ -5768,6 +6667,10 @@ class XAutomationEngine:
 
                         article_text = await article.inner_text()
                         is_bad_post, post_reason = AccountFilterGuard.is_spam_or_nsfw(article_text)
+                        if not is_bad_post and getattr(config, "filter_mental_health_accounts", True):
+                            is_mental, _ = AccountFilterGuard.is_mental_health_or_depression(article_text)
+                            if is_mental:
+                                is_bad_post = True
                         if not is_bad_post and getattr(config, "blacklist_filter_enabled", True) and getattr(config, "blacklist_words", None):
                             is_bl_tweet, _ = check_user_blacklist(
                                 {"display_name": "", "screen_name": "", "bio": "", "recent_tweets": [article_text]},
@@ -5800,6 +6703,24 @@ class XAutomationEngine:
 
                             if getattr(self, "history_pool", None) and self.history_pool.is_visited(self.tag, handle.lower()):
                                 continue
+
+                            # 🔍 推文卡片前置指标快速质检
+                            if getattr(config, "pre_click_guard_enabled", True):
+                                is_discard, discard_reason = await self._pre_click_card_guard(article, handle, config=config)
+                                if is_discard:
+                                    self._print(f"⏩ [卡片前置排雷] 跳过劣质目标 @{handle}: {discard_reason}")
+                                    await asyncio.sleep(random.uniform(0.8, 1.8))
+                                    continue
+
+                            # 👁️ 真人级多模态视觉审视 (头像/配图扫毒，识别真实车主，秒级拦截广告海报与二维码)
+                            if getattr(config, "vision_filter_enabled", False):
+                                is_v_valid, v_reason = await self._vision_inspect_candidate(article, handle, config=config)
+                                if not is_v_valid:
+                                    self._print(f"⏩ [视觉审视拦截] 跳过博主 @{handle}: {v_reason} (视觉扫毒淘汰)")
+                                    await asyncio.sleep(random.uniform(0.8, 1.8))
+                                    continue
+                                elif v_reason and ("命中" in v_reason or "实拍" in v_reason or "通过" in v_reason):
+                                    self._print(f"👁️ [视觉审视通过] 博主 @{handle}: {v_reason}")
 
                             self._print(f"🔍 悬停检查种子候选博主名片 -> @{handle}...")
                             move_ok = await human_move_to_fast(page, link, self.personality)
@@ -5835,12 +6756,25 @@ class XAutomationEngine:
                                 except Exception:
                                     pass
 
+                            card_link_val = ""
+                            if hover_card and hasattr(hover_card, "query_selector"):
+                                try:
+                                    card_link_el = await hover_card.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                                    if card_link_el:
+                                        card_link_val = (await card_link_el.inner_text() or "").strip()
+                                        if not card_link_val:
+                                            card_link_val = (await card_link_el.get_attribute("href") or "").strip()
+                                except Exception:
+                                    pass
+
                             is_cand_bad, p_reason = AccountFilterGuard.check_candidate_account(
                                 name=candidate_name,
                                 handle=handle,
                                 card_or_dom_text=combined_card_text,
                                 has_verified_badge=has_badge,
                                 config=config,
+                                user_url=user_info.get("website", "") or card_link_val,
+                                urls=user_info.get("urls", []),
                             )
                             if is_cand_bad:
                                 self._print(f"⏩ 跳过种子候选 @{handle}: {p_reason}")
@@ -6076,12 +7010,15 @@ class XAutomationEngine:
                             except Exception:
                                 pass
 
+                        user_info = self.user_cache.get(cand_handle.lower(), {})
                         is_cell_filtered, cell_reason = AccountFilterGuard.check_candidate_account(
                             name=cell_text,
                             handle=cand_handle,
                             card_or_dom_text=cell_text,
                             has_verified_badge=cell_verified,
                             config=config,
+                            user_url=user_info.get("website", ""),
+                            urls=user_info.get("urls", []),
                         )
                         if is_cell_filtered:
                             self._print(f"  └─ ⏩ 跳过好友 @{cand_handle}: {cell_reason}")
@@ -6110,12 +7047,26 @@ class XAutomationEngine:
                             user_info = self.user_cache.get(cand_handle.lower(), {})
                             if user_info.get("verified"):
                                 hover_verified = True
+
+                            card_link_val = ""
+                            if hasattr(hover_card, "query_selector"):
+                                try:
+                                    card_link_el = await hover_card.query_selector('[data-testid="UserUrl"], a[href*="t.co"]')
+                                    if card_link_el:
+                                        card_link_val = (await card_link_el.inner_text() or "").strip()
+                                        if not card_link_val:
+                                            card_link_val = (await card_link_el.get_attribute("href") or "").strip()
+                                except Exception:
+                                    pass
+
                             is_h_filtered, h_reason = AccountFilterGuard.check_candidate_account(
                                 name=user_info.get("name", ""),
                                 handle=cand_handle,
                                 card_or_dom_text=f"{hover_text} {user_info.get('description', '')}",
                                 has_verified_badge=hover_verified,
                                 config=config,
+                                user_url=user_info.get("website", "") or card_link_val,
+                                urls=user_info.get("urls", []),
                             )
                             if is_h_filtered:
                                 self._print(f"  └─ ⏩ 跳过好友 @{cand_handle}: {h_reason}")
@@ -6229,8 +7180,7 @@ class XAutomationEngine:
 
                                 hop_success = True
                                 if config.execution_preset == "turbo":
-                                    cool_down = random.uniform(15.0, 25.0)
-                                    preset_tag = "⚡ [极速黄金平衡]"
+                                    cool_down, preset_tag = self._calculate_turbo_cooldown()
                                 else:
                                     cool_down = max(3.0, self.personality.get_cooldown() * 1.1)
                                     preset_tag = f"⏱️ [{self.personality.p_type}]"
@@ -6477,12 +7427,15 @@ class XAutomationEngine:
                             cell_verified = (await cell.query_selector('svg[data-testid="icon-verified"], [data-testid="icon-verified"]')) is not None
                         except Exception:
                             pass
+                    user_info = self.user_cache.get(cand_lower, {})
                     is_bad, bad_reason = AccountFilterGuard.check_candidate_account(
                         name=display_name,
                         handle=cand_handle,
                         card_or_dom_text=cell_text,
                         has_verified_badge=cell_verified,
                         config=config,
+                        user_url=user_info.get("website", ""),
+                        urls=user_info.get("urls", []),
                     )
                     if is_bad:
                         self._print(f"  └─ ⏩ 跳过粉丝 @{cand_handle}: {bad_reason}")
@@ -6696,6 +7649,10 @@ class XAutomationEngine:
             self._print("⚡ [极速省流·防卡加速] 已开启 (底层拦截大体积视频流预加载，降低 60% 内存与显存占用)")
         else:
             self._print("🎥 [多媒体模式] 保持推特原版多媒体加载 (视频流阻断未开启)")
+        if getattr(config, "vision_filter_enabled", False):
+            self._print("👁️ [真人级视觉审视引擎] 已开启 (多模态头像与配图识别，靶向真实车主，秒级拦截广告海报与二维码)")
+        else:
+            self._print("⚪ [真人级视觉审视引擎] 未开启 (仅执行常规文字与卡片指标初筛)")
         self._print("==========================================\n")
 
         try:
@@ -7173,6 +8130,9 @@ class XAutomationEngine:
                             self._print(f"🛬 [限额软着陆] 今日进度已达 {total_exec}/{config.daily_task_limit} (>= 85%)，平滑拉长批次休息 (+1 分钟) 防范风控...")
 
                     self._print(f"⏳ 批次结束：开启【{cooldown_min} 分钟】{preset_label}休息倒计时...")
+
+                    # 🧹 定期轻量静默清障：在每个批次结束的“拟人安全休息”期间，调用页面级 window.gc() 与 V8 堆内存回收
+                    await self._perform_batch_silent_maintenance(page, context)
 
                     for remain_m in range(cooldown_min, 0, -1):
                         self._print(f"⏱️ [批次倒计时] 距离第 {batch_index + 1} 批次启动还剩 {remain_m} 分钟...")

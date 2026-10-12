@@ -409,7 +409,10 @@ class AgentService:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            self.cycle_once()
+            try:
+                self.cycle_once()
+            except Exception as exc:
+                LOGGER.warning("Agent service cycle encountered transient exception: %s", exc)
             self._stop.wait(self.heartbeat_interval)
 
 

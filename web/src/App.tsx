@@ -29,6 +29,7 @@ const LicensesPage = lazy(() => import("./pages/licenses").then((module) => ({ d
 const TelegramTranslationPage = lazy(() => import("./pages/telegram_translation").then((module) => ({ default: module.TelegramTranslationPage })));
 const ProxyNodesPage = lazy(() => import("./pages/proxy_nodes").then((module) => ({ default: module.ProxyNodesPage })));
 const ReleasesPage = lazy(() => import("./pages/releases").then((module) => ({ default: module.ReleasesPage })));
+const AIRoutingPage = lazy(() => import("./pages/ai_routing").then((module) => ({ default: module.AIRoutingPage })));
 
 const menu = [
   ["/ai/chat", "AI 聊天", ["ADMIN", "OWNER", "MEMBER"]],
@@ -38,6 +39,7 @@ const menu = [
   ["/ai/writing", "AI 话术", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ai/tasks", "AI 任务", ["ADMIN", "OWNER", "MEMBER"]],
   ["/control-center", "统一控制中心", ["ADMIN", "OWNER", "MEMBER"]],
+  ["/ai-routing", "AI 通道与模型", ["ADMIN", "OWNER", "MEMBER"]],
   ["/ops", "运维监控", ["ADMIN"]],
   ["/releases", "客户端版本", ["ADMIN"]],
   ["/licenses", "远程授权", ["ADMIN"]],
@@ -90,7 +92,7 @@ const iconPaths: Record<string, React.ReactNode> = {
 
 const navIcons: Record<string, string> = {
   "/control-center": "control", "/ops": "ops", "/licenses": "license", "/telegram-translation": "message",
-  "/ai-providers": "provider", "/dashboard": "dashboard", "/workspaces": "workspace", "/users": "users",
+  "/ai-providers": "provider", "/ai-routing": "ai", "/dashboard": "dashboard", "/workspaces": "workspace", "/users": "users",
   "/agents": "agent", "/accounts": "account", "/profiles": "profile", "/tasks": "task", "/activity": "activity",
   "/statistics": "stats", "/scripts": "script", "/script-runs": "activity", "/settings": "settings", "/proxy-nodes": "proxy", "/releases": "release",
 };
@@ -258,6 +260,7 @@ export default function App() {
         <Route path="telegram-translation" element={<Suspense fallback={<div className="loading">正在加载 Telegram 翻译…</div>}><TelegramTranslationPage /></Suspense>} />
         <Route path="proxy-nodes" element={<Suspense fallback={<div className="loading">正在加载代理节点工具…</div>}><ProxyNodesPage /></Suspense>} />
         <Route path="ai-providers" element={<Suspense fallback={<div className="loading">正在加载 AI 服务商…</div>}><AIProvidersPage user={user!} /></Suspense>} />
+        <Route path="ai-routing" element={<Suspense fallback={<div className="loading">正在加载 AI 通道与模型…</div>}><AIRoutingPage user={user!} /></Suspense>} />
         <Route index element={<Navigate to="/dashboard" replace />} />
         <Route path="dashboard" element={<DashboardPage />} />
         <Route path="scripts" element={<Suspense fallback={<div className="loading">正在加载脚本中心…</div>}><ScriptsPage user={user!} /></Suspense>} />

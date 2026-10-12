@@ -56,6 +56,114 @@ class TelegramConfig:
         return asdict(self)
 
 
+# 常见测试/无效占位 ID 黑名单 (严禁作为默认私密 ID)
+KNOWN_PLACEHOLDER_IDS = {
+    "112233", "123456789", "987654321", "111222", "555666",
+    "12345", "123456", "0", "", "none", "null", "undefined",
+}
+
+
+def is_valid_user_chat_id(val: Any) -> bool:
+    """检查是否为真实有效的 Telegram 私人数字 ID."""
+    s = str(val or "").strip()
+    if not s or s.lower() in KNOWN_PLACEHOLDER_IDS:
+        return False
+    if not s.isdigit():
+        return False
+    if len(s) < 6 or len(s) > 15:
+        return False
+    return True
+
+
+def get_local_active_proxy() -> str:
+    """自动探测本机活跃代理端口 (支持 v2rayN / Clash / Shadowsocks 等)."""
+    import socket
+    candidates = [
+        (10809, "http://127.0.0.1:10809"),    # v2rayN / Xray HTTP
+        (10808, "socks5://127.0.0.1:10808"),  # v2rayN / Xray SOCKS5
+        (7890,  "http://127.0.0.1:7890"),     # Clash / Clash Verge HTTP
+        (7897,  "http://127.0.0.1:7897"),     # Clash Verge Rev HTTP
+        (1080,  "socks5://127.0.0.1:1080"),   # Shadowsocks / 通用 SOCKS5
+    ]
+    for port, url in candidates:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                return url
+        except Exception:
+            continue
+    return ""
+
+
+def _extract_valid_chat_id_from_file(path: Path) -> str:
+    """从单个 JSON 配置文件中尝试提取有效的非占位 chat_id."""
+    try:
+        if not path.is_file():
+            return ""
+        content = path.read_text(encoding="utf-8")
+        data = json.loads(content)
+        if isinstance(data, dict):
+            cid = data.get("chat_id")
+            if is_valid_user_chat_id(cid):
+                return str(cid).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def find_local_cached_chat_id() -> str:
+    """深度穿透扫描本机历史配置文件与备份，提取用户真实有效的 Telegram 私人 ID."""
+    import os
+    search_dirs = [
+        Path.cwd(),
+        Path(__file__).resolve().parent.parent,
+        Path(os.environ.get("USERPROFILE", "C:/Users/Administrator")) / "Desktop",
+        Path(os.environ.get("APPDATA", "C:/Users/Administrator/AppData/Roaming")),
+    ]
+    target_filenames = ["telegram_config.json", "tg_config.json"]
+    visited_paths = set()
+
+    for base_dir in search_dirs:
+        if not base_dir.exists():
+            continue
+        # 1. 优先检查当前及一级 config 子目录
+        for tf in target_filenames:
+            for p in (base_dir / tf, base_dir / "config" / tf):
+                try:
+                    resolved = p.resolve()
+                    if resolved not in visited_paths and p.is_file():
+                        visited_paths.add(resolved)
+                        cid = _extract_valid_chat_id_from_file(p)
+                        if cid:
+                            return cid
+                except Exception:
+                    pass
+
+        # 2. 深度扫描历史备份与桌面发行包目录
+        try:
+            for entry in base_dir.iterdir():
+                if not entry.is_dir():
+                    continue
+                entry_name = entry.name.lower()
+                if any(k in entry_name for k in ("x_agent", "laogu", "control", "backup", "备份", "02_")):
+                    for root, dirs, files in os.walk(str(entry)):
+                        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__", "venv", ".venv")]
+                        for f in files:
+                            if f in target_filenames:
+                                fp = Path(root) / f
+                                try:
+                                    resolved = fp.resolve()
+                                    if resolved not in visited_paths and fp.is_file():
+                                        visited_paths.add(resolved)
+                                        cid = _extract_valid_chat_id_from_file(fp)
+                                        if cid:
+                                            return cid
+                                except Exception:
+                                    pass
+        except Exception:
+            pass
+    return ""
+
+
 import sys
 
 
@@ -70,7 +178,7 @@ class TelegramNotifier:
         self.config = self.load_config()
 
     def load_config(self) -> TelegramConfig:
-        """从本地加载 TG 配置 (支持多候选路径查找)."""
+        """从本地加载 TG 配置 (支持多候选路径查找并自动继承本地真实私人ID)."""
         candidate_paths = [
             self.config_file,
             self.config_dir / "config" / self.CONFIG_FILE_NAME,
@@ -93,11 +201,33 @@ class TelegramNotifier:
                     content = path.read_text(encoding="utf-8")
                     data = json.loads(content)
                     self.config_file = path
-                    return TelegramConfig.from_mapping(data)
+                    cfg = TelegramConfig.from_mapping(data)
+                    # 关键增强：若 chat_id 无效或为占位符，自动继承本地真实有效 ID
+                    if not is_valid_user_chat_id(cfg.chat_id):
+                        cached_id = find_local_cached_chat_id()
+                        if cached_id:
+                            cfg.chat_id = cached_id
+                            cfg.enabled = True
+                            logger.info("Telegram 配置自动继承本地历史真实私人 ID 并默认启用: %s", cached_id)
+                    # 关键增强：若 proxy_url 为空，自动感知本地活跃代理
+                    if not cfg.proxy_url:
+                        active_proxy = get_local_active_proxy()
+                        if active_proxy:
+                            cfg.proxy_url = active_proxy
+                    return cfg
                 except Exception as exc:
                     logger.warning("加载 Telegram 配置失败 (%s): %s", path, exc)
 
-        return TelegramConfig()
+        # 默认无配置文件时，自动探测并预填本地真实 ID 与代理
+        default_cfg = TelegramConfig()
+        cached_id = find_local_cached_chat_id()
+        if cached_id:
+            default_cfg.chat_id = cached_id
+            default_cfg.enabled = True
+        active_proxy = get_local_active_proxy()
+        if active_proxy:
+            default_cfg.proxy_url = active_proxy
+        return default_cfg
 
     def save_config(self, config: TelegramConfig) -> bool:
         """保存 TG 配置到本地."""
@@ -113,9 +243,6 @@ class TelegramNotifier:
                 except Exception:
                     pass
             return True
-        except Exception as exc:
-            logger.error("保存 Telegram 配置失败: %s", exc)
-            return False
         except Exception as exc:
             logger.error("保存 Telegram 配置失败: %s", exc)
             return False
@@ -148,16 +275,15 @@ class TelegramNotifier:
         return f"Telegram 报错: {desc}"
 
     @classmethod
-    def _send_via_socks5(
+    def _request_via_socks5(
         cls,
         proxy_url: str,
-        token: str,
-        target_chat: str,
-        text: str,
-        parse_mode: str = "Markdown",
+        path: str,
+        method: str = "GET",
+        json_data: Optional[dict[str, Any]] = None,
         timeout: int = 15,
-    ) -> tuple[bool, str]:
-        """使用原生 Socket 实现标准 SOCKS5/SOCKS5h 传输 (无需第三方依赖，支持远程域名解析防污染)."""
+    ) -> tuple[bool, Any, str]:
+        """使用原生 Socket 实现标准 SOCKS5/SOCKS5h 传输执行通用 Telegram API 请求."""
         import socket
         import ssl
 
@@ -173,8 +299,9 @@ class TelegramNotifier:
         except Exception as exc:
             return (
                 False,
+                {},
                 f"无法连接到本地代理服务器 ({proxy_host}:{proxy_port}): {exc}。\n"
-                "💡 提示：如果您在 v2rayN 中开启了【TUN 虚拟网卡模式】，所有流量已自动代理，请直接将网络代理输入框【留空】再试！",
+                "💡 提示：如果您在科学上网软件中开启了【TUN 虚拟网卡模式】，所有流量已自动代理，请直接将网络代理输入框【留空】再试！",
             )
 
         try:
@@ -185,7 +312,7 @@ class TelegramNotifier:
                 auth_resp = sock.recv(2)
                 if len(auth_resp) < 2 or auth_resp[0] != 5:
                     sock.close()
-                    return False, f"SOCKS5 握手失败: 代理端响应异常 ({auth_resp!r})"
+                    return False, {}, f"SOCKS5 握手失败: 代理端响应异常 ({auth_resp!r})"
                 if auth_resp[1] == 2:
                     u_bytes = username.encode("utf-8")
                     p_bytes = password.encode("utf-8")
@@ -193,10 +320,10 @@ class TelegramNotifier:
                     auth_res = sock.recv(2)
                     if len(auth_res) < 2 or auth_res[1] != 0:
                         sock.close()
-                        return False, "SOCKS5 代理账号或密码认证失败"
+                        return False, {}, "SOCKS5 代理账号或密码认证失败"
                 elif auth_resp[1] != 0:
                     sock.close()
-                    return False, f"SOCKS5 认证协商失败: 代理要求不支持的认证方式 ({auth_resp[1]})"
+                    return False, {}, f"SOCKS5 认证协商失败: 代理要求不支持的认证方式 ({auth_resp[1]})"
             else:
                 sock.sendall(b"\x05\x01\x00")
                 auth_resp = sock.recv(2)
@@ -204,6 +331,7 @@ class TelegramNotifier:
                     sock.close()
                     return (
                         False,
+                        {},
                         f"SOCKS5 握手失败 (响应: {auth_resp!r})。\n"
                         f"提示：v2rayN 默认 SOCKS5 端口通常为 10808，HTTP 端口为 10809。请确认端口是否匹配。",
                     )
@@ -222,28 +350,30 @@ class TelegramNotifier:
             if len(conn_resp) < 4 or conn_resp[1] != 0:
                 rep_code = conn_resp[1] if len(conn_resp) >= 2 else -1
                 sock.close()
-                return False, f"SOCKS5 代理建立到 Telegram 链路失败 (错误码: {rep_code})，请检查代理节点是否通畅。"
+                return False, {}, f"SOCKS5 代理建立到 Telegram 链路失败 (错误码: {rep_code})，请检查代理节点是否通畅。"
 
             # 3. 升级 TLS 加密通道
             ssl_ctx = ssl.create_default_context()
             tls_sock = ssl_ctx.wrap_socket(sock, server_hostname="api.telegram.org")
 
-            # 4. 发送 HTTP POST 请求
-            payload = json.dumps({
-                "chat_id": target_chat,
-                "text": text,
-                "parse_mode": parse_mode,
-                "disable_web_page_preview": True,
-            }).encode("utf-8")
-
-            http_data = (
-                f"POST /bot{token}/sendMessage HTTP/1.1\r\n"
-                f"Host: api.telegram.org\r\n"
-                f"User-Agent: LaoguControlCenter/2026.1\r\n"
-                f"Content-Type: application/json\r\n"
-                f"Content-Length: {len(payload)}\r\n"
-                f"Connection: close\r\n\r\n"
-            ).encode("utf-8") + payload
+            # 4. 发送 HTTP 请求
+            if json_data is not None:
+                payload = json.dumps(json_data).encode("utf-8")
+                http_data = (
+                    f"{method} {path} HTTP/1.1\r\n"
+                    f"Host: api.telegram.org\r\n"
+                    f"User-Agent: LaoguControlCenter/2026.1\r\n"
+                    f"Content-Type: application/json\r\n"
+                    f"Content-Length: {len(payload)}\r\n"
+                    f"Connection: close\r\n\r\n"
+                ).encode("utf-8") + payload
+            else:
+                http_data = (
+                    f"{method} {path} HTTP/1.1\r\n"
+                    f"Host: api.telegram.org\r\n"
+                    f"User-Agent: LaoguControlCenter/2026.1\r\n"
+                    f"Connection: close\r\n\r\n"
+                ).encode("utf-8")
             tls_sock.sendall(http_data)
 
             # 5. 接收完整响应
@@ -263,15 +393,42 @@ class TelegramNotifier:
                 res = {}
 
             if res.get("ok"):
-                return True, "发送成功"
-            return False, cls._format_telegram_api_error(body_part)
+                return True, res.get("result", {}), "发送成功"
+            return False, res, cls._format_telegram_api_error(body_part)
 
         except Exception as exc:
             try:
                 sock.close()
             except Exception:
                 pass
-            return False, f"SOCKS5 通信异常: {exc}"
+            return False, {}, f"SOCKS5 通信异常: {exc}"
+
+    @classmethod
+    def _send_via_socks5(
+        cls,
+        proxy_url: str,
+        token: str,
+        target_chat: str,
+        text: str,
+        parse_mode: str = "Markdown",
+        timeout: int = 15,
+    ) -> tuple[bool, str]:
+        """使用原生 Socket 实现标准 SOCKS5/SOCKS5h 发送消息."""
+        path = f"/bot{token}/sendMessage"
+        payload = {
+            "chat_id": target_chat,
+            "text": text,
+            "parse_mode": parse_mode,
+            "disable_web_page_preview": True,
+        }
+        ok, _, msg = cls._request_via_socks5(
+            proxy_url=proxy_url,
+            path=path,
+            method="POST",
+            json_data=payload,
+            timeout=timeout,
+        )
+        return ok, msg
 
     def send_raw_message(
         self,
@@ -364,6 +521,253 @@ class TelegramNotifier:
             err_msg = str(exc)
             logger.warning("Telegram 消息推送异常: %s", err_msg)
             return False, f"网络请求失败: {err_msg}"
+
+    def _call_telegram_api(
+        self,
+        endpoint: str,
+        params: Optional[dict[str, Any]] = None,
+        json_data: Optional[dict[str, Any]] = None,
+        bot_token: Optional[str] = None,
+        proxy_url: Optional[str] = None,
+        timeout: int = 15,
+    ) -> tuple[bool, Any, str]:
+        """统一调用 Telegram Bot API (支持直连、HTTP/HTTPS 及 SOCKS5 代理)."""
+        token = (bot_token or self.config.get_effective_token()).strip()
+        if not token:
+            return False, {}, "Bot Token 不能为空"
+        proxy = (proxy_url if proxy_url is not None else self.config.proxy_url).strip()
+
+        # 判断是否走 SOCKS5 协议
+        proxy_lower = proxy.lower()
+        is_socks = (
+            proxy_lower.startswith("socks5://")
+            or proxy_lower.startswith("socks5h://")
+            or proxy_lower.startswith("socks://")
+            or proxy_lower.startswith("socks4://")
+            or (":10808" in proxy_lower and not proxy_lower.startswith("http"))
+        )
+
+        path = f"/bot{token}/{endpoint}"
+        if params:
+            query = urllib.parse.urlencode(params)
+            path = f"{path}?{query}"
+
+        if is_socks:
+            method = "POST" if json_data is not None else "GET"
+            return self._request_via_socks5(
+                proxy_url=proxy,
+                path=path,
+                method=method,
+                json_data=json_data,
+                timeout=timeout,
+            )
+
+        url = f"https://api.telegram.org{path}"
+        headers = {"User-Agent": "LaoguControlCenter/2026.1"}
+        body = None
+        if json_data is not None:
+            body = json.dumps(json_data).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        req = urllib.request.Request(url, data=body, headers=headers)
+        handlers = []
+        if proxy:
+            norm_proxy = proxy if "://" in proxy else f"http://{proxy}"
+            handlers.append(urllib.request.ProxyHandler({"http": norm_proxy, "https": norm_proxy}))
+        opener = urllib.request.build_opener(*handlers)
+
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                resp_text = resp.read().decode("utf-8")
+                res = json.loads(resp_text)
+                if res.get("ok"):
+                    return True, res.get("result", {}), "请求成功"
+                return False, res, self._format_telegram_api_error(resp_text)
+        except urllib.error.HTTPError as exc:
+            body_err = ""
+            try:
+                body_err = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            return False, {}, self._format_telegram_api_error(body_err or str(exc))
+        except urllib.error.URLError as exc:
+            err_reason = str(exc.reason)
+            logger.warning("Telegram API 网络连接失败: %s", err_reason)
+            if proxy:
+                return (
+                    False,
+                    {},
+                    f"代理服务器连接失败: {err_reason}。\n"
+                    "💡 提示：如果您在 v2rayN 中开启了【TUN 虚拟网卡模式】，请尝试将网络代理输入框【留空】再试！",
+                )
+            return (
+                False,
+                {},
+                f"无法连接 Telegram 服务器: {err_reason}。\n"
+                "💡 提示：请确保科学上网软件已开启并连接节点，或填写本地代理地址 (如 http://127.0.0.1:10809)。",
+            )
+        except Exception as exc:
+            err_msg = str(exc)
+            logger.warning("Telegram API 请求异常: %s", err_msg)
+            return False, {}, f"网络请求失败: {err_msg}"
+
+    def get_chat_info(
+        self,
+        chat_id: str,
+        bot_token: Optional[str] = None,
+        proxy_url: Optional[str] = None,
+        timeout: int = 10,
+    ) -> tuple[bool, dict[str, Any], str]:
+        """向 Telegram API 查询指定 Chat ID 的用户真实详情 (用于验证账号真实性并获取用户名和昵称)."""
+        clean_id = str(chat_id or "").strip()
+        if not clean_id:
+            return False, {}, "Chat ID 不能为空"
+        token = (bot_token or self.config.get_effective_token()).strip()
+        proxy = proxy_url if proxy_url is not None else self.config.proxy_url
+        if not proxy:
+            proxy = get_local_active_proxy()
+
+        ok, res, msg = self._call_telegram_api(
+            endpoint="getChat",
+            params={"chat_id": clean_id},
+            bot_token=token,
+            proxy_url=proxy,
+            timeout=timeout,
+        )
+        if ok and isinstance(res, dict):
+            return True, res, "验证成功"
+        return False, res if isinstance(res, dict) else {}, msg
+
+    def fetch_recent_bot_updates(
+        self,
+        bot_token: Optional[str] = None,
+        proxy_url: Optional[str] = None,
+        timeout: int = 10,
+    ) -> list[dict[str, Any]]:
+        """获取最近与通知机器人产生会话的用户列表."""
+        token = (bot_token or self.config.get_effective_token()).strip()
+        proxy = proxy_url if proxy_url is not None else self.config.proxy_url
+        if not proxy:
+            proxy = get_local_active_proxy()
+
+        ok, res, _ = self._call_telegram_api(
+            endpoint="getUpdates",
+            params={"limit": 30},
+            bot_token=token,
+            proxy_url=proxy,
+            timeout=timeout,
+        )
+        if not ok or not isinstance(res, list):
+            return []
+
+        users: list[dict[str, Any]] = []
+        seen_ids = set()
+        for item in reversed(res):
+            if not isinstance(item, dict):
+                continue
+            msg = item.get("message") or item.get("edited_message") or item.get("channel_post") or item.get("callback_query", {}).get("message") or {}
+            from_u = msg.get("from") or {}
+            u_id = from_u.get("id")
+            if is_valid_user_chat_id(u_id) and str(u_id) not in seen_ids:
+                seen_ids.add(str(u_id))
+                users.append({
+                    "chat_id": str(u_id),
+                    "first_name": str(from_u.get("first_name") or "").strip(),
+                    "last_name": str(from_u.get("last_name") or "").strip(),
+                    "username": str(from_u.get("username") or "").strip(),
+                })
+        return users
+
+    def auto_detect_chat_id(
+        self,
+        bot_token: Optional[str] = None,
+        proxy_url: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """全流程一键智能探测并验证本机 Telegram 私人 ID."""
+        token = (bot_token or self.config.get_effective_token()).strip()
+        proxy = (proxy_url if proxy_url is not None else self.config.proxy_url).strip()
+        if not proxy:
+            proxy = get_local_active_proxy()
+
+        candidates: list[tuple[str, str]] = []
+
+        # 1. 检查当前实例已配置的 chat_id (若非占位符)
+        if is_valid_user_chat_id(self.config.chat_id):
+            candidates.append((self.config.chat_id.strip(), "当前配置"))
+
+        # 2. 深度穿透扫描本机历史文件
+        local_cached_id = find_local_cached_chat_id()
+        if local_cached_id and local_cached_id not in [c[0] for c in candidates]:
+            candidates.append((local_cached_id, "本地历史配置文件"))
+
+        # 逐个对候选 ID 进行云端身份校验
+        for cand_id, src_label in candidates:
+            ok, user_info, _ = self.get_chat_info(cand_id, bot_token=token, proxy_url=proxy, timeout=8)
+            if ok and user_info:
+                fn = str(user_info.get("first_name") or "").strip()
+                ln = str(user_info.get("last_name") or "").strip()
+                un = str(user_info.get("username") or "").strip()
+                full_name = f"{fn} {ln}".strip() or fn or "Telegram 用户"
+                display_title = f"{full_name} (@{un})" if un else full_name
+                return {
+                    "success": True,
+                    "chat_id": cand_id,
+                    "name": full_name,
+                    "username": un,
+                    "display_title": display_title,
+                    "source": src_label,
+                    "proxy_used": proxy,
+                    "message": f"成功识别并验证本机专属账号：{display_title} (ID: {cand_id})",
+                }
+
+        # 3. 若候选 ID 均未在云端成功（或无候选 ID），尝试拉取机器人最新互动会话
+        recent_users = self.fetch_recent_bot_updates(bot_token=token, proxy_url=proxy, timeout=8)
+        if recent_users:
+            latest = recent_users[0]
+            cid = latest["chat_id"]
+            fn = latest.get("first_name") or ""
+            ln = latest.get("last_name") or ""
+            un = latest.get("username") or ""
+            full_name = f"{fn} {ln}".strip() or fn or "Telegram 用户"
+            display_title = f"{full_name} (@{un})" if un else full_name
+            return {
+                "success": True,
+                "chat_id": cid,
+                "name": full_name,
+                "username": un,
+                "display_title": display_title,
+                "source": "机器人最新会话",
+                "proxy_used": proxy,
+                "message": f"成功从机器人最新会话识别到账号：{display_title} (ID: {cid})",
+            }
+
+        # 4. 离线兜底：若网络不通或未连上节点，但本地找到过有效真实 ID
+        if candidates:
+            best_id, src_label = candidates[0]
+            return {
+                "success": True,
+                "chat_id": best_id,
+                "name": "本地已保存账号",
+                "username": "",
+                "display_title": f"本地私人专属 ID ({best_id})",
+                "source": f"{src_label} (离线读取)",
+                "proxy_used": proxy,
+                "message": f"已从{src_label}读取到您的真实私人 ID: {best_id}（当前未能连接到 TG 云端核验昵称，已自动填入）",
+            }
+
+        # 5. 未能识别到任何 ID，给出清晰指引
+        return {
+            "success": False,
+            "chat_id": "",
+            "proxy_used": proxy,
+            "message": (
+                "未能自动检测到您的 Telegram 专属 ID。\n\n"
+                "💡 快速绑定步骤：\n"
+                "1. 打开 Telegram，搜索官方通知机器人：@xchengxutz_bot\n"
+                "2. 点击底部的【Start】(开始) 或向机器人发送任意消息\n"
+                "3. 回到此处再次点击【⚡ 自动获取本机飞机ID】即可瞬间完成绑定！"
+            ),
+        }
 
     def send_risk_alert(
         self,

@@ -630,3 +630,47 @@ class StudioVisitedTarget(Base):
         UniqueConstraint("workspace_id", "target_handle", name="uq_workspace_target_handle"),
         Index("ix_studio_target_exp", "workspace_id", "expires_at"),
     )
+
+
+class AIModelRegistry(Base):
+    """全局模型与版本字典表"""
+
+    __tablename__ = "ai_model_registry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model_name: Mapped[str] = mapped_column(String(120), default="")
+    model_code: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(60), default="")
+    category: Mapped[str] = mapped_column(String(80), default="")
+    status: Mapped[int] = mapped_column(Integer, default=1, index=True)  # 1: 启用 / 0: 停用
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class AIRelayConfig(Base):
+    """全局通道配置表"""
+
+    __tablename__ = "ai_relay_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    base_url: Mapped[str] = mapped_column(String(500), default="https://api.openai.com/v1")
+    api_key: Mapped[str] = mapped_column(Text, default="")
+    default_model: Mapped[str] = mapped_column(String(120), default="gpt-4o-mini")
+    fallback_model: Mapped[str] = mapped_column(String(120), default="deepseek-chat")
+    timeout: Mapped[int] = mapped_column(Integer, default=15)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class XAccountPersona(Base):
+    """X 账号博主人设表"""
+
+    __tablename__ = "x_account_personas"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    persona_name: Mapped[str] = mapped_column(String(120), default="")
+    system_prompt: Mapped[str] = mapped_column(Text, default="")
+    custom_model: Mapped[str] = mapped_column(String(120), default="")  # 若为空则继承全局
+    temperature: Mapped[float] = mapped_column(Float, default=0.75)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+

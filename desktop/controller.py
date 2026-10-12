@@ -944,6 +944,8 @@ class DesktopController:
             normalized["smart_newbie_recognition_enabled"] = parse_bool(normalized["smart_newbie_recognition_enabled"])
         if "block_video_streams" in normalized:
             normalized["block_video_streams"] = parse_bool(normalized["block_video_streams"])
+        if "vision_filter_enabled" in normalized:
+            normalized["vision_filter_enabled"] = parse_bool(normalized["vision_filter_enabled"])
         if "max_harvest_per_seed" in normalized:
             try:
                 normalized["max_harvest_per_seed"] = max(1, min(100, int(normalized["max_harvest_per_seed"])))
@@ -951,6 +953,9 @@ class DesktopController:
                 normalized["max_harvest_per_seed"] = 10
         if "in_situ_rest_enabled" in normalized:
             normalized["in_situ_rest_enabled"] = parse_bool(normalized["in_situ_rest_enabled"])
+        for bool_filter in ("filter_verified_accounts", "filter_parody_accounts", "filter_bot_accounts", "filter_mental_health_accounts", "filter_underage_and_youth", "filter_accounts_with_links", "filter_empty_bio", "blacklist_filter_enabled"):
+            if bool_filter in normalized:
+                normalized[bool_filter] = parse_bool(normalized[bool_filter])
         return normalized
 
     def get_profile_task_config(self, profile_id: str) -> dict[str, Any]:
@@ -1134,6 +1139,19 @@ class DesktopController:
                     guarded_config["check_options"] = global_bl.get("check_options") or dict(DEFAULT_CHECK_OPTIONS)
             else:
                 guarded_config["blacklist_words"] = []
+
+            # 继承全局专属防护开关（若单任务未单独指定，默认采用全局设置或默认开启 True）
+            for filter_key in ("filter_mental_health_accounts", "filter_underage_and_youth", "filter_accounts_with_links"):
+                if filter_key not in guarded_config or guarded_config[filter_key] is None:
+                    guarded_config[filter_key] = bool(global_bl.get(filter_key, True))
+                else:
+                    guarded_config[filter_key] = bool(guarded_config[filter_key])
+
+            # 注入账号专属 AI 人设配置（本地持久化，防漂移）
+            if "ai_persona" not in guarded_config or not guarded_config["ai_persona"]:
+                guarded_config["ai_persona"] = self.get_persona_for_account(profile_id)
+            if not guarded_config.get("dm_password"):
+                guarded_config["dm_password"] = str((guarded_config.get("ai_persona") or {}).get("dm_password") or "")
 
             def report_progress(progress: dict[str, Any]) -> None:
                 if not isinstance(progress, dict):
@@ -1884,16 +1902,55 @@ class DesktopController:
             report_result["status"] = res_status
             self._dispatch_telegram_account_report(profile_id, account_tag, report_result, started_at)
 
-        # 针对异常、网络断开或风控终端状态自动关闭回收底层浏览器进程，彻底防止僵尸 Chromium 进程常驻与内存泄漏
+        # 🚨 风控安全核验拦截：向 Telegram 告警推送并通知 UI 弹窗，同时特别保留浏览器不予关闭！
+        if res_status == "CHALLENGE_REQUIRED":
+            self.logger.warning(
+                "🚨🚨🚨 [风控安全熔断] profile=%s (%s) 触发平台安全挑战认证 (Cloudflare / 邮箱验证码)！自动化已安全暂停，浏览器保持开启供用户手动核验",
+                profile_id, account_tag or acc_handle,
+            )
+            try:
+                if self.telegram_notifier.config.enabled and self.telegram_notifier.config.notify_on_risk_alert:
+                    self.telegram_notifier.send_risk_alert(
+                        window_name=account_tag or f"账号 {profile_id}",
+                        handle=acc_handle or profile_id,
+                        error_code="CHALLENGE_REQUIRED",
+                        error_message="检测到 Cloudflare 人机核验或邮箱验证码挑战，自动化已主动暂停并保留浏览器，请手动点击通过！",
+                        auto_paused=True,
+                    )
+            except Exception as tg_err:
+                self.logger.info("Telegram risk alert dispatch failed: %s", tg_err)
+
+            if callable(self._on_schedule_event):
+                try:
+                    self._on_schedule_event(
+                        profile_id,
+                        "CHALLENGE_REQUIRED",
+                        {
+                            "account_tag": account_tag or acc_handle or profile_id,
+                            "url": str(result.get("url", "")),
+                            "error": str(result.get("error", "")),
+                        },
+                    )
+                except Exception:
+                    pass
+
+        # 针对网络断开或崩溃异常状态自动回收底层浏览器进程，彻底防止僵尸 Chromium 进程常驻与内存泄漏
+        # ⚠️ 注意：CHALLENGE_REQUIRED 特别保留浏览器不予关闭，确保用户能看到验证码/Cloudflare 界面并手动操作！
         with _LIFECYCLE_LOCK:
             state = _RUN_STATES.get(profile_id)
             is_current_run = (state is None or not state.run_id or state.run_id == run_id)
-        if is_current_run and res_status in {"PROXY_DISCONNECTED", "CHALLENGE_REQUIRED", "ERROR", "FAILED"}:
+        if is_current_run and res_status in {"PROXY_DISCONNECTED", "ERROR", "FAILED"}:
             try:
                 self.browser_manager.stop_profile(profile_id)
                 self.logger.info("[浏览器回收] profile=%s 因异常状态(%s)已自动回收并关闭底层浏览器进程", profile_id, res_status)
             except Exception as exc:
                 self.logger.info("Browser cleanup deferred for profile=%s: %s", profile_id, exc)
+        elif is_current_run and res_status == "CHALLENGE_REQUIRED":
+            self.logger.warning(
+                "🛡️ [保留浏览器供用户处理] profile=%s 触发平台安全挑战认证 (CHALLENGE_REQUIRED)，"
+                "自动化已安全熔断暂停，特别保留浏览器窗口不予关闭，请前往浏览器手动完成核验！",
+                profile_id,
+            )
 
     def get_account_snapshot(self, profile_id: str) -> dict[str, Any]:
         """获取指定账号的最新运行战报快照字典 (只读拷贝)."""
@@ -2259,7 +2316,7 @@ class DesktopController:
             try:
                 if path.exists():
                     data = json.loads(path.read_text(encoding="utf-8"))
-                    if isinstance(data, dict) and ("blacklist_words" in data or "check_options" in data or "enabled" in data):
+                    if isinstance(data, dict) and ("blacklist_words" in data or "check_options" in data or "enabled" in data or "filter_mental_health_accounts" in data):
                         raw_words = data.get("blacklist_words")
                         words = parse_blacklist_input(raw_words) if raw_words is not None else list(DEFAULT_BLACKLIST_WORDS)
                         check_opts = data.get("check_options") or {}
@@ -2272,6 +2329,9 @@ class DesktopController:
                                 "check_bio": bool(check_opts.get("check_bio", True)),
                                 "check_tweets": bool(check_opts.get("check_tweets", True)),
                             },
+                            "filter_mental_health_accounts": bool(data.get("filter_mental_health_accounts", True)),
+                            "filter_underage_and_youth": bool(data.get("filter_underage_and_youth", True)),
+                            "filter_accounts_with_links": bool(data.get("filter_accounts_with_links", True)),
                         }
             except Exception:
                 pass
@@ -2279,6 +2339,9 @@ class DesktopController:
             "enabled": True,
             "blacklist_words": list(DEFAULT_BLACKLIST_WORDS),
             "check_options": dict(DEFAULT_CHECK_OPTIONS),
+            "filter_mental_health_accounts": True,
+            "filter_underage_and_youth": True,
+            "filter_accounts_with_links": True,
         }
 
     def save_blacklist_config(self, cfg_data: dict[str, Any]) -> dict[str, Any]:
@@ -2294,6 +2357,9 @@ class DesktopController:
             "enabled": enabled,
             "blacklist_words": words,
             "check_options": check_opts,
+            "filter_mental_health_accounts": bool(cfg_data.get("filter_mental_health_accounts", True)),
+            "filter_underage_and_youth": bool(cfg_data.get("filter_underage_and_youth", True)),
+            "filter_accounts_with_links": bool(cfg_data.get("filter_accounts_with_links", True)),
         }
         candidates = [
             self.settings.log_file.parent / "config.json",
@@ -2317,6 +2383,102 @@ class DesktopController:
             except Exception:
                 pass
         return payload
+
+    # ================= 🎭 本地 AI 账号人设与模型绑定管理 =================
+
+    def get_account_personas_config(self) -> dict[str, Any]:
+        """从本地读取账号人设配置."""
+        candidates = [
+            Path("config/account_personas.json"),
+            self.settings.log_file.parent / "account_personas.json",
+            Path("account_personas.json"),
+        ]
+        for p in candidates:
+            if p.exists():
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        return data
+                except Exception:
+                    pass
+        return {
+            "version": 1,
+            "default_persona": {
+                "persona_name": "温柔知性女性",
+                "system_prompt": (
+                    "你是一名定居日本东京的年轻女性，性格温柔真诚、善解人意。\n"
+                    "在社交网络（X/Twitter）互动时，使用极其地道自然的日常口语（タメ口）。\n"
+                    "【核心定锚规约】：\n"
+                    "1. 严禁使用死板敬语（です・ます）或机械客服腔。\n"
+                    "2. 保持真实女性生活气息，回复精炼亲切（20字以内）。\n"
+                    "3. 永久锁定当前角色设定，绝不发生人格漂移。"
+                ),
+                "custom_model": "",
+                "temperature": 0.75,
+                "lock_persona": True,
+            },
+            "personas": {},
+        }
+
+    def save_account_personas_config(self, cfg_data: dict[str, Any]) -> bool:
+        """保存 AI 人设配置至本地文件."""
+        try:
+            target = Path("config/account_personas.json")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(cfg_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            fallback = self.settings.log_file.parent / "account_personas.json"
+            if fallback != target:
+                fallback.parent.mkdir(parents=True, exist_ok=True)
+                fallback.write_text(json.dumps(cfg_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            return True
+        except Exception as e:
+            self.logger.warning("保存本地 AI 人设配置异常: %s", e)
+            return False
+
+    def get_persona_for_account(self, profile_id: str) -> dict[str, Any]:
+        """获取指定账号的生效人设（若未单独设定则继承全局默认人设）."""
+        cfg = self.get_account_personas_config()
+        default_persona = cfg.get("default_persona") or {}
+        personas = cfg.get("personas") or {}
+        acc_persona = personas.get(str(profile_id))
+        if acc_persona and isinstance(acc_persona, dict):
+            merged = dict(default_persona)
+            merged.update(acc_persona)
+            return merged
+        return dict(default_persona)
+
+    def get_available_ai_models(self) -> list[dict[str, Any]]:
+        """从服务端获取可用模型字典，若离线则返回本地推荐模型列表."""
+        fallback_models = [
+            {"model_name": "跟随全局默认模型", "model_code": ""},
+            {"model_name": "Claude 3.5 Sonnet (最新旗舰)", "model_code": "claude-3-5-sonnet-20241022"},
+            {"model_name": "GPT-4o Mini (经济快速)", "model_code": "gpt-4o-mini"},
+            {"model_name": "GPT-4o (全能旗舰)", "model_code": "gpt-4o"},
+            {"model_name": "DeepSeek V3 (超高性价比)", "model_code": "deepseek-chat"},
+            {"model_name": "DeepSeek R1 (深度推理)", "model_code": "deepseek-reasoner"},
+            {"model_name": "Claude 3.5 Haiku (轻巧极速)", "model_code": "claude-3-5-haiku-20241022"},
+        ]
+        try:
+            import urllib.request
+            server_url = (getattr(self.settings, "server_url", "") or "https://api.jaycwl.org").rstrip("/")
+            url = f"{server_url}/admin/models"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    items = data.get("data") or []
+                    if items:
+                        result = [{"model_name": "跟随全局默认模型", "model_code": ""}]
+                        for m in items:
+                            if m.get("status", 1) == 1:
+                                result.append({
+                                    "model_name": f"{m.get('model_name', m.get('model_code'))} ({m.get('provider', '')})",
+                                    "model_code": m.get("model_code", ""),
+                                })
+                        return result
+        except Exception:
+            pass
+        return fallback_models
 
     # ================= Telegram 自动化战报通知支持 =================
 
@@ -2348,6 +2510,25 @@ class DesktopController:
             bot_token=effective_token,
             proxy_url=proxy_url.strip() if proxy_url else None,
         )
+
+    def auto_detect_telegram_chat_id(
+        self,
+        bot_token: str = "",
+        proxy_url: str = "",
+        use_custom: bool = False,
+    ) -> dict[str, Any]:
+        """自动识别并获取本机 Telegram 私人 ID 与账号信息."""
+        token = bot_token.strip() if (use_custom and bot_token.strip()) else None
+        proxy = proxy_url.strip() if proxy_url else None
+        res = self.telegram_notifier.auto_detect_chat_id(bot_token=token, proxy_url=proxy)
+        if res.get("success") and res.get("chat_id"):
+            current_cfg = self.telegram_notifier.config
+            current_cfg.chat_id = str(res["chat_id"]).strip()
+            current_cfg.enabled = True
+            if res.get("proxy_used") and not current_cfg.proxy_url:
+                current_cfg.proxy_url = str(res["proxy_used"]).strip()
+            self.telegram_notifier.save_config(current_cfg)
+        return res
 
     def send_telegram_summary_report(self) -> tuple[bool, str]:
         """手动汇总当前所有账号数据并推送大盘战报到 Telegram (统一由持久化数据库驱动，与界面卡片100%一致)."""

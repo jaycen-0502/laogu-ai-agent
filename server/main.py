@@ -44,6 +44,7 @@ from .command_api import COMMAND_LEASE_SECONDS, COMMAND_STATUSES, register_comma
 from .models import AIImage, AIProvider, AIUsage, Account, Activity, Agent, AgentEngineGrant, AgentToken, AppRelease, AuditLog, AutomationMetric, Command, CredentialCapability, Invitation, License, LicenseCheck, LicenseDevice, LicenseRevocation, Profile, Script, ScriptVersion, Task, TelegramBotBinding, User, UserAIPolicy, Workspace, now
 from .remote_license_api import register_remote_license_routes
 from .dedup_api import register_dedup_routes
+from .ai_routing_api import register_ai_routing_routes
 from .offline_access import issue_agent_offline_access
 from .proxy_converter import render_vless_reality_yaml
 from .schemas import AccountSync, AgentRegister, AgentUpdate, AutomationMetricSync, BootstrapRequest, Heartbeat, InvitationAccept, InvitationCreate, LoginRequest, PasswordChange, TaskCreate, TaskPull, TaskResult, UserAIPolicyUpdate, UserCreate, UserUpdate, VlessRealityConvertRequest, WorkspaceCreate, WorkspaceUpdate
@@ -1514,6 +1515,7 @@ def create_app(database_url: str | None = None, settings: ServerSettings | None 
         deny=deny,
     )
     register_dedup_routes(app, get_db=get_db)
+    register_ai_routing_routes(app, get_db=get_db, current_user=current_user)
 
     return app
 

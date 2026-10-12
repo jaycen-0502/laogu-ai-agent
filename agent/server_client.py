@@ -304,8 +304,16 @@ class ServerClient:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise ServerClientError(f"Server returned HTTP {exc.code}: {detail[:300]}", status_code=exc.code) from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise ServerClientError(f"Server unavailable: {exc}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            # 若直连通道发生超时或受阻，自动回退尝试系统代理通路
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    payload = response.read(2 * 1024 * 1024 + 1)
+            except urllib.error.HTTPError as fallback_http_err:
+                detail = fallback_http_err.read().decode("utf-8", errors="replace")
+                raise ServerClientError(f"Server returned HTTP {fallback_http_err.code}: {detail[:300]}", status_code=fallback_http_err.code) from fallback_http_err
+            except Exception:
+                raise ServerClientError(f"Server unavailable: {exc}") from exc
         if not payload or len(payload) > 2 * 1024 * 1024:
             raise ServerClientError("Server returned invalid engine source")
         return payload
@@ -331,8 +339,16 @@ class ServerClient:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise ServerClientError(f"Server returned HTTP {exc.code}: {detail[:300]}", status_code=exc.code) from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
-            raise ServerClientError(f"Server unavailable: {exc}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            # 直连通道受阻或超时，自动切换系统代理通路尝试容灾连接
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    raw = response.read().decode("utf-8")
+            except urllib.error.HTTPError as fallback_http_err:
+                detail = fallback_http_err.read().decode("utf-8", errors="replace")
+                raise ServerClientError(f"Server returned HTTP {fallback_http_err.code}: {detail[:300]}", status_code=fallback_http_err.code) from fallback_http_err
+            except Exception:
+                raise ServerClientError(f"Server unavailable: {exc}") from exc
         try:
             decoded = json.loads(raw)
         except json.JSONDecodeError as exc:

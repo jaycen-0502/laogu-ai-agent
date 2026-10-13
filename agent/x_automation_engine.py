@@ -315,6 +315,204 @@ def generate_ai_dm_icebreaker(
     return random.choice(fallback_dms)
 
 
+def generate_ai_inbox_chat_reply(
+    incoming_text: str,
+    conversation_history: list[str] | None = None,
+    handle: str = "",
+    persona_system_prompt: str = "",
+    custom_model: str | None = None,
+    custom_api_key: str = "",
+    custom_base_url: str = "",
+    temperature: float = 0.85,
+) -> str:
+    """根据 AI 角色人设与上下文，在私信会话中生成自然贴切的自动回复短句"""
+    global _RECENT_DMS_CACHE
+
+    remote_cfg = fetch_remote_router_config()
+    API_KEY = custom_api_key or remote_cfg.get("api_key") or os.environ.get("ROUTER_API_KEY", "")
+    BASE_URL = custom_base_url or remote_cfg.get("base_url") or os.environ.get("ROUTER_BASE_URL", "")
+
+    if isinstance(custom_model, str) and custom_model.strip():
+        models = [custom_model.strip()]
+    elif isinstance(custom_model, list) and custom_model:
+        models = [str(m).strip() for m in custom_model if str(m).strip()]
+    else:
+        models = remote_cfg.get("models") or ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
+
+    history_context = ""
+    if conversation_history:
+        history_context = "\n".join([f"- {h}" for h in conversation_history[-4:]])
+
+    if persona_system_prompt and persona_system_prompt.strip():
+        system_prompt = (
+            f"{persona_system_prompt.strip()}\n\n"
+            "【私信自动对话执行规约】：\n"
+            "- 严格遵循上述人设定位、口吻与性格设定。\n"
+            "- 根据沟通对象发来的具体消息，像真实朋友般自然、贴切、真诚地回复。\n"
+            "- 严禁机械客服腔，严禁生硬推销与包含违规链接。\n"
+            "- 长度保持在 20~50 字以内的日常口语短句，仅输出最终回复内容。"
+        )
+    else:
+        system_prompt = (
+            "You are a friendly, natural Twitter user living in Tokyo. "
+            "Reply warmly and casually to the incoming direct message based on your context. "
+            "Never sound like a bot, never send links or ads. Output ONLY the response text under 50 characters."
+        )
+
+    user_prompt = f"沟通对象: @{handle}\n"
+    if history_context:
+        user_prompt += f"近期对话背景:\n{history_context}\n"
+    user_prompt += f"沟通对象刚才发来的最新消息: \"{incoming_text[:200]}\"\n"
+    user_prompt += "请根据人设生成最贴合语境的一句日常回复："
+
+    if API_KEY and BASE_URL:
+        endpoint = BASE_URL.rstrip("/")
+        if not endpoint.endswith("/v1") and not endpoint.endswith("/chat/completions"):
+            endpoint = f"{endpoint}/v1/chat/completions"
+        elif endpoint.endswith("/v1"):
+            endpoint = f"{endpoint}/chat/completions"
+
+        for model in models:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "max_tokens": 80,
+                    "temperature": temperature,
+                }
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {API_KEY}",
+                        "User-Agent": "OpenAI-Python/1.12.0 (Codex-CLI-Engine)",
+                        "Accept": "application/json",
+                        "Connection": "keep-alive"
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status == 200:
+                        res_data = json.loads(response.read().decode("utf-8"))
+                        choices = res_data.get("choices", [])
+                        if choices:
+                            choice = choices[0]
+                            text = choice.get("content", "") if "content" in choice else choice.get("message", {}).get("content", "")
+                            clean_text = text.strip().replace('"', '').replace('「', '').replace('」', '').replace('\n', ' ')
+                            if clean_text:
+                                print(f"  └─ 🤖 [AI 私信会话生成] 模型 [{model}]: \"{clean_text}\"")
+                                return clean_text
+            except Exception as err:
+                print(f"  └─ ⚠️ [AI 私信会话] 模型 [{model}] 异常，尝试备选模型: {err}")
+
+    # 兜底暖心互动短句
+    if "ありがとう" in incoming_text:
+        return "こちらこそありがとうございます！仲良くしてくださいね😊"
+    if "よろしく" in incoming_text:
+        return "よろしくお願いします！色々お話しできたら嬉しいです✨"
+    return "メッセージありがとうございます！仲良くしてもらえたら嬉しいです🙌"
+
+
+def generate_ai_followback_greeting(
+    handle: str,
+    custom_template: str = "",
+    persona_system_prompt: str = "",
+    custom_model: str | None = None,
+    custom_api_key: str = "",
+    custom_base_url: str = "",
+    temperature: float = 0.85,
+) -> str:
+    """根据自定义话术模版或 AI 人设，向回关博主生成专属私信打招呼文本"""
+    clean_tpl = (custom_template or "").strip()
+    if clean_tpl:
+        resolved_text = clean_tpl.replace("{handle}", handle).replace("{name}", handle)
+        return resolved_text
+
+    remote_cfg = fetch_remote_router_config()
+    API_KEY = custom_api_key or remote_cfg.get("api_key") or os.environ.get("ROUTER_API_KEY", "")
+    BASE_URL = custom_base_url or remote_cfg.get("base_url") or os.environ.get("ROUTER_BASE_URL", "")
+
+    if isinstance(custom_model, str) and custom_model.strip():
+        models = [custom_model.strip()]
+    elif isinstance(custom_model, list) and custom_model:
+        models = [str(m).strip() for m in custom_model if str(m).strip()]
+    else:
+        models = remote_cfg.get("models") or ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
+
+    if persona_system_prompt and persona_system_prompt.strip():
+        system_prompt = (
+            f"{persona_system_prompt.strip()}\n\n"
+            "【回关私信打招呼规约】：\n"
+            "- 严格遵循上述人设定位、口吻与性格设定。\n"
+            "- 针对回关了你的博主表达自然感谢并顺畅开启交流。\n"
+            "- 严禁任何广告链接或生硬推销。\n"
+            "- 长度保持在 30~50 字以内的日常口语短句，仅输出最终打招呼文本。"
+        )
+    else:
+        system_prompt = (
+            "You are a friendly Twitter user in Tokyo. "
+            "Write a warm, casual greeting DM thanking someone who just followed you back. "
+            "Under 40 Japanese characters. Output ONLY the message text."
+        )
+
+    user_prompt = f"博主 @{handle} 刚刚回关了你，请生成一句感谢回关并开启交流的日常打招呼私信："
+
+    if API_KEY and BASE_URL:
+        endpoint = BASE_URL.rstrip("/")
+        if not endpoint.endswith("/v1") and not endpoint.endswith("/chat/completions"):
+            endpoint = f"{endpoint}/v1/chat/completions"
+        elif endpoint.endswith("/v1"):
+            endpoint = f"{endpoint}/chat/completions"
+
+        for model in models:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "max_tokens": 80,
+                    "temperature": temperature,
+                }
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {API_KEY}",
+                        "User-Agent": "OpenAI-Python/1.12.0 (Codex-CLI-Engine)",
+                        "Accept": "application/json",
+                        "Connection": "keep-alive"
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status == 200:
+                        res_data = json.loads(response.read().decode("utf-8"))
+                        choices = res_data.get("choices", [])
+                        if choices:
+                            choice = choices[0]
+                            text = choice.get("content", "") if "content" in choice else choice.get("message", {}).get("content", "")
+                            clean_text = text.strip().replace('"', '').replace('「', '').replace('」', '').replace('\n', ' ')
+                            if clean_text:
+                                print(f"  └─ 🤖 [AI 回关招呼生成] 模型 [{model}]: \"{clean_text}\"")
+                                return clean_text
+            except Exception as err:
+                print(f"  └─ ⚠️ [AI 回关打招呼] 模型 [{model}] 异常，尝试备选模型: {err}")
+
+    fallback_greetings = [
+        "フォローバックありがとうございます！これからよろしくお願いします✨",
+        "フォロバありがとうございます！TLでお話しできたら嬉しいです😊",
+        "フォロー返していただき嬉しいです！よろしくお願いします🙌",
+    ]
+    return random.choice(fallback_greetings)
+
+
 
 class AutomationEngineError(RuntimeError):
     """Expected automation failure that should be reported to the task log."""
@@ -415,6 +613,9 @@ class AutomationConfig:
     daily_dms_limit: int = 10                       # 每日私信安全限额（建议 10~15 条）
     dm_cooldown_min_seconds: int = 90               # 私信发送后最小冷却秒数
     dm_cooldown_max_seconds: int = 150              # 私信发送后最大冷却秒数
+    auto_reply_inbox_enabled: bool = True           # 是否开启私信收件箱 (/messages) AI 自动回聊
+    auto_dm_followback_enabled: bool = True         # 是否开启通知中心 (/notifications) 回关博主自动打招呼
+    custom_followback_greeting: str = ""            # 回关打招呼自定义话术模版（留空则由 AI 结合人设自动生成）
     # --- 动态全字段黑名单词库 (一票否决) ---
     blacklist_filter_enabled: bool = True           # 是否启用全字段黑名单/敏感词过滤（一键开关，默认开启）
     blacklist_words: list[str] = field(default_factory=list)
@@ -639,6 +840,9 @@ class AutomationConfig:
             daily_dms_limit=integer("daily_dms_limit", values.get("daily_dm_limit", 10), 0, 100_000),
             dm_cooldown_min_seconds=integer("dm_cooldown_min_seconds", 90, 10, 3600),
             dm_cooldown_max_seconds=integer("dm_cooldown_max_seconds", 150, 10, 3600),
+            auto_reply_inbox_enabled=boolean("auto_reply_inbox_enabled", True),
+            auto_dm_followback_enabled=boolean("auto_dm_followback_enabled", True),
+            custom_followback_greeting=str(values.get("custom_followback_greeting") or "").strip(),
             blacklist_filter_enabled=boolean("blacklist_filter_enabled", True),
             blacklist_words=blacklist_words,
             check_options=check_opts,
@@ -1815,6 +2019,7 @@ class XAutomationEngine:
         bio: str = "",
         recent_tweets: list[str] | None = None,
         target_scope: Any = None,
+        custom_direct_text: str = "",
     ) -> bool:
         """博主主页私信智能嗅探、AI 破冰话术生成、拟人输入与风控冷却核心引擎"""
         target_key = f"handle:{handle.lower()}"
@@ -1902,23 +2107,26 @@ class XAutomationEngine:
                     pass
                 return False
 
-            # 6. AI 动态生成独一无二的破冰语句
-            persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
-            custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
-            custom_model = str(persona_cfg.get("custom_model", "") or "")
-            custom_temp = float(persona_cfg.get("temperature", 0.85) or 0.85)
+            # 6. AI 动态生成独一无二的破冰语句 (或使用传入的打招呼话术)
+            if custom_direct_text and custom_direct_text.strip():
+                icebreaker = custom_direct_text.strip()
+            else:
+                persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
+                custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
+                custom_model = str(persona_cfg.get("custom_model", "") or "")
+                custom_temp = float(persona_cfg.get("temperature", 0.85) or 0.85)
 
-            icebreaker = await asyncio.to_thread(
-                generate_ai_dm_icebreaker,
-                handle,
-                bio,
-                recent_tweets,
-                custom_prompt,
-                custom_model or None,
-                "",
-                "",
-                custom_temp,
-            )
+                icebreaker = await asyncio.to_thread(
+                    generate_ai_dm_icebreaker,
+                    handle,
+                    bio,
+                    recent_tweets,
+                    custom_prompt,
+                    custom_model or None,
+                    "",
+                    "",
+                    custom_temp,
+                )
 
             # 7. 拟人模拟打字输入
             self._print(f"  └─ ✍️ [拟人输入] 正在键入破冰私信内容...")
@@ -1998,6 +2206,290 @@ class XAutomationEngine:
             except Exception:
                 pass
             return False
+
+    async def _process_inbox_auto_replies(self, page: Any, config: AutomationConfig, max_replies: int = 2) -> int:
+        """
+        收件箱自动回聊核心引擎：
+        访问 /messages，嗅探博主发来的最新未读/待回复消息，
+        结合本地 AI 角色人设生成自然日常短句并拟人回复。
+        """
+        if not bool(getattr(config, "auto_reply_inbox_enabled", True)):
+            return 0
+
+        self._print("💬 [收件箱巡视] 正在切换至私信收件箱 (/messages)，巡检博主新消息...")
+        replied_count = 0
+        try:
+            msg_link = await page.query_selector('a[data-testid="AppTabBar_DirectMessage_Link"], a[href="/messages"]')
+            navigated = False
+            if msg_link and await is_element_fully_loaded(msg_link):
+                if await safe_human_click(page, msg_link, self.personality):
+                    navigated = True
+                    await asyncio.sleep(random.uniform(2.5, 4.0))
+
+            if not navigated or "/messages" not in getattr(page, "url", ""):
+                await page.goto("https://x.com/messages", wait_until="domcontentloaded", timeout=12000)
+                await asyncio.sleep(random.uniform(2.5, 4.0))
+
+            await self._handle_dm_password_prompt_if_present(page)
+
+            conv_items = await page.query_selector_all('div[data-testid="conversation"], div[data-testid="cellInnerDiv"]:has(div[data-testid="conversation"])')
+            if not conv_items:
+                conv_items = await page.query_selector_all('div[role="listitem"]')
+
+            if not conv_items:
+                self._print("  └─ ℹ️ [收件箱巡视] 当前未捕获到私信会话列表或暂无消息，巡检结束")
+                return 0
+
+            self._print(f"  └─ 📬 [收件箱巡视] 捕获到 {len(conv_items)} 个会话，开始排查待回复互动...")
+
+            if not hasattr(self, "_inbox_replied_cache"):
+                self._inbox_replied_cache = set()
+
+            for item in conv_items[:8]:
+                if replied_count >= max_replies:
+                    break
+
+                try:
+                    item_text = (await item.inner_text() or "").strip()
+                    if not item_text:
+                        continue
+
+                    lines = [ln.strip() for ln in item_text.splitlines() if ln.strip()]
+                    last_line = lines[-1] if lines else ""
+                    if last_line.startswith("You:") or last_line.startswith("あなた:") or "You: " in item_text:
+                        continue
+
+                    handle_candidate = ""
+                    for ln in lines:
+                        if ln.startswith("@"):
+                            handle_candidate = ln.lstrip("@").strip()
+                            break
+                    if not handle_candidate and lines:
+                        handle_candidate = lines[0].replace(" ", "_")
+
+                    dedup_key = f"{handle_candidate.lower()}:{last_line[:30]}"
+                    if dedup_key in self._inbox_replied_cache:
+                        continue
+
+                    target_key = f"inbox:{handle_candidate.lower()}"
+                    if not await self._allow_action("dm", target_key):
+                        self._print(f"  └─ ⚠️ [收件箱巡视] 今日私信限额已满，暂停自动回聊")
+                        break
+
+                    self._print(f"  └─ ✉️ [打开会话] 正在进入与 @{handle_candidate} 的会话详情...")
+                    if not await safe_human_click(page, item, self.personality):
+                        await item.click()
+                    await asyncio.sleep(random.uniform(2.0, 3.5))
+
+                    composer_sel = (
+                        'div[data-testid="dmComposerTextInput"], '
+                        'aside[data-testid="DMDrawer"] div[role="textbox"], '
+                        'div[role="textbox"][contenteditable="true"]'
+                    )
+                    composer = None
+                    try:
+                        composer = await page.wait_for_selector(composer_sel, timeout=5000)
+                    except Exception:
+                        pass
+
+                    if not composer:
+                        if await self._handle_dm_password_prompt_if_present(page):
+                            composer = await page.wait_for_selector(composer_sel, timeout=4000)
+
+                    if not composer:
+                        self._print(f"  └─ ⚠️ 未能定位到输入框，跳过本条会话")
+                        continue
+
+                    incoming_msg = last_line
+                    msg_entries = await page.query_selector_all('div[data-testid="messageEntry"]')
+                    if msg_entries:
+                        for me in reversed(msg_entries[-4:]):
+                            me_t = (await me.inner_text() or "").strip()
+                            if me_t and not me_t.startswith("You:") and len(me_t) > 1:
+                                incoming_msg = me_t
+                                break
+
+                    persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
+                    custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
+                    custom_model = str(persona_cfg.get("custom_model", "") or "")
+                    custom_temp = float(persona_cfg.get("temperature", 0.85) or 0.85)
+
+                    ai_reply = await asyncio.to_thread(
+                        generate_ai_inbox_chat_reply,
+                        incoming_msg,
+                        [incoming_msg],
+                        handle_candidate,
+                        custom_prompt,
+                        custom_model or None,
+                        "",
+                        "",
+                        custom_temp,
+                    )
+
+                    self._print(f"  └─ ✍️ [拟人打字] 正在向 @{handle_candidate} 回复: \"{ai_reply}\"")
+                    if not await safe_human_click(page, composer, self.personality):
+                        await composer.click()
+                    await asyncio.sleep(random.uniform(0.5, 1.0))
+                    await human_type_text(page, composer, ai_reply)
+                    await asyncio.sleep(random.uniform(1.0, 1.8))
+
+                    send_btn = await page.query_selector(
+                        'button[data-testid="dmComposerSendButton"], '
+                        'div[data-testid="dmComposerSendButton"], '
+                        'button[aria-label*="Send"], '
+                        'button[aria-label*="送信"], '
+                        'button[aria-label*="发送"]'
+                    )
+                    sent = False
+                    if send_btn and hasattr(send_btn, "is_visible") and await send_btn.is_visible():
+                        if await safe_human_click(page, send_btn, self.personality):
+                            sent = True
+                    if not sent:
+                        await page.keyboard.press("Enter")
+                        sent = True
+
+                    await asyncio.sleep(random.uniform(2.0, 3.0))
+                    self._record_action("dm", target_key)
+                    self._inbox_replied_cache.add(dedup_key)
+                    replied_count += 1
+                    self._print(f"  └─ ✅ [自动回聊成功] 成功向 @{handle_candidate} 送达回信！")
+
+                    await self._sleep_with_control(random.uniform(12.0, 20.0))
+
+                except Exception as c_err:
+                    self._print(f"  └─ ⚠️ 处理单个会话偶发轻微异常，跳过: {c_err}")
+                    continue
+
+        except CONTROL_EXCEPTION_TYPES:
+            raise
+        except Exception as e:
+            self._print(f"⚠️ 收件箱巡检非阻断提示: {e}")
+
+        return replied_count
+
+    async def _process_followback_greetings(self, page: Any, config: AutomationConfig, max_greetings: int = 2) -> int:
+        """
+        通知栏回关博主自动私信打招呼核心引擎：
+        访问 /notifications，识别回关提醒（Followed you / 关注了你），
+        提取博主 handle 并根据自定义话术模版或 AI 人设自动发起私信打招呼。
+        """
+        if not bool(getattr(config, "auto_dm_followback_enabled", True)):
+            return 0
+
+        self._print("🔔 [通知栏巡视] 正在切换至通知中心 (/notifications)，排查新回关博主...")
+        greeted_count = 0
+        try:
+            notif_link = await page.query_selector('a[data-testid="AppTabBar_Notifications_Link"], a[href="/notifications"]')
+            navigated = False
+            if notif_link and await is_element_fully_loaded(notif_link):
+                if await safe_human_click(page, notif_link, self.personality):
+                    navigated = True
+                    await asyncio.sleep(random.uniform(2.5, 4.0))
+
+            if not navigated or "/notifications" not in getattr(page, "url", ""):
+                await page.goto("https://x.com/notifications", wait_until="domcontentloaded", timeout=12000)
+                await asyncio.sleep(random.uniform(2.5, 4.0))
+
+            notif_cells = await page.query_selector_all('div[data-testid="cellInnerDiv"], article')
+            if not notif_cells:
+                self._print("  └─ ℹ️ [通知栏巡视] 暂未获取到通知条目，巡检结束")
+                return 0
+
+            if not hasattr(self, "_followback_greeted_cache"):
+                self._followback_greeted_cache = set()
+
+            candidates: list[str] = []
+            for cell in notif_cells[:12]:
+                cell_text = (await cell.inner_text() or "").strip()
+                if not cell_text:
+                    continue
+
+                is_follow = any(kw in cell_text for kw in [
+                    "followed you", "关注了你", "フォローされました", "フォローしました",
+                    "さんがあなたをフォローしました", "New follower"
+                ])
+                if not is_follow:
+                    continue
+
+                profile_links = await cell.query_selector_all('a[href^="/"][role="link"], a[href^="/"]')
+                for pl in profile_links:
+                    href = await pl.get_attribute("href") or ""
+                    href = href.strip().lstrip("/")
+                    if "/" in href:
+                        href = href.split("/")[0]
+                    if href and href.lower() not in ["notifications", "home", "explore", "messages", "i"]:
+                        if href.lower() not in candidates:
+                            candidates.append(href)
+                            break
+
+            self._print(f"  └─ 👥 [通知栏巡视] 筛选出 {len(candidates)} 位近期回关博主，准备执行打招呼...")
+
+            for handle in candidates:
+                if greeted_count >= max_greetings:
+                    break
+
+                target_key = f"handle:{handle.lower()}"
+                if handle.lower() in self._followback_greeted_cache:
+                    continue
+
+                if getattr(self, "history_pool", None) and self.history_pool.is_visited(self.tag, handle.lower()):
+                    continue
+
+                if not await self._allow_action("dm", target_key):
+                    self._print("  └─ ⚠️ [回关招呼] 今日私信限额已达上限，暂停发起新招呼")
+                    break
+
+                self._print(f"  └─ 🚀 [回关打招呼] 准备进入博主 @{handle} 主页发起私信招呼...")
+                try:
+                    await page.goto(f"https://x.com/{handle}", wait_until="domcontentloaded", timeout=12000)
+                    await asyncio.sleep(random.uniform(2.0, 3.5))
+
+                    bio_el = await page.query_selector('div[data-testid="UserDescription"]')
+                    bio_txt = (await bio_el.inner_text() or "").strip() if bio_el else ""
+
+                    custom_tpl = str(getattr(config, "custom_followback_greeting", "") or "")
+                    persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
+                    custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
+                    custom_model = str(persona_cfg.get("custom_model", "") or "")
+                    custom_temp = float(persona_cfg.get("temperature", 0.85) or 0.85)
+
+                    greeting_text = await asyncio.to_thread(
+                        generate_ai_followback_greeting,
+                        handle,
+                        custom_tpl,
+                        custom_prompt,
+                        custom_model or None,
+                        "",
+                        "",
+                        custom_temp,
+                    )
+
+                    sent_ok = await self._send_ai_dm_icebreaker(
+                        page,
+                        handle,
+                        bio=bio_txt,
+                        recent_tweets=[],
+                        target_scope=None,
+                        custom_direct_text=greeting_text,
+                    )
+
+                    if sent_ok:
+                        greeted_count += 1
+                        self._followback_greeted_cache.add(handle.lower())
+                        if getattr(self, "history_pool", None):
+                            self.history_pool.mark_visited(self.tag, handle.lower())
+                        self._print(f"  └─ 🎉 [回关招呼成功] 成功向回关博主 @{handle} 送达私信问候！")
+
+                except Exception as g_err:
+                    self._print(f"  └─ ⚠️ 处理回关博主 @{handle} 偶发轻微异常: {g_err}")
+                    continue
+
+        except CONTROL_EXCEPTION_TYPES:
+            raise
+        except Exception as e:
+            self._print(f"⚠️ 通知栏巡视非阻断提示: {e}")
+
+        return greeted_count
 
     async def _dismiss_modal_dialogs(self, page: Any) -> None:
         try:
@@ -8283,6 +8775,12 @@ class XAutomationEngine:
                 if config.smart_unfollow_enabled and not getattr(self, "_cleaned_unreciprocated_today", False):
                     await self._clean_unreciprocated_follows(page, config)
 
+                # 💬 首轮启动收件箱与通知回关巡视
+                if getattr(config, "auto_reply_inbox_enabled", True):
+                    await self._process_inbox_auto_replies(page, config, max_replies=2)
+                if getattr(config, "auto_dm_followback_enabled", True):
+                    await self._process_followback_greetings(page, config, max_greetings=2)
+
                 batch_index = 1
 
                 while total_exec < config.daily_task_limit:
@@ -8450,6 +8948,14 @@ class XAutomationEngine:
                                 await page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=8000)
                             except Exception:
                                 pass
+
+                    # 💬 收件箱巡检与 AI 自动回聊
+                    if getattr(config, "auto_reply_inbox_enabled", True):
+                        await self._process_inbox_auto_replies(page, config, max_replies=2)
+
+                    # 👋 通知中心回关博主自动私信打招呼
+                    if getattr(config, "auto_dm_followback_enabled", True):
+                        await self._process_followback_greetings(page, config, max_greetings=2)
 
                     # 批次间隔休息：若本批次未产生关注/互动(0动作0风控负荷)，进入1分钟极速轮转，无需无谓等待
                     if e_cnt == 0:

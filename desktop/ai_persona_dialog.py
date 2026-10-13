@@ -266,6 +266,21 @@ class AIPersonaConfigDialog(QDialog):
         pwd_row.addWidget(self.toggle_dm_pwd_btn)
         form_layout.addLayout(pwd_row)
 
+        # 3.5 回关私信打招呼话术（选填，用于通知栏检测到回关博主时自动私信问候）
+        greeting_row = QHBoxLayout()
+        greeting_row.setSpacing(8)
+        greeting_lbl = QLabel("回关打招呼话术：")
+        greeting_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #334155;")
+        greeting_row.addWidget(greeting_lbl)
+
+        self.followback_greeting_edit = QLineEdit()
+        self.followback_greeting_edit.setPlaceholderText("选填，支持 {name} 占位符；留空则由 AI 结合人设自动生成")
+        self.followback_greeting_edit.setStyleSheet(
+            "QLineEdit { padding: 5px 8px; border: 1px solid #CBD5E1; border-radius: 5px; font-size: 12px; }"
+        )
+        greeting_row.addWidget(self.followback_greeting_edit, 1)
+        form_layout.addLayout(greeting_row)
+
         # 4. 防漂移定锚复选框
         self.lock_check = QCheckBox("启用顶层强指令定锚 (推荐：每次对话均强制注入人设底线，杜绝人格漂移)")
         self.lock_check.setChecked(True)
@@ -397,6 +412,7 @@ class AIPersonaConfigDialog(QDialog):
         self.persona_name_edit.setText(str(data.get("persona_name", "") or ""))
         self.prompt_edit.setPlainText(str(data.get("system_prompt", "") or ""))
         self.dm_password_edit.setText(str(data.get("dm_password", "") or ""))
+        self.followback_greeting_edit.setText(str(data.get("custom_followback_greeting", "") or ""))
         temp = float(data.get("temperature", 0.75) or 0.75)
         self.temp_slider.setValue(int(round(temp * 100)))
         self._on_temp_changed(int(round(temp * 100)))
@@ -481,6 +497,7 @@ class AIPersonaConfigDialog(QDialog):
             "persona_name": self.persona_name_edit.text().strip(),
             "system_prompt": self.prompt_edit.toPlainText().strip(),
             "dm_password": self.dm_password_edit.text().strip(),
+            "custom_followback_greeting": self.followback_greeting_edit.text().strip(),
             "custom_model": "",  # 默认由 Web 后台集中调度
             "temperature": round(self.temp_slider.value() / 100.0, 2),
             "lock_persona": self.lock_check.isChecked(),

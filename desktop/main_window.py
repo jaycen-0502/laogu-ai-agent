@@ -1512,6 +1512,53 @@ class TaskConfigDialog(QDialog):
         vision_filter_vbox.addWidget(vision_filter_hint)
         safety_grid.addWidget(vision_filter_box, 12, 1, 1, 2)
 
+        # Row 13: 智能收件箱自动回聊 (根据 AI 人设在 /messages 中与多位博主沟通转化)
+        safety_grid.addWidget(_make_safety_label("收件箱自动回聊"), 13, 0)
+        auto_reply_inbox_box = QWidget()
+        auto_reply_inbox_vbox = QVBoxLayout(auto_reply_inbox_box)
+        auto_reply_inbox_vbox.setContentsMargins(0, 0, 0, 0)
+        auto_reply_inbox_vbox.setSpacing(2)
+        self.auto_reply_inbox_enabled_input = QCheckBox("💬 智能收件箱自动回聊（根据 AI 人设在 /messages 中与多位博主沟通转化）")
+        self.auto_reply_inbox_enabled_input.setChecked(bool(active.get("auto_reply_inbox_enabled", True)))
+        self.auto_reply_inbox_enabled_input.setToolTip("开启后，在批次转换或巡视时进入私信收件箱，识别博主发来的最新消息，结合 AI 角色人设自动拟人回复并推进交流。")
+        self._register_inspector_hint(self.auto_reply_inbox_enabled_input, "auto_reply_inbox")
+        auto_reply_inbox_hint = QLabel("💡 依据本地 AI 账号人设，在私信收件箱自动阅读博主回复并拟人跟进，实现无感智能转化", objectName="dialogHint")
+        auto_reply_inbox_hint.setStyleSheet("color: #0284c7; font-size: 11px;")
+        auto_reply_inbox_hint.setWordWrap(True)
+        auto_reply_inbox_vbox.addWidget(self.auto_reply_inbox_enabled_input)
+        auto_reply_inbox_vbox.addWidget(auto_reply_inbox_hint)
+        safety_grid.addWidget(auto_reply_inbox_box, 13, 1, 1, 2)
+
+        # Row 14: 通知栏回关博主自动私信打招呼 (自定义话术 / AI 生成)
+        safety_grid.addWidget(_make_safety_label("回关私信打招呼"), 14, 0)
+        auto_dm_followback_box = QWidget()
+        auto_dm_followback_vbox = QVBoxLayout(auto_dm_followback_box)
+        auto_dm_followback_vbox.setContentsMargins(0, 0, 0, 0)
+        auto_dm_followback_vbox.setSpacing(4)
+        self.auto_dm_followback_enabled_input = QCheckBox("👋 回关博主自动私信打招呼（巡检通知栏，向新回关博主主动破冰）")
+        self.auto_dm_followback_enabled_input.setChecked(bool(active.get("auto_dm_followback_enabled", True)))
+        self.auto_dm_followback_enabled_input.setToolTip("开启后，自动巡视通知中心 (/notifications)；识别新回关的博主，自动发起打招呼私信。")
+        self._register_inspector_hint(self.auto_dm_followback_enabled_input, "auto_dm_followback")
+        auto_dm_followback_vbox.addWidget(self.auto_dm_followback_enabled_input)
+
+        followback_greeting_row = QHBoxLayout()
+        followback_greeting_row.setSpacing(6)
+        followback_greeting_label = QLabel("自定义招呼话术：", objectName="compactFieldLabel")
+        followback_greeting_label.setStyleSheet("font-size: 11px; color: #475569;")
+        self.custom_followback_greeting_input = QLineEdit()
+        self.custom_followback_greeting_input.setText(str(active.get("custom_followback_greeting") or ""))
+        self.custom_followback_greeting_input.setPlaceholderText("可填入自定义打招呼内容，支持 {name} 占位符；留空则由 AI 结合人设自动生成")
+        self.custom_followback_greeting_input.setStyleSheet("font-size: 11px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px;")
+        followback_greeting_row.addWidget(followback_greeting_label)
+        followback_greeting_row.addWidget(self.custom_followback_greeting_input, 1)
+        auto_dm_followback_vbox.addLayout(followback_greeting_row)
+
+        auto_dm_followback_hint = QLabel("💡 巡检通知栏发现回关博主后自动私信；支持填入自定义话术，留空时 AI 结合角色人设生成", objectName="dialogHint")
+        auto_dm_followback_hint.setStyleSheet("color: #0284c7; font-size: 11px;")
+        auto_dm_followback_hint.setWordWrap(True)
+        auto_dm_followback_vbox.addWidget(auto_dm_followback_hint)
+        safety_grid.addWidget(auto_dm_followback_box, 14, 1, 1, 2)
+
         safety_layout.addLayout(safety_grid)
 
         advanced_limits = QFrame(objectName="advancedInteractionLimits")
@@ -2285,6 +2332,9 @@ class TaskConfigDialog(QDialog):
             "block_video_streams": self.block_video_streams_input.isChecked() if hasattr(self, "block_video_streams_input") else True,
             "vision_filter_enabled": self.vision_filter_enabled_input.isChecked() if hasattr(self, "vision_filter_enabled_input") else False,
             "dm_password": self.dm_password_input.text().strip(),
+            "auto_reply_inbox_enabled": self.auto_reply_inbox_enabled_input.isChecked() if hasattr(self, "auto_reply_inbox_enabled_input") else True,
+            "auto_dm_followback_enabled": self.auto_dm_followback_enabled_input.isChecked() if hasattr(self, "auto_dm_followback_enabled_input") else True,
+            "custom_followback_greeting": self.custom_followback_greeting_input.text().strip() if hasattr(self, "custom_followback_greeting_input") else "",
         }
 
 

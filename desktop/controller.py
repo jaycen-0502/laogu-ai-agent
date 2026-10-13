@@ -1156,6 +1156,8 @@ class DesktopController:
                 guarded_config["ai_persona"] = self.get_persona_for_account(profile_id)
             if not guarded_config.get("dm_password"):
                 guarded_config["dm_password"] = str((guarded_config.get("ai_persona") or {}).get("dm_password") or "")
+            if not guarded_config.get("custom_followback_greeting"):
+                guarded_config["custom_followback_greeting"] = str((guarded_config.get("ai_persona") or {}).get("custom_followback_greeting") or "")
 
             def report_progress(progress: dict[str, Any]) -> None:
                 if not isinstance(progress, dict):

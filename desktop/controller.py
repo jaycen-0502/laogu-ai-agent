@@ -901,13 +901,17 @@ class DesktopController:
                 raise ValueError("hesitation_skip_ratio must be a number between 0.0 and 1.0") from exc
             normalized["hesitation_skip_ratio"] = max(0.0, min(1.0, h_ratio))
 
-        for action in ("like", "follow", "reply", "bookmark", "retweet"):
+        for action in ("like", "follow", "reply", "bookmark", "retweet", "dm"):
             enabled_key = f"allow_{action}"
             if enabled_key in normalized:
                 normalized[enabled_key] = parse_bool(normalized[enabled_key])
             limit_key = f"daily_{action}s_limit"
             if action == "reply":
                 limit_key = "daily_replies_limit"
+            elif action == "dm":
+                limit_key = "daily_dms_limit"
+                if "daily_dm_limit" in normalized and limit_key not in normalized:
+                    normalized[limit_key] = normalized["daily_dm_limit"]
             if limit_key in normalized:
                 try:
                     limit = int(normalized[limit_key])

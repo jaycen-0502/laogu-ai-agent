@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 
-_ACTIONS = ("like", "follow", "reply", "bookmark", "retweet", "unfollow", "tweet")
+_ACTIONS = ("like", "follow", "reply", "bookmark", "retweet", "unfollow", "tweet", "dm")
 _COUNTER_COLUMNS = {
     "like": "likes",
     "follow": "follows",
@@ -19,6 +19,7 @@ _COUNTER_COLUMNS = {
     "retweet": "retweets",
     "unfollow": "unfollows",
     "tweet": "tweets",
+    "dm": "dms",
 }
 _RISK_STATES = {"CHALLENGE_REQUIRED", "NOT_LOGGED_IN"}
 
@@ -145,6 +146,7 @@ class AutomationSafetyStore:
                     retweets INTEGER NOT NULL DEFAULT 0,
                     unfollows INTEGER NOT NULL DEFAULT 0,
                     tweets INTEGER NOT NULL DEFAULT 0,
+                    dms INTEGER NOT NULL DEFAULT 0,
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY(profile_id, metric_date)
                 )
@@ -152,7 +154,7 @@ class AutomationSafetyStore:
             )
             db.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in db.execute("PRAGMA table_info(automation_safety_daily)")}
-            for column in ("unfollows", "tweets"):
+            for column in ("unfollows", "tweets", "dms"):
                 if column not in columns:
                     db.execute(f"ALTER TABLE automation_safety_daily ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
             db.execute(
@@ -220,12 +222,12 @@ class AutomationSafetyStore:
         with self._lock, self._connect() as db:
             row = db.execute(
                 """
-                SELECT processed_count,likes,follows,comments,bookmarks,retweets,unfollows,tweets
+                SELECT processed_count,likes,follows,comments,bookmarks,retweets,unfollows,tweets,dms
                 FROM automation_safety_daily WHERE profile_id=? AND metric_date=?
                 """,
                 (str(profile_id), day),
             ).fetchone()
-        keys = ("processed_count", "likes", "follows", "comments", "bookmarks", "retweets", "unfollows", "tweets")
+        keys = ("processed_count", "likes", "follows", "comments", "bookmarks", "retweets", "unfollows", "tweets", "dms")
         return dict(zip(keys, (_count(value) for value in row), strict=True)) if row else {key: 0 for key in keys}
 
     def risk_status(self, profile_id: str) -> dict[str, str]:
@@ -269,6 +271,7 @@ class AutomationSafetyStore:
                 "daily_retweets_used": daily["retweets"],
                 "daily_unfollows_used": daily["unfollows"],
                 "daily_tweets_used": daily["tweets"],
+                "daily_dms_used": daily.get("dms", 0),
             }
         )
         return (
@@ -364,6 +367,7 @@ class AutomationSafetyStore:
                     "retweets": _count(result.get("retweets", result.get("retweet_count", 0))),
                     "unfollows": _count(result.get("unfollows", result.get("unfollow_count", 0))),
                     "tweets": _count(result.get("tweets", result.get("tweet_count", 0))),
+                    "dms": _count(result.get("dms", result.get("dm_count", 0))),
                 }
                 for column, value in values.items():
                     if value:
@@ -427,4 +431,5 @@ def _action_label(action: str) -> str:
         "retweet": "转推",
         "unfollow": "取关",
         "tweet": "发推",
+        "dm": "私信",
     }.get(action, action)

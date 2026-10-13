@@ -1542,8 +1542,8 @@ class TaskConfigDialog(QDialog):
         permissions_layout.setHorizontalSpacing(16)
         permissions_layout.setVerticalSpacing(8)
         self.action_permission_inputs: dict[str, QCheckBox] = {}
-        default_allowed = {"like": True, "follow": True, "reply": False, "bookmark": False}
-        for index, (action, label) in enumerate((("like", "点赞"), ("follow", "关注"), ("reply", "回复"), ("bookmark", "收藏"))):
+        default_allowed = {"like": True, "follow": True, "reply": False, "bookmark": False, "dm": True}
+        for index, (action, label) in enumerate((("like", "点赞"), ("follow", "关注"), ("reply", "回复"), ("bookmark", "收藏"), ("dm", "私信"))):
             checkbox = QCheckBox(label)
             checkbox.setChecked(bool(active.get(f"allow_{action}", default_allowed.get(action, False))))
             self.action_permission_inputs[action] = checkbox
@@ -1586,7 +1586,8 @@ class TaskConfigDialog(QDialog):
         self.daily_reply_limit_input = self._spin(active.get("daily_replies_limit"), 0, 0, 100_000)
         self.daily_bookmark_limit_input = self._spin(active.get("daily_bookmarks_limit"), 0, 0, 100_000)
         self.daily_retweet_limit_input = self._spin(active.get("daily_retweets_limit"), 0, 0, 100_000)
-        for widget in (self.daily_like_limit_input, self.daily_follow_limit_input, self.daily_reply_limit_input, self.daily_bookmark_limit_input, self.daily_retweet_limit_input):
+        self.daily_dm_limit_input = self._spin(active.get("daily_dms_limit") or active.get("daily_dm_limit"), 10, 0, 100_000)
+        for widget in (self.daily_like_limit_input, self.daily_follow_limit_input, self.daily_reply_limit_input, self.daily_bookmark_limit_input, self.daily_retweet_limit_input, self.daily_dm_limit_input):
             widget.setSpecialValueText("不限制")
         action_limits = QWidget()
         action_limits_layout = QGridLayout(action_limits)
@@ -1599,6 +1600,7 @@ class TaskConfigDialog(QDialog):
             ("回复", self.daily_reply_limit_input),
             ("收藏", self.daily_bookmark_limit_input),
             ("转推", self.daily_retweet_limit_input),
+            ("私信", self.daily_dm_limit_input),
         )):
             row = index // 2
             column = (index % 2) * 2
@@ -1924,6 +1926,7 @@ class TaskConfigDialog(QDialog):
             (self.daily_reply_limit_input, "daily_replies_limit", 0),
             (self.daily_bookmark_limit_input, "daily_bookmarks_limit", 0),
             (self.daily_retweet_limit_input, "daily_retweets_limit", 0),
+            (self.daily_dm_limit_input, "daily_dms_limit", 10),
         ):
             try:
                 widget.setValue(default if active.get(key) is None else int(active.get(key)))
@@ -2015,7 +2018,7 @@ class TaskConfigDialog(QDialog):
         raw_source = str(active.get("chain_hop_source") or "followers").strip().lower()
         self.chain_hop_source_input.setCurrentIndex(1 if raw_source == "following" else 0)
         self._update_chain_hop_controls()
-        default_allowed = {"like": True, "follow": True, "reply": False, "bookmark": False}
+        default_allowed = {"like": True, "follow": True, "reply": False, "bookmark": False, "dm": True}
         for action, checkbox in self.action_permission_inputs.items():
             checkbox.setChecked(bool(active.get(f"allow_{action}", default_allowed.get(action, False))))
         self.allow_retweet_input.setChecked(bool(active.get("allow_retweet", False)))
@@ -2265,6 +2268,8 @@ class TaskConfigDialog(QDialog):
             "daily_replies_limit": self.daily_reply_limit_input.value(),
             "daily_bookmarks_limit": self.daily_bookmark_limit_input.value(),
             "daily_retweets_limit": self.daily_retweet_limit_input.value(),
+            "daily_dms_limit": self.daily_dm_limit_input.value(),
+            "daily_dm_limit": self.daily_dm_limit_input.value(),
             "cloud_dedup_enabled": self.cloud_dedup_enabled_input.isChecked(),
             "cloud_dedup_studio_token": self.cloud_dedup_studio_token_input.text().strip(),
             "studio_token": self.cloud_dedup_studio_token_input.text().strip(),

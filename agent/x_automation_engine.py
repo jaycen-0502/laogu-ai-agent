@@ -202,6 +202,120 @@ def generate_ai_reply(
     return random.choice(fallback_replies)
 
 
+# 内存私信去重缓存与多线程锁（保证 asyncio.to_thread 并发安全）
+_RECENT_DMS_CACHE: list[str] = []
+_DM_CACHE_LOCK = threading.Lock()
+
+
+def generate_ai_dm_icebreaker(
+    handle: str,
+    bio: str = "",
+    recent_tweets: list[str] | None = None,
+    persona_system_prompt: str = "",
+    custom_model: str | None = None,
+    custom_api_key: str = "",
+    custom_base_url: str = "",
+    temperature: float = 0.85,
+) -> str:
+    """结合博主资料、近期推文与本地 AI 角色人设，动态生成千人千面私信破冰语"""
+    global _RECENT_DMS_CACHE
+
+    remote_cfg = fetch_remote_router_config()
+    API_KEY = custom_api_key or remote_cfg.get("api_key") or os.environ.get("ROUTER_API_KEY", "")
+    BASE_URL = custom_base_url or remote_cfg.get("base_url") or os.environ.get("ROUTER_BASE_URL", "")
+
+    if isinstance(custom_model, str) and custom_model.strip():
+        models = [custom_model.strip()]
+    elif isinstance(custom_model, list) and custom_model:
+        models = [str(m).strip() for m in custom_model if str(m).strip()]
+    else:
+        models = remote_cfg.get("models") or ["gpt-5.6-terra", "gpt-5.5", "gpt-5.4", "gpt-4o-mini"]
+
+    clean_bio = (bio or "").strip()[:180]
+    tweet_snippets = " | ".join([t.strip().replace("\n", " ")[:100] for t in (recent_tweets or []) if t.strip()][:2])
+
+    if persona_system_prompt and persona_system_prompt.strip():
+        system_prompt = (
+            f"{persona_system_prompt.strip()}\n\n"
+            "【私信破冰执行规约】：\n"
+            "- 严格遵循上述人设定位、口吻与性格。\n"
+            "- 仔细结合博主的简介或近期动态，像真实朋友一样自然打招呼或夸赞/提起兴趣。\n"
+            "- 严禁任何广告、链接、机械客服推销话术。\n"
+            "- 长度保持在 30~50 字以内的地道自然短句，仅输出最终私信文本。"
+        )
+    else:
+        system_prompt = (
+            "You are a friendly, elegant, and authentic Twitter user living in Tokyo. "
+            "Write a natural, genuine direct message (DM) icebreaker in polite yet warm Japanese. "
+            "Refer subtly to the user's bio or recent tweets. Keep it under 40 Japanese characters. "
+            "Never use pushy sales language, never include links or promotional words. Output ONLY the message text."
+        )
+
+    user_prompt = f"博主 Handle: @{handle}\n"
+    if clean_bio:
+        user_prompt += f"博主简介: {clean_bio}\n"
+    if tweet_snippets:
+        user_prompt += f"近期动态: {tweet_snippets}\n"
+    user_prompt += "请生成一句适合作为首次私信发起交流的破冰语句："
+
+    if API_KEY and BASE_URL:
+        endpoint = BASE_URL.rstrip("/")
+        if not endpoint.endswith("/v1") and not endpoint.endswith("/chat/completions"):
+            endpoint = f"{endpoint}/v1/chat/completions"
+        elif endpoint.endswith("/v1"):
+            endpoint = f"{endpoint}/chat/completions"
+
+        for model in models:
+            try:
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "max_tokens": 80,
+                    "temperature": temperature,
+                }
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {API_KEY}",
+                        "User-Agent": "OpenAI-Python/1.12.0 (Codex-CLI-Engine)",
+                        "Accept": "application/json",
+                        "Connection": "keep-alive"
+                    },
+                    method="POST"
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    if response.status == 200:
+                        res_data = json.loads(response.read().decode("utf-8"))
+                        choices = res_data.get("choices", [])
+                        if choices:
+                            choice = choices[0]
+                            text = choice.get("content", "") if "content" in choice else choice.get("message", {}).get("content", "")
+                            clean_text = text.strip().replace('"', '').replace('「', '').replace('」', '').replace('\n', ' ')
+                            with _DM_CACHE_LOCK:
+                                if clean_text and clean_text not in _RECENT_DMS_CACHE:
+                                    _RECENT_DMS_CACHE.append(clean_text)
+                                    if len(_RECENT_DMS_CACHE) > 50:
+                                        _RECENT_DMS_CACHE.pop(0)
+                                    print(f"  └─ 🤖 [AI 私信破冰生成] 模型 [{model}]: \"{clean_text}\"")
+                                    return clean_text
+            except Exception as err:
+                print(f"  └─ ⚠️ [AI 私信] 模型 [{model}] 异常，尝试备选模型: {err}")
+
+    fallback_dms = [
+        "はじめまして！ツイートが流れてきて気になってDMさせていただきました✨",
+        "こんにちは！タイムラインで見かけて素敵だなと思ってメッセージしました😊",
+        "初めまして！共通の話題がありそうだなと思ってフォロー＆DM失礼します🙌",
+        "こんにちは！いつもツイート楽しく拝見してます、よろしくお願いします✨",
+    ]
+    return random.choice(fallback_dms)
+
+
+
 class AutomationEngineError(RuntimeError):
     """Expected automation failure that should be reported to the task log."""
 
@@ -297,6 +411,10 @@ class AutomationConfig:
     allow_reply: bool = False
     allow_bookmark: bool = False
     allow_retweet: bool = False
+    allow_dm: bool = True                           # 是否允许向博主发送 AI 破冰私信
+    daily_dms_limit: int = 10                       # 每日私信安全限额（建议 10~15 条）
+    dm_cooldown_min_seconds: int = 90               # 私信发送后最小冷却秒数
+    dm_cooldown_max_seconds: int = 150              # 私信发送后最大冷却秒数
     # --- 动态全字段黑名单词库 (一票否决) ---
     blacklist_filter_enabled: bool = True           # 是否启用全字段黑名单/敏感词过滤（一键开关，默认开启）
     blacklist_words: list[str] = field(default_factory=list)
@@ -517,6 +635,10 @@ class AutomationConfig:
             allow_reply=boolean("allow_reply", False),
             allow_bookmark=boolean("allow_bookmark", False),
             allow_retweet=boolean("allow_retweet", False),
+            allow_dm=boolean("allow_dm", True),
+            daily_dms_limit=integer("daily_dms_limit", values.get("daily_dm_limit", 10), 0, 100_000),
+            dm_cooldown_min_seconds=integer("dm_cooldown_min_seconds", 90, 10, 3600),
+            dm_cooldown_max_seconds=integer("dm_cooldown_max_seconds", 150, 10, 3600),
             blacklist_filter_enabled=boolean("blacklist_filter_enabled", True),
             blacklist_words=blacklist_words,
             check_options=check_opts,
@@ -1684,6 +1806,197 @@ class XAutomationEngine:
             return True
         except Exception as err:
             self.logger.debug("处理私信密码弹窗非阻断提示: %s", err)
+            return False
+
+    async def _send_ai_dm_icebreaker(
+        self,
+        page: Any,
+        handle: str,
+        bio: str = "",
+        recent_tweets: list[str] | None = None,
+        target_scope: Any = None,
+    ) -> bool:
+        """博主主页私信智能嗅探、AI 破冰话术生成、拟人输入与风控冷却核心引擎"""
+        target_key = f"handle:{handle.lower()}"
+        if not await self._allow_action("dm", target_key):
+            return False
+
+        try:
+            self._print(f"  └─ 🔍 [私信嗅探] 正在研判博主 @{handle} 主页私信开放权限...")
+            scope = target_scope if target_scope else page
+
+            # 1. 查找私信入口按钮 (sendDM)
+            dm_btn = await scope.query_selector(
+                'button[data-testid="sendDM"], '
+                '[data-testid="sendDM"], '
+                'button[aria-label*="Direct Message"], '
+                'button[aria-label*="Message"], '
+                'button[aria-label*="メッセージ"], '
+                'button[aria-label*="私信"]'
+            )
+            if not dm_btn:
+                dm_btn = await page.query_selector('button[data-testid="sendDM"], [data-testid="sendDM"]')
+
+            if not dm_btn:
+                self._print(f"  └─ ℹ️ [私信嗅探] 博主 @{handle} 未开放私信功能（未展示私信入口），优雅跳过")
+                return False
+
+            # 2. 嗅探是否置灰或受限 (仅限认证/订阅者)
+            is_disabled = (
+                await dm_btn.get_attribute("disabled") is not None
+                or await dm_btn.get_attribute("aria-disabled") == "true"
+            )
+            if is_disabled:
+                self._print(f"  └─ ℹ️ [私信嗅探] 博主 @{handle} 私信入口已限制（仅限认证订阅用户），优雅跳过")
+                return False
+
+            # 3. 拟人点击发起私信
+            self._print(f"  └─ ✉️ [发起私信] 正在点击私信信封，准备向 @{handle} 发送破冰消息...")
+            clicked = await safe_human_click(page, dm_btn, self.personality)
+            if not clicked and hasattr(dm_btn, "click"):
+                try:
+                    await dm_btn.click(timeout=3000, force=True)
+                    clicked = True
+                except Exception:
+                    try:
+                        await dm_btn.evaluate("el => el.click()")
+                        clicked = True
+                    except Exception:
+                        pass
+            if not clicked:
+                self._print("  └─ ⚠️ 点击私信按钮无响应，跳过")
+                return False
+
+            await asyncio.sleep(random.uniform(1.2, 2.0))
+
+            # 4. 自动解锁私信密码/PIN 弹窗（若有）
+            await self._handle_dm_password_prompt_if_present(page)
+
+            # 5. 等待私信输入框就绪
+            composer_sel = (
+                'div[data-testid="dmComposerTextInput"], '
+                'aside[data-testid="DMDrawer"] div[role="textbox"], '
+                'div[role="dialog"] div[data-testid="dmComposerTextInput"], '
+                'div[role="dialog"] div[role="textbox"], '
+                'div[data-testid="primaryColumn"] div[data-testid="dmComposerTextInput"], '
+                'div[role="textbox"][contenteditable="true"]'
+            )
+            composer = None
+            try:
+                composer = await page.wait_for_selector(composer_sel, timeout=6000)
+            except Exception:
+                pass
+
+            if not composer:
+                if await self._handle_dm_password_prompt_if_present(page):
+                    try:
+                        composer = await page.wait_for_selector(composer_sel, timeout=4000)
+                    except Exception:
+                        pass
+
+            if not composer:
+                self._print(f"  └─ ℹ️ 未能定位到私信输入框（可能私信受阻或加载延迟），安全退出")
+                try:
+                    await page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                return False
+
+            # 6. AI 动态生成独一无二的破冰语句
+            persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
+            custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
+            custom_model = str(persona_cfg.get("custom_model", "") or "")
+            custom_temp = float(persona_cfg.get("temperature", 0.85) or 0.85)
+
+            icebreaker = await asyncio.to_thread(
+                generate_ai_dm_icebreaker,
+                handle,
+                bio,
+                recent_tweets,
+                custom_prompt,
+                custom_model or None,
+                "",
+                "",
+                custom_temp,
+            )
+
+            # 7. 拟人模拟打字输入
+            self._print(f"  └─ ✍️ [拟人输入] 正在键入破冰私信内容...")
+            if not await safe_human_click(page, composer, self.personality):
+                await composer.click()
+            await asyncio.sleep(random.uniform(0.5, 1.0))
+
+            await human_type_text(page, composer, icebreaker)
+            await asyncio.sleep(random.uniform(1.0, 1.8))
+
+            # 8. 点击发送或回车发送
+            send_btn = await page.query_selector(
+                'button[data-testid="dmComposerSendButton"], '
+                'div[data-testid="dmComposerSendButton"], '
+                'button[aria-label*="Send"], '
+                'button[aria-label*="送信"], '
+                'button[aria-label*="发送"]'
+            )
+            sent = False
+            if send_btn and hasattr(send_btn, "is_visible") and await send_btn.is_visible():
+                btn_dis = (
+                    await send_btn.get_attribute("disabled") is not None
+                    or await send_btn.get_attribute("aria-disabled") == "true"
+                )
+                if not btn_dis:
+                    if await safe_human_click(page, send_btn, self.personality):
+                        sent = True
+                    elif hasattr(send_btn, "click"):
+                        await send_btn.click()
+                        sent = True
+
+            if not sent:
+                await page.keyboard.press("Enter")
+                sent = True
+
+            await asyncio.sleep(random.uniform(2.0, 3.5))
+
+            # 9. 记录动作与成功审计
+            self._record_action("dm", target_key)
+            self._print(f"  └─ ✉️ [私信发送成功] 成功向博主 @{handle} 送达破冰私信: \"{icebreaker}\"")
+
+            # 10. 检查是否触碰平台单日限额
+            limit_dialog = await page.query_selector(r'text=/reached the limit|私信上限|制限に達しました/i')
+            if limit_dialog:
+                self._print("  └─ 🚨 [私信配额熔断] 页面提示已达单日私信上限，执行长时休眠保护！")
+                raise RateLimitPause(1800, reason="DM_DAILY_LIMIT_REACHED")
+
+            # 11. 优雅最小化或关闭 DM 抽屉，避免遮挡后续主页面操作
+            try:
+                minimize_btn = await page.query_selector(
+                    'button[data-testid="DMDrawer-minimize"], '
+                    'button[aria-label*="Close"], '
+                    'button[aria-label*="閉じる"], '
+                    'button[aria-label*="关闭"]'
+                )
+                if minimize_btn:
+                    await minimize_btn.click()
+                else:
+                    await page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+            # 12. 爆发冷却保护 (Burst Cooling)
+            min_cd = int(getattr(self._active_config, "dm_cooldown_min_seconds", 90) or 90)
+            max_cd = int(getattr(self._active_config, "dm_cooldown_max_seconds", 150) or 150)
+            cd_wait = random.randint(min_cd, max(min_cd, max_cd))
+            self._print(f"  └─ ☕ [防风控深度冷却] 私信已送出，进入 {cd_wait} 秒静默冷却与摸鱼消痕...")
+            await self._sleep_with_control(cd_wait)
+            return True
+
+        except CONTROL_EXCEPTION_TYPES:
+            raise
+        except Exception as e:
+            self._print(f"  └─ ⚠️ 私信流程轻微异常，安全跳过: {e}")
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
             return False
 
     async def _dismiss_modal_dialogs(self, page: Any) -> None:
@@ -4635,6 +4948,15 @@ class XAutomationEngine:
                             self._print(f"  └─ 👍 [主页点赞] 在 @{handle} 主页点赞第 {likes} 条推文")
                             await asyncio.sleep(random.uniform(3.0, 5.0))
 
+            if followed and bool(getattr(self._active_config, "allow_dm", True)):
+                await self._send_ai_dm_icebreaker(
+                    page,
+                    handle,
+                    bio=header_text,
+                    recent_tweets=[],
+                    target_scope=profile_header,
+                )
+
             self._print(f"  └─ 🔙 拜访完毕，尝试返回搜索推文列表...")
             try:
                 await page.go_back(wait_until="domcontentloaded", timeout=8000)
@@ -4808,14 +5130,24 @@ class XAutomationEngine:
 
             for u_sel in unfollow_selectors:
                 if await target_scope.query_selector(u_sel):
-                    self._print(f"  └─ ⏩ 博主 @{handle} 已经处于关注或申请中状态，跳过")
+                    self._print(f"  └─ ⏩ 博主 @{handle} 已经处于关注或申请中状态，跳过关注")
                     already_following = True
                     break
 
             if already_following:
+                if bool(getattr(self._active_config, "allow_dm", True)):
+                    target_key = f"handle:{handle.lower()}"
+                    if await self._allow_action("dm", target_key):
+                        await self._send_ai_dm_icebreaker(
+                            page,
+                            handle,
+                            bio=bio_text,
+                            recent_tweets=recent_tweets,
+                            target_scope=target_scope,
+                        )
                 return False, 0
 
-            # 1. 扫描博主主页推文，优先执行点赞（关注必点赞，确保对方必收到互动通知）
+            # 1. 扫描博主主页推文，优先执行点赞（关注必点赞，确保目标博主必收到互动通知）
             can_try_like = True
             if self._active_config and not bool(getattr(self._active_config, "allow_like", True)):
                 can_try_like = False
@@ -4949,6 +5281,14 @@ class XAutomationEngine:
                         newly_followed = True
                         if getattr(self, "history_pool", None):
                             self.history_pool.mark_visited(self.tag, handle.lower())
+                        if bool(getattr(self._active_config, "allow_dm", True)):
+                            await self._send_ai_dm_icebreaker(
+                                page,
+                                handle,
+                                bio=bio_text,
+                                recent_tweets=recent_tweets,
+                                target_scope=target_scope,
+                            )
                     else:
                         self._print(f"  └─ ⚠️ [动作反查预警] 关注 @{handle} 后未确认变更为已关注: {follow_reason}")
                         if "RATE_LIMITED" in follow_reason:

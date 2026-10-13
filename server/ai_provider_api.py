@@ -371,8 +371,8 @@ def register_ai_provider_routes(
     ):
         item = visible_provider(provider_id, user, db)
         require_manager(request, user, db, item.workspace_id)
-        if item.status == "ENABLED" or item.is_default:
-            raise HTTPException(status_code=409, detail="Disable the AI provider before deletion")
+        if item.is_default:
+            raise HTTPException(status_code=409, detail="默认服务商不可直接删除，请先将其他服务商设为默认后再删除")
         if db.scalar(select(ChatSession.id).where(ChatSession.provider_id == item.id).limit(1)):
             raise HTTPException(status_code=409, detail="AI provider is used by chat sessions")
         if db.scalar(select(AIImage.id).where(AIImage.provider_id == item.id).limit(1)):

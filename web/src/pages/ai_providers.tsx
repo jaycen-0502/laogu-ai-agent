@@ -426,7 +426,13 @@ export function AIProvidersPage({ user }: { user: User }) {
                       <button disabled={busy === `models:${item.provider_id}`} onClick={() => void fetchModels(item)}>
                         {busy === `models:${item.provider_id}` ? "获取中…" : "获取模型列表"}
                       </button>
-                      <button disabled={item.status === "ENABLED" || busy === `delete:${item.provider_id}`} onClick={() => void remove(item)}>删除</button>
+                      <button
+                        disabled={item.is_default || busy === `delete:${item.provider_id}`}
+                        onClick={() => void remove(item)}
+                        title={item.is_default ? "默认服务商不可直接删除，请先将其他项设为默认" : "删除此服务商"}
+                      >
+                        删除
+                      </button>
                     </div>
                   </td>
                 )}

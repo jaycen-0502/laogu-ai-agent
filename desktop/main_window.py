@@ -550,6 +550,7 @@ class TaskConfigDialog(QDialog):
         self.outreach_mode_input.addItem("🔗 关键词种子·无限顺藤摸瓜（A➜B➜C 链式裂变）", "keyword_chain")
         self.outreach_mode_input.addItem("👥 扫博主粉丝模式（批量深挖目标博主粉丝群）", "target_followers")
         self.outreach_mode_input.addItem("纯私域关系网拓客（从我的关注列表出发）", "network_hop")
+        self.outreach_mode_input.addItem("💬 纯AI私信值守模式（零关注·仅自动聊天与回关打招呼）", "chat_only")
         mode_val = str(active.get("outreach_mode") or "keyword").lower()
         mode_idx = self.outreach_mode_input.findData(mode_val)
         self.outreach_mode_input.setCurrentIndex(mode_idx if mode_idx >= 0 else 0)
@@ -753,6 +754,8 @@ class TaskConfigDialog(QDialog):
 
             if mode == "network_hop":
                 self.keyword_input.setPlaceholderText("（纯私域关系网拓客模式下无需关键词，将自动从自身关注列表出发）")
+            elif mode == "chat_only":
+                self.keyword_input.setPlaceholderText("（纯私信值守模式下无需关键词，系统专注在收件箱与通知中心轮查）")
             elif mode == "keyword_chain":
                 self.keyword_input.setPlaceholderText("请输入首个引流种子搜索关键词（留空默认使用首页推荐推文作为种子）")
             elif is_target_followers:
@@ -1873,6 +1876,24 @@ class TaskConfigDialog(QDialog):
             self.chain_hop_sub_hint.setVisible(True)
             self.chain_hop_note_label.setText("🌱 从账号自身列表出发，向外挖掘人脉关系网")
             self.chain_hop_note_label.setVisible(True)
+        elif mode == "chat_only":
+            self.chain_hop_enabled_input.blockSignals(True)
+            self.chain_hop_enabled_input.setChecked(False)
+            self.chain_hop_enabled_input.setEnabled(False)
+            self.chain_hop_enabled_input.blockSignals(False)
+
+            self.chain_hop_ratio_input.setEnabled(False)
+            self.chain_hop_ratio_label.setEnabled(False)
+            self.max_chain_depth_input.setEnabled(False)
+            self.max_chain_depth_label.setEnabled(False)
+            self.max_harvest_per_seed_input.setEnabled(False)
+            self.max_harvest_per_seed_label.setEnabled(False)
+            self.chain_hop_source_input.setEnabled(False)
+            self.chain_hop_source_label.setEnabled(False)
+
+            self.chain_hop_sub_hint.setVisible(False)
+            self.chain_hop_note_label.setText("💬 当前为【纯AI私信值守模式】，专注收件箱自动回聊与回关打招呼，不执行推文与关系网拓客")
+            self.chain_hop_note_label.setVisible(True)
         else:
             self.chain_hop_enabled_input.setEnabled(True)
             enabled = self.chain_hop_enabled_input.isChecked()
@@ -2249,7 +2270,7 @@ class TaskConfigDialog(QDialog):
         engine = self.engine_input.currentData() or {"engine_id": "default", "engine_name": "默认自动化引擎"}
         raw_kw = self.keyword_input.text().strip()[:500]
         mode = str(self.outreach_mode_input.currentData() or "keyword")
-        chain_hop_enabled = True if mode in ("keyword_chain", "network_hop") else self.chain_hop_enabled_input.isChecked()
+        chain_hop_enabled = True if mode in ("keyword_chain", "network_hop") else (False if mode == "chat_only" else self.chain_hop_enabled_input.isChecked())
         chain_hop_ratio = 1.0 if mode == "keyword_chain" else float(self.chain_hop_ratio_input.value())
         max_chain_depth = 0 if mode == "keyword_chain" else int(self.max_chain_depth_input.value())
 

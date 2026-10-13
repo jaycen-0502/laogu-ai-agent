@@ -828,7 +828,7 @@ class DesktopController:
 
         if "outreach_mode" in normalized:
             mode_str = str(normalized["outreach_mode"]).strip().lower()
-            normalized["outreach_mode"] = mode_str if mode_str in {"keyword", "keyword_chain", "network_hop", "target_followers"} else "keyword"
+            normalized["outreach_mode"] = mode_str if mode_str in {"keyword", "keyword_chain", "network_hop", "target_followers", "chat_only"} else "keyword"
         if "target_creators" in normalized:
             normalized["target_creators"] = clean_target_creators(normalized["target_creators"])
         if "max_followers_per_target" in normalized:

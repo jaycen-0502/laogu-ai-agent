@@ -561,7 +561,7 @@ class AutomationConfig:
     batch_interval_minutes: int = 15
     execution_preset: str = "safe"     # 运行策略预设: "safe" (安全防风控) 或 "turbo" (极速高通量)
     batch_jitter_enabled: bool = True  # 是否启用批次间隔随机抖动
-    outreach_mode: str = "keyword"      # 拓客工作模式: "keyword" (关键词推文), "keyword_chain" (关键词种子·无限顺藤摸瓜), "network_hop" (纯私域关注列表)
+    outreach_mode: str = "keyword"      # 拓客工作模式: "keyword" (关键词推文), "keyword_chain" (关键词种子·无限顺藤摸瓜), "network_hop" (纯私域关注列表), "chat_only" (纯AI私信值守·零关注)
     target_url: str = "https://x.com/home"
     account_tag: str = "默认"
     profile_visit_ratio: float = 0.80   # 默认 0.80，即 80% 深入个人主页深度拜访，20% 在名片层轻量触达
@@ -747,7 +747,7 @@ class AutomationConfig:
         batch_jitter_enabled = boolean("batch_jitter_enabled", True)
 
         outreach_mode = str(values.get("outreach_mode") or "keyword").strip().lower()
-        if outreach_mode not in {"keyword", "keyword_chain", "network_hop", "target_followers"}:
+        if outreach_mode not in {"keyword", "keyword_chain", "network_hop", "target_followers", "chat_only"}:
             outreach_mode = "keyword"
 
         server_url = str(values.get("cloud_dedup_server_url") or values.get("server_url") or "https://api.jaycwl.org").strip().rstrip("/")
@@ -1920,6 +1920,9 @@ class XAutomationEngine:
                 return False
             if not bool(getattr(config, f"allow_{action}", True)):
                 self._print(f"🛡️ 控制中心策略：已禁止 {action} 动作")
+                return False
+            if getattr(config, "outreach_mode", "") == "chat_only" and action in ("follow", "like", "retweet", "reply", "bookmark"):
+                self._print(f"🛡️ 纯私信值守模式：已跳过 {action} 互动动作")
                 return False
         guard = getattr(self, "safety_guard", None)
         if guard is None:
@@ -8056,6 +8059,35 @@ class XAutomationEngine:
 
         return exec_count, likes_count, follows_count, views_count
 
+    async def _run_chat_only_batch(
+        self,
+        page: Any,
+        config: AutomationConfig,
+        current_total_exec: int,
+        current_total_likes: int = 0,
+        current_total_follows: int = 0,
+        current_total_views: int = 0,
+    ) -> tuple[int, int, int, int]:
+        """纯 AI 私信与收件箱值守模式：不搜索推文流、零关注零点赞，专注收件箱自动回聊与回关打招呼"""
+        self._print("💬 [纯私信值守] 启动收件箱与通知中心巡视...")
+        replied_count = 0
+        greeted_count = 0
+        if getattr(config, "auto_reply_inbox_enabled", True):
+            replied_count = await self._process_inbox_auto_replies(page, config, max_replies=3)
+        if getattr(config, "auto_dm_followback_enabled", True):
+            greeted_count = await self._process_followback_greetings(page, config, max_greetings=3)
+
+        # 拟人轻量呼吸待机
+        idle_seconds = random.uniform(20.0, 40.0)
+        self._print(
+            f"🛋️ [值守静息] 本轮巡查完成 (自动回复: {replied_count} 条 | 回关招呼: {greeted_count} 位)，"
+            f"待机 {int(idle_seconds)} 秒..."
+        )
+        await asyncio.sleep(idle_seconds)
+
+        total_actions = replied_count + greeted_count
+        return total_actions, 0, 0, total_actions
+
     async def _run_target_followers_batch(
         self,
         page: Any,
@@ -8444,7 +8476,9 @@ class XAutomationEngine:
         if config.cloud_dedup_enabled and config.cloud_dedup_studio_token:
             token_display = config.cloud_dedup_studio_token[:6] + "***" if len(config.cloud_dedup_studio_token) > 6 else "***"
             self._print(f"👥 [工作室协同去重] 已激活 (协同码: {token_display} | 节点: {config.cloud_dedup_device_name})")
-        if config.outreach_mode == "keyword_chain":
+        if config.outreach_mode == "chat_only":
+            self._print("💬 [拓客工作模式: 纯AI私信值守模式] (零关注·零点赞·全天候收件箱回聊与回关打招呼)")
+        elif config.outreach_mode == "keyword_chain":
             depth_desc = "无限制 (持续裂变直到达成配额)" if config.is_chain_infinite else f"{config.max_chain_depth} 层"
             self._print(f"🔗 [拓客工作模式: 关键词种子·无限顺藤摸瓜] (A➜B➜C 链式裂变 | 链条深度: {depth_desc})")
         elif config.outreach_mode == "target_followers":
@@ -8832,7 +8866,16 @@ class XAutomationEngine:
                     })
 
                     try:
-                        if config.outreach_mode == "target_followers":
+                        if config.outreach_mode == "chat_only":
+                            e_cnt, l_cnt, f_cnt, v_cnt = await self._run_chat_only_batch(
+                                page,
+                                batch_config,
+                                total_exec,
+                                total_likes,
+                                total_follows,
+                                total_views,
+                            )
+                        elif config.outreach_mode == "target_followers":
                             e_cnt, l_cnt, f_cnt, v_cnt = await self._run_target_followers_batch(
                                 page,
                                 batch_config,
@@ -8949,23 +8992,30 @@ class XAutomationEngine:
                             except Exception:
                                 pass
 
-                    # 💬 收件箱巡检与 AI 自动回聊
-                    if getattr(config, "auto_reply_inbox_enabled", True):
-                        await self._process_inbox_auto_replies(page, config, max_replies=2)
+                    # 💬 收件箱巡检与 AI 自动回聊 (纯私信值守模式已在批次中巡察，此处规避短间隔重复访问)
+                    if config.outreach_mode != "chat_only":
+                        if getattr(config, "auto_reply_inbox_enabled", True):
+                            await self._process_inbox_auto_replies(page, config, max_replies=2)
 
-                    # 👋 通知中心回关博主自动私信打招呼
-                    if getattr(config, "auto_dm_followback_enabled", True):
-                        await self._process_followback_greetings(page, config, max_greetings=2)
+                        # 👋 通知中心回关博主自动私信打招呼
+                        if getattr(config, "auto_dm_followback_enabled", True):
+                            await self._process_followback_greetings(page, config, max_greetings=2)
 
-                    # 批次间隔休息：若本批次未产生关注/互动(0动作0风控负荷)，进入1分钟极速轮转，无需无谓等待
+                    # 批次间隔休息：若本批次未产生关注/互动(0动作0风控负荷)，进入低负荷轮转，无需无谓等待
                     if e_cnt == 0:
-                        cooldown_min = 1
+                        cooldown_min = 2 if config.outreach_mode == "chat_only" else 1
                         micro_wait = random.randint(3, 8)
-                        preset_label = "⚡ 零负荷快速轮转"
-                        self._print(
-                            "💡 [智能快速轮转] 本批次扫描的博主均已被门槛或敏感词过滤 (未产生关注动作，0 风控负荷)，"
-                            "自动将休息缩短为【1 分钟】快速进入下一批次拓客..."
-                        )
+                        preset_label = "💬 私信静息轮转" if config.outreach_mode == "chat_only" else "⚡ 零负荷快速轮转"
+                        if config.outreach_mode == "chat_only":
+                            self._print(
+                                f"💡 [私信值守巡察] 本轮未捕获到新增私信或回关 (0 风控负荷)，"
+                                f"自动待机【{cooldown_min} 分钟】后启动下一轮巡查..."
+                            )
+                        else:
+                            self._print(
+                                "💡 [智能快速轮转] 本批次扫描的博主均已被门槛或敏感词过滤 (未产生关注动作，0 风控负荷)，"
+                                "自动将休息缩短为【1 分钟】快速进入下一批次拓客..."
+                            )
                     else:
                         cooldown_min, micro_wait = config.compute_batch_cooldown()
                         preset_label = "⚡ 极速高通量" if config.execution_preset == "turbo" else "🛡️ 拟人安全"

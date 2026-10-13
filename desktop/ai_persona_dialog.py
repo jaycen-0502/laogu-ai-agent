@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -278,7 +279,15 @@ class AIPersonaConfigDialog(QDialog):
         self.followback_greeting_edit.setStyleSheet(
             "QLineEdit { padding: 5px 8px; border: 1px solid #CBD5E1; border-radius: 5px; font-size: 12px; }"
         )
+        self.import_greeting_btn = QPushButton("📁 导入文本")
+        self.import_greeting_btn.setFixedHeight(28)
+        self.import_greeting_btn.setStyleSheet(
+            "QPushButton { font-size: 11px; padding: 2px 8px; background: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 5px; color: #334155; font-weight: 500; } QPushButton:hover { background: #E2E8F0; }"
+        )
+        self.import_greeting_btn.setToolTip("从本地 .txt 文本文件批量导入打招呼话术（支持多行，发送时自动随机轮换）")
+        self.import_greeting_btn.clicked.connect(self._import_greeting_txt_file)
         greeting_row.addWidget(self.followback_greeting_edit, 1)
+        greeting_row.addWidget(self.import_greeting_btn)
         form_layout.addLayout(greeting_row)
 
         # 4. 防漂移定锚复选框
@@ -523,3 +532,28 @@ class AIPersonaConfigDialog(QDialog):
         else:
             self.status_lbl.setText("⚠️ 本地文件写入异常，请检查磁盘写权限！")
             self.status_lbl.setStyleSheet("color: #DC2626; font-weight: 600; font-size: 12px;")
+
+    def _import_greeting_txt_file(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择打招呼话术文本文件",
+            "",
+            "文本文件 (*.txt);;所有文件 (*.*)"
+        )
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [line.strip() for line in f if line.strip()]
+            if lines:
+                joined = " || ".join(lines)
+                self.followback_greeting_edit.setText(joined)
+                QMessageBox.information(
+                    self,
+                    "话术导入成功",
+                    f"已成功导入 {len(lines)} 条打招呼话术！\n系统运行时将自动在多条话术库中随机轮换调用。"
+                )
+            else:
+                QMessageBox.warning(self, "导入提示", "选取的文本文件中未检测到有效话术内容。")
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", f"读取文本文件失败: {e}")

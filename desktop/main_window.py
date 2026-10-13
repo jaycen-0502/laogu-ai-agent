@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDateTimeEdit,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGraphicsDropShadowEffect,
@@ -1552,8 +1553,14 @@ class TaskConfigDialog(QDialog):
         self.custom_followback_greeting_input.setText(str(active.get("custom_followback_greeting") or ""))
         self.custom_followback_greeting_input.setPlaceholderText("可填入自定义打招呼内容，支持 {name} 占位符；留空则由 AI 结合人设自动生成")
         self.custom_followback_greeting_input.setStyleSheet("font-size: 11px; padding: 3px 6px; border: 1px solid #cbd5e1; border-radius: 4px;")
+        self.import_greeting_btn = QPushButton("📁 导入文本")
+        self.import_greeting_btn.setFixedHeight(24)
+        self.import_greeting_btn.setStyleSheet("font-size: 11px; padding: 2px 8px; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 4px; color: #334155; font-weight: 500;")
+        self.import_greeting_btn.setToolTip("从本地 .txt 文本文件批量导入打招呼话术（支持多行，发送时自动随机轮换）")
+        self.import_greeting_btn.clicked.connect(self._import_greeting_txt_file)
         followback_greeting_row.addWidget(followback_greeting_label)
         followback_greeting_row.addWidget(self.custom_followback_greeting_input, 1)
+        followback_greeting_row.addWidget(self.import_greeting_btn)
         auto_dm_followback_vbox.addLayout(followback_greeting_row)
 
         auto_dm_followback_hint = QLabel("💡 巡检通知栏发现回关博主后自动私信；支持填入自定义话术，留空时 AI 结合角色人设生成", objectName="dialogHint")
@@ -2265,6 +2272,31 @@ class TaskConfigDialog(QDialog):
         else:
             self.dm_password_input.setEchoMode(QLineEdit.EchoMode.Password)
             self.toggle_dm_pwd_btn.setText("👁️")
+
+    def _import_greeting_txt_file(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择打招呼话术文本文件",
+            "",
+            "文本文件 (*.txt);;所有文件 (*.*)"
+        )
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [line.strip() for line in f if line.strip()]
+            if lines:
+                joined = " || ".join(lines)
+                self.custom_followback_greeting_input.setText(joined)
+                QMessageBox.information(
+                    self,
+                    "话术导入成功",
+                    f"已成功导入 {len(lines)} 条打招呼话术！\n系统运行时将自动在多条话术库中随机轮换调用。"
+                )
+            else:
+                QMessageBox.warning(self, "导入提示", "选取的文本文件中未检测到有效话术内容。")
+        except Exception as e:
+            QMessageBox.critical(self, "导入失败", f"读取文本文件失败: {e}")
 
     def config(self) -> dict[str, Any]:
         engine = self.engine_input.currentData() or {"engine_id": "default", "engine_name": "默认自动化引擎"}

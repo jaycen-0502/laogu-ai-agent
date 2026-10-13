@@ -469,7 +469,11 @@ def generate_ai_followback_greeting(
     """根据自定义话术模版或 AI 人设，向回关博主生成专属私信打招呼文本"""
     clean_tpl = (custom_template or "").strip()
     if clean_tpl:
-        resolved_text = clean_tpl.replace("{handle}", handle).replace("{name}", handle)
+        # 支持多行话术文本库（换行或 || 分割）：自动随机抽取一条执行，实现话术轮换
+        raw_candidates = clean_tpl.replace("||", "\n").splitlines()
+        candidates = [c.strip() for c in raw_candidates if c.strip()]
+        chosen = random.choice(candidates) if candidates else clean_tpl
+        resolved_text = chosen.replace("{handle}", handle).replace("{name}", handle)
         return resolved_text
 
     remote_cfg = fetch_remote_router_config()

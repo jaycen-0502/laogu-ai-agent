@@ -1580,17 +1580,129 @@ async def safe_human_click(page: Any, element: Any, personality: ProfilePersonal
     return False
 
 
-async def human_type_text(page: Any, element: Any, text: str) -> None:
-    """模拟真人按键打字，带有对数正态击键延迟与停顿"""
+# 物理键盘临近键位映射表（QWERTY 击键临近键分布）
+QWERTY_NEIGHBORS = {
+    'q': 'wa', 'w': 'qes', 'e': 'wrd', 'r': 'etf', 't': 'ryg', 'y': 'tuh', 'u': 'yij', 'i': 'uok', 'o': 'ipl', 'p': 'ol',
+    'a': 'qwsz', 's': 'awedxz', 'd': 'serfcx', 'f': 'drtgvc', 'g': 'ftyhbv', 'h': 'gyujnb', 'j': 'huikmn', 'k': 'jiolm', 'l': 'kop',
+    'z': 'asx', 'x': 'zsdc', 'c': 'xdfv', 'v': 'cfgb', 'b': 'vghn', 'n': 'bhjm', 'm': 'njk'
+}
+
+
+def is_cjk_char(ch: str) -> bool:
+    """判定单个字符是否为中日韩汉字、平假名、片假名或 CJK 全角标点"""
+    if not ch:
+        return False
+    code = ord(ch)
+    return (
+        (0x4E00 <= code <= 0x9FFF)
+        or (0x3040 <= code <= 0x30FF)
+        or (0x3000 <= code <= 0x303F)
+        or (0xFF00 <= code <= 0xFFEF)
+    )
+
+
+def split_message_chunks(text: str) -> list[str]:
+    """
+    智能将长文回复或打招呼语句切分为 1~3 条自然的连续短句单元。
+    短文本（<= 25 字）或单句保持原状；长文本按标点与换行切分，模拟真人碎碎念连续发气泡。
+    """
+    cleaned = (text or "").strip()
+    if not cleaned or len(cleaned) <= 25:
+        return [cleaned] if cleaned else []
+
+    if "\n" in cleaned:
+        raw_lines = [line.strip() for line in cleaned.split("\n") if line.strip()]
+        if 2 <= len(raw_lines) <= 3:
+            return raw_lines
+        elif len(raw_lines) > 3:
+            mid = len(raw_lines) // 2
+            return [" ".join(raw_lines[:mid]), " ".join(raw_lines[mid:])]
+
+    import re
+    parts = re.split(r'([。！？!?；;\n~\.]+)', cleaned)
+    raw_sentences = []
+    current = ""
+    for p in parts:
+        current += p
+        if re.search(r'[。！？!?；;\n~\.]', p):
+            if current.strip():
+                raw_sentences.append(current.strip())
+            current = ""
+    if current.strip():
+        raw_sentences.append(current.strip())
+
+    if len(raw_sentences) <= 1:
+        return [cleaned]
+
+    merged = []
+    buf = ""
+    for s in raw_sentences:
+        need_space = bool(buf and not is_cjk_char(buf[-1]) and not is_cjk_char(s[0]))
+        buf += (" " if need_space else "") + s
+        if len(buf.strip()) >= 6:
+            merged.append(buf.strip())
+            buf = ""
+    if buf.strip():
+        if merged:
+            need_space = bool(merged[-1] and not is_cjk_char(merged[-1][-1]) and not is_cjk_char(buf.strip()[0]))
+            merged[-1] += (" " if need_space else "") + buf.strip()
+        else:
+            merged.append(buf.strip())
+
+    if len(merged) <= 1:
+        return [cleaned]
+
+    if len(merged) in (2, 3):
+        return merged
+    else:
+        return [merged[0], "".join(merged[1:])]
+
+
+async def human_type_text(page: Any, element: Any, text: str, enable_typo: bool = True) -> None:
+    """模拟真人按键打字，带有对数正态击键延迟、拟人打错字退格纠错与自然停顿"""
     try:
         await element.click()
         await asyncio.sleep(random.uniform(0.6, 1.2))
 
+        # 拟人打错字退格纠错：在文本长度充裕时，极低概率触发 1~2 次错字退格纠正
+        typo_indices = set()
+        if enable_typo and len(text) >= 10:
+            candidate_indices = [
+                i for i in range(2, len(text) - 2)
+                if text[i] not in " \n\r\t.,!?;:，。！？；：~"
+            ]
+            if candidate_indices:
+                max_typos = 2 if len(text) >= 30 else 1
+                sample_count = random.choice([0, 1]) if len(text) < 25 else random.choice([1, max_typos])
+                if sample_count > 0 and len(candidate_indices) >= sample_count:
+                    typo_indices = set(random.sample(candidate_indices, sample_count))
+
         for index, char in enumerate(text):
+            if index in typo_indices:
+                low_c = char.lower()
+                if low_c in QWERTY_NEIGHBORS:
+                    wrong_char = random.choice(QWERTY_NEIGHBORS[low_c])
+                    if char.isupper():
+                        wrong_char = wrong_char.upper()
+                elif '\u4e00' <= char <= '\u9fff' or '\u3040' <= char <= '\u30ff':
+                    wrong_char = random.choice(['n', 'e', 'a', 'i', 's', 't', 'k'])
+                else:
+                    wrong_char = random.choice(['s', 'e', 'a', 'o'])
+
+                # 1. 敲入错误字符
+                await page.keyboard.type(wrong_char)
+                # 2. 模拟人类反应迟疑（视线发现按错）
+                await asyncio.sleep(random.uniform(0.18, 0.38))
+                # 3. 按下退格键删除错误字符
+                await page.keyboard.press("Backspace")
+                # 4. 纠错后的微停顿
+                await asyncio.sleep(random.uniform(0.12, 0.25))
+
+            # 敲入正确字符
             await page.keyboard.type(char)
             dwell = max(0.04, min(0.35, random.lognormvariate(-2.3, 0.35)))
             await asyncio.sleep(dwell)
-            if char in ".,!?;:\n":
+            if char in ".,!?;:，。！？；：\n":
                 await asyncio.sleep(random.uniform(0.25, 0.55))
             elif char == " " and random.random() < 0.3:
                 await asyncio.sleep(random.uniform(0.12, 0.28))
@@ -1599,6 +1711,7 @@ async def human_type_text(page: Any, element: Any, text: str) -> None:
         await asyncio.sleep(random.uniform(0.8, 1.5))
     except Exception as err:
         logging.getLogger("laogu-ai-agent.x-automation").debug("human_type_text 打字非阻断提示: %s", err)
+
 
 
 async def human_discrete_scroll(
@@ -2031,7 +2144,7 @@ class XAutomationEngine:
             await page.keyboard.press("Backspace")
             await asyncio.sleep(0.3)
 
-            await human_type_text(page, pwd_input, dm_pwd)
+            await human_type_text(page, pwd_input, dm_pwd, enable_typo=False)
             await asyncio.sleep(random.uniform(0.5, 1.0))
 
             confirm_selector = (
@@ -2058,6 +2171,78 @@ class XAutomationEngine:
         except Exception as err:
             self.logger.debug("处理私信密码弹窗非阻断提示: %s", err)
             return False
+
+    async def _send_dm_with_human_bursting(
+        self,
+        page: Any,
+        composer_sel: str,
+        composer: Any,
+        full_text: str,
+        target_handle: str = "",
+    ) -> bool:
+        """
+        拟人化短句切分与连续气泡送出机制：
+        1. 智能将长文回复或打招呼语句切分为 1~3 条自然的连续短句单元；
+        2. 对每个短句单元调用带退格纠错机制的物理击键打字；
+        3. 每送出一条短句，停顿 1.8~3.2 秒再送出下一条，模拟真人碎碎念连续发气泡节奏。
+        """
+        chunks = split_message_chunks(full_text)
+        if len(chunks) > 1:
+            self._print(f"  └─ 💬 [碎碎念模式] 检测到多句内容，智能切分为 {len(chunks)} 条短句连续送达...")
+        else:
+            self._print(f"  └─ ✍️ [拟人打字] 正在键入私信内容...")
+
+        for c_idx, chunk_text in enumerate(chunks, 1):
+            current_composer = None
+            try:
+                current_composer = await page.query_selector(composer_sel)
+            except Exception:
+                pass
+            if not current_composer:
+                current_composer = composer
+
+            if current_composer:
+                if not await safe_human_click(page, current_composer, self.personality):
+                    try:
+                        await current_composer.click()
+                    except Exception:
+                        pass
+            await asyncio.sleep(random.uniform(0.4, 0.8))
+
+            # 逐字物理击键（启用拟人打错字与 Backspace 退格纠错）
+            await human_type_text(page, current_composer or composer, chunk_text, enable_typo=True)
+            await asyncio.sleep(random.uniform(0.8, 1.4))
+
+            send_btn = await page.query_selector(
+                'button[data-testid="dmComposerSendButton"], '
+                'div[data-testid="dmComposerSendButton"], '
+                'button[aria-label*="Send"], '
+                'button[aria-label*="送信"], '
+                'button[aria-label*="发送"]'
+            )
+            sent = False
+            if send_btn and hasattr(send_btn, "is_visible") and await send_btn.is_visible():
+                btn_dis = (
+                    await send_btn.get_attribute("disabled") is not None
+                    or await send_btn.get_attribute("aria-disabled") == "true"
+                )
+                if not btn_dis:
+                    if await safe_human_click(page, send_btn, self.personality):
+                        sent = True
+                    elif hasattr(send_btn, "click"):
+                        await send_btn.click()
+                        sent = True
+
+            if not sent:
+                await page.keyboard.press("Enter")
+                sent = True
+
+            self._print(f"     ├─ ✉️ [{c_idx}/{len(chunks)}] 短句已送出: \"{chunk_text}\"")
+
+            if c_idx < len(chunks):
+                await asyncio.sleep(random.uniform(1.8, 3.2))
+
+        return True
 
     async def _send_ai_dm_icebreaker(
         self,
@@ -2175,40 +2360,10 @@ class XAutomationEngine:
                     custom_temp,
                 )
 
-            # 7. 拟人模拟打字输入
-            self._print(f"  └─ ✍️ [拟人输入] 正在键入破冰私信内容...")
-            if not await safe_human_click(page, composer, self.personality):
-                await composer.click()
-            await asyncio.sleep(random.uniform(0.5, 1.0))
-
-            await human_type_text(page, composer, icebreaker)
-            await asyncio.sleep(random.uniform(1.0, 1.8))
-
-            # 8. 点击发送或回车发送
-            send_btn = await page.query_selector(
-                'button[data-testid="dmComposerSendButton"], '
-                'div[data-testid="dmComposerSendButton"], '
-                'button[aria-label*="Send"], '
-                'button[aria-label*="送信"], '
-                'button[aria-label*="发送"]'
+            # 7. 拟人打字与短句连续送出（支持智能分段与退格纠错）
+            await self._send_dm_with_human_bursting(
+                page, composer_sel, composer, icebreaker, handle
             )
-            sent = False
-            if send_btn and hasattr(send_btn, "is_visible") and await send_btn.is_visible():
-                btn_dis = (
-                    await send_btn.get_attribute("disabled") is not None
-                    or await send_btn.get_attribute("aria-disabled") == "true"
-                )
-                if not btn_dis:
-                    if await safe_human_click(page, send_btn, self.personality):
-                        sent = True
-                    elif hasattr(send_btn, "click"):
-                        await send_btn.click()
-                        sent = True
-
-            if not sent:
-                await page.keyboard.press("Enter")
-                sent = True
-
             await asyncio.sleep(random.uniform(2.0, 3.5))
 
             # 9. 记录动作与成功审计
@@ -2382,28 +2537,10 @@ class XAutomationEngine:
                     read_dwell = min(5.0, max(1.5, len(incoming_msg) * 0.05 + random.uniform(1.2, 2.5)))
                     await asyncio.sleep(read_dwell)
 
-                    self._print(f"  └─ ✍️ [拟人打字] 正在向 @{handle_candidate} 回复: \"{ai_reply}\"")
-                    if not await safe_human_click(page, composer, self.personality):
-                        await composer.click()
-                    await asyncio.sleep(random.uniform(0.5, 1.0))
-                    await human_type_text(page, composer, ai_reply)
-                    await asyncio.sleep(random.uniform(1.0, 1.8))
-
-                    send_btn = await page.query_selector(
-                        'button[data-testid="dmComposerSendButton"], '
-                        'div[data-testid="dmComposerSendButton"], '
-                        'button[aria-label*="Send"], '
-                        'button[aria-label*="送信"], '
-                        'button[aria-label*="发送"]'
+                    # 拟人打字与短句连续送出（支持智能分段与退格纠错）
+                    await self._send_dm_with_human_bursting(
+                        page, composer_sel, composer, ai_reply, handle_candidate
                     )
-                    sent = False
-                    if send_btn and hasattr(send_btn, "is_visible") and await send_btn.is_visible():
-                        if await safe_human_click(page, send_btn, self.personality):
-                            sent = True
-                    if not sent:
-                        await page.keyboard.press("Enter")
-                        sent = True
-
                     await asyncio.sleep(random.uniform(2.0, 3.0))
                     self._record_action("dm", target_key)
                     self._inbox_replied_cache.add(dedup_key)

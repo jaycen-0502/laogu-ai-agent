@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .ai_routing_service import (
     RUNTIME_CONFIG,
     execute_llm_with_fallback,
+    fetch_remote_relay_models,
     init_routing_defaults,
     ping_specific_model,
     update_runtime_config_db,
@@ -22,6 +23,12 @@ from .ai_routing_service import (
 from .models import AIModelRegistry, AIRelayConfig, XAccountPersona, now
 
 LOGGER = logging.getLogger("laogu.server.ai_routing_api")
+
+
+class FetchRemoteModelsRequest(BaseModel):
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    auto_sync_registry: Optional[bool] = True
 
 
 class RelayConfigUpdate(BaseModel):
@@ -123,6 +130,49 @@ def register_ai_routing_routes(
             }
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"保存配置异常: {e}")
+
+    # ================= 1.5 Web 后台：自动拉取/检测中转站可用模型 (如 CC Switch) =================
+    @app.post("/api/admin/models/fetch-remote")
+    @app.post("/admin/models/fetch-remote")
+    def fetch_remote_models_endpoint(req: FetchRemoteModelsRequest, db: Session = Depends(get_db)):
+        """一键自动检测并拉取中转站真实可用的模型列表"""
+        init_routing_defaults(db)
+        try:
+            b_url = req.base_url or RUNTIME_CONFIG["base_url"]
+            k_val = req.api_key or RUNTIME_CONFIG["api_key"]
+            models = fetch_remote_relay_models(base_url=b_url, api_key=k_val)
+
+            synced_count = 0
+            if req.auto_sync_registry:
+                existing_codes = set(
+                    db.execute(select(AIModelRegistry.model_code)).scalars().all()
+                )
+                for m in models:
+                    if m["model_code"] not in existing_codes:
+                        new_reg = AIModelRegistry(
+                            model_name=m["model_name"],
+                            model_code=m["model_code"],
+                            provider=m["provider"],
+                            category="中转站自动探测",
+                            status=1,
+                            created_at=now(),
+                        )
+                        db.add(new_reg)
+                        existing_codes.add(m["model_code"])
+                        synced_count += 1
+                if synced_count > 0:
+                    db.commit()
+
+            return {
+                "code": 200,
+                "message": f"成功检测到 {len(models)} 个可用模型！已自动同步至模型库",
+                "data": {
+                    "models": models,
+                    "synced_count": synced_count,
+                },
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"自动检测可用模型失败: {e}")
 
     # ================= 2. Web 后台：单模型即时测速/测活 =================
     @app.post("/api/admin/model/ping")

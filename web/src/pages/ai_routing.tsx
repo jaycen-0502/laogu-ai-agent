@@ -55,11 +55,13 @@ export function AIRoutingPage({ user }: { user: User }) {
   });
   const [addingModel, setAddingModel] = useState(false);
 
-  // --- 测速测活 ---
   const [testModelCode, setTestModelCode] = useState("gpt-4o-mini");
   const [pinging, setPinging] = useState(false);
   const [pingResult, setPingResult] = useState<PingResult | null>(null);
   const [pingError, setPingError] = useState("");
+
+  const [detectingModels, setDetectingModels] = useState(false);
+  const [detectNotice, setDetectNotice] = useState("");
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -107,6 +109,46 @@ export function AIRoutingPage({ user }: { user: User }) {
       setError(errorText(exc));
     } finally {
       setSavingConfig(false);
+    }
+  };
+
+  // 一键自动检测/拉取中转站真实可用模型（如同 CC Switch）
+  const handleDetectModels = async () => {
+    if (!apiKeyInput) {
+      alert("请先填写中转站 API Key 再进行检测");
+      return;
+    }
+    setDetectingModels(true);
+    setDetectNotice("");
+    setMessage("");
+    setError("");
+    try {
+      const res = await apiClient<{ code: number; message: string; data: { models: ModelItem[]; synced_count: number } }>(
+        "/admin/models/fetch-remote",
+        jsonBody({
+          base_url: relayConfig.base_url,
+          api_key: apiKeyInput,
+          auto_sync_registry: true,
+        })
+      );
+      const fetched = res.data?.models || [];
+      if (fetched.length > 0) {
+        setDetectNotice(`✅ 成功探测到 ${fetched.length} 个可用模型！已自动写入可选候选列表与模型库`);
+        const firstCode = fetched[0].model_code;
+        setRelayConfig((prev) => ({
+          ...prev,
+          default_model: firstCode,
+        }));
+        setTestModelCode(firstCode);
+        const modelsRes = await apiClient<{ code: number; data: ModelItem[] }>("/admin/models");
+        setModels(modelsRes.data || []);
+      } else {
+        setDetectNotice("⚠️ 未能探测到可用模型，请检查 API Key");
+      }
+    } catch (exc) {
+      setDetectNotice(`❌ 自动检测失败: ${errorText(exc)}`);
+    } finally {
+      setDetectingModels(false);
     }
   };
 
@@ -230,6 +272,38 @@ export function AIRoutingPage({ user }: { user: User }) {
                   {showApiKey ? "隐藏" : "显示"}
                 </button>
               </div>
+            </div>
+
+            {/* 一键自动检测/拉取中转站可用模型 (如同 CC Switch) */}
+            <div style={{ marginBottom: "16px", padding: "10px 14px", background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: "6px" }}>
+              <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={handleDetectModels}
+                  disabled={detectingModels || !apiKeyInput}
+                  style={{
+                    background: "#ecfdf5",
+                    border: "1px solid #10b981",
+                    color: "#047857",
+                    fontWeight: "bold",
+                    fontSize: "13px",
+                    padding: "7px 14px",
+                    borderRadius: "5px",
+                    cursor: "pointer",
+                  }}
+                >
+                  {detectingModels ? "🔍 正在自动检测拉取可用模型…" : "🔍 一键自动检测可用模型 (如 CC Switch)"}
+                </button>
+                <span style={{ fontSize: "12px", color: "#64748b" }}>
+                  自动调用中转站 /v1/models 接口，拉取真实开通的模型并写入候选列表
+                </span>
+              </div>
+              {detectNotice && (
+                <div style={{ marginTop: "8px", fontSize: "12px", color: detectNotice.startsWith("❌") ? "#dc2626" : "#16a34a", fontWeight: "bold" }}>
+                  {detectNotice}
+                </div>
+              )}
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "14px" }}>

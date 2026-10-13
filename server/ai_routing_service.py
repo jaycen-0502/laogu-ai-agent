@@ -172,6 +172,91 @@ def update_runtime_config_db(
     return dict(RUNTIME_CONFIG)
 
 
+DEFAULT_RELAY_HEADERS = {
+    "Originator": "codex_cli_rs",
+    "User-Agent": "codex_cli_rs/0.101.0 (Mac OS; arm64)",
+    "Version": "0.101.0",
+}
+
+
+def guess_model_provider(model_code: str) -> str:
+    """根据模型代码推测提供商名称"""
+    code = (model_code or "").lower()
+    if "claude" in code:
+        return "Anthropic"
+    if "gpt" in code or "o1" in code or "o3" in code or "dall-e" in code:
+        return "OpenAI"
+    if "deepseek" in code:
+        return "DeepSeek"
+    if "gemini" in code:
+        return "Google"
+    if "qwen" in code:
+        return "Qwen"
+    if "glm" in code or "chatglm" in code:
+        return "Zhipu"
+    if "llama" in code:
+        return "Meta"
+    if "mistral" in code or "mixtral" in code:
+        return "Mistral"
+    return "Custom"
+
+
+def fetch_remote_relay_models(
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+    timeout: int = 12,
+) -> list[dict[str, Any]]:
+    """向中转站发送请求，自动探测真实可用模型列表（兼容 CC Switch 自动拉取逻辑）"""
+    clean_url = normalize_base_url(base_url or RUNTIME_CONFIG["base_url"])
+    key = api_key or RUNTIME_CONFIG["api_key"]
+    if not key:
+        raise ValueError("请先输入中转站 API Key 再进行模型检测")
+
+    endpoint = f"{clean_url}/models"
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        **DEFAULT_RELAY_HEADERS,
+    }
+
+    with httpx.Client(timeout=float(timeout)) as client:
+        resp = client.get(endpoint, headers=headers)
+        if resp.status_code != 200:
+            err_msg = resp.text[:300]
+            raise RuntimeError(f"中转站返回 HTTP {resp.status_code}: {err_msg}")
+        payload = resp.json()
+
+    raw_items = []
+    if isinstance(payload, dict):
+        raw_items = payload.get("data") or payload.get("models") or []
+    elif isinstance(payload, list):
+        raw_items = payload
+
+    models: list[dict[str, Any]] = []
+    seen = set()
+    for item in raw_items:
+        m_id = ""
+        if isinstance(item, dict):
+            m_id = str(item.get("id") or item.get("model") or item.get("name") or "").strip()
+        elif isinstance(item, str):
+            m_id = item.strip()
+
+        if m_id and m_id not in seen:
+            seen.add(m_id)
+            models.append({
+                "model_code": m_id,
+                "model_name": m_id,
+                "provider": guess_model_provider(m_id),
+                "category": "中转站自动检测",
+                "status": 1,
+            })
+
+    if not models:
+        raise RuntimeError("未能从中转站获取到有效模型列表，请确认 API Key 权限或中转站服务状态")
+
+    return models
+
+
 def call_openai_chat_completions(
     model: str,
     messages: list[dict[str, Any]],
@@ -186,6 +271,7 @@ def call_openai_chat_completions(
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key or RUNTIME_CONFIG['api_key']}",
+        **DEFAULT_RELAY_HEADERS,
     }
     payload = {
         "model": model,

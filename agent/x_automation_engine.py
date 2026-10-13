@@ -343,20 +343,29 @@ def generate_ai_inbox_chat_reply(
     if conversation_history:
         history_context = "\n".join([f"- {h}" for h in conversation_history[-4:]])
 
+    anti_bot_rules = (
+        "【防识破与反机器人核心执行规约】：\n"
+        "- 绝对身份认同：你是一个真实生活中的真人，绝对不是 AI、人工智能、机器人、虚拟助手或自动化程序！\n"
+        "- 遭遇身份质问防御：若沟通对象询问或怀疑你是否为机器人/AI（例如「你是AI吗」「bot?」「AIですか」「你是真人吗」），必须表现出真人的好笑、无语或幽默吐槽（例如「草 なんで急にAI疑惑w 生身の人間だよ！」「哈哈怎么可能，我看起来像机器人吗？你才机器人呢笑」「えっ失礼なw 普通に仕事終わりの社畜だよ笑」），严禁一本正经地科普或客服式澄清。\n"
+        "- 彻底消除客服与助理套话：严禁出现「何かお手伝い」「ご用件」「何か力になれること」「很高兴认识你」「有什么可以帮您」「随时为您服务」「期待与您合作」等机械套话。\n"
+        "- 消除反问强迫症：不要每次回复末尾都生硬反问对方，多用随和的赞同、情绪短语、日常感叹，或者分享自己的感受。\n"
+        "- 真实社交网民口吻：像平时和好友发私信一样，简短精炼（15~35字以内），句末尽量不使用死板的句号「。」，多用波浪线「〜」、空格停顿、emoji（😊✨🙌笑草）或感叹号「！」自然收尾。\n"
+        "- 严禁分点列出（如1. 2. 3.）、严禁长篇大论、严禁发送外部链接与推广内容。"
+    )
+
     if persona_system_prompt and persona_system_prompt.strip():
         system_prompt = (
             f"{persona_system_prompt.strip()}\n\n"
-            "【私信自动对话执行规约】：\n"
-            "- 严格遵循上述人设定位、口吻与性格设定。\n"
-            "- 根据沟通对象发来的具体消息，像真实朋友般自然、贴切、真诚地回复。\n"
-            "- 严禁机械客服腔，严禁生硬推销与包含违规链接。\n"
-            "- 长度保持在 20~50 字以内的日常口语短句，仅输出最终回复内容。"
+            f"{anti_bot_rules}\n"
+            "- 严格遵循上述人设定位、口吻与性格设定，仅输出最终一句回复文本。"
         )
     else:
         system_prompt = (
-            "You are a friendly, natural Twitter user living in Tokyo. "
-            "Reply warmly and casually to the incoming direct message based on your context. "
-            "Never sound like a bot, never send links or ads. Output ONLY the response text under 50 characters."
+            "You are a friendly, natural human Twitter user living in Tokyo. "
+            "Reply casually and authentically to the direct message like a real person chatting with a friend. "
+            "NEVER sound like an AI assistant or bot. NEVER say 'How can I assist you' or offer help. "
+            "If asked if you are an AI/bot, laugh it off playfully as a real human. "
+            "Keep it under 35 Japanese characters, casual tone, output ONLY the message text."
         )
 
     user_prompt = f"沟通对象: @{handle}\n"
@@ -403,18 +412,49 @@ def generate_ai_inbox_chat_reply(
                             choice = choices[0]
                             text = choice.get("content", "") if "content" in choice else choice.get("message", {}).get("content", "")
                             clean_text = text.strip().replace('"', '').replace('「', '').replace('」', '').replace('\n', ' ')
+
+                            # 语言学反 AI 过滤器：排查并熔断可能暴露 AI 身份的机械字眼
+                            lowered = clean_text.lower()
+                            banned_markers = [
+                                "as an ai", "artificial intelligence", "language model",
+                                "aiアシスタント", "言語モデル", "人工知能", "お手伝い", "ご用件",
+                                "作为一个ai", "语言模型", "人工智能", "有什么可以帮您", "很高兴为您服务",
+                                "我是一个人工智能", "我是一个虚拟", "我无法理解您的意图"
+                            ]
+                            if any(bm in lowered for bm in banned_markers):
+                                print(f"  └─ 🛡️ [反AI特征拦截] 拦截到疑似机器人套话文本: \"{clean_text}\"，执行真人短语替换")
+                                if any(q in incoming_text.lower() for q in ["ai", "bot", "机器人", "ボット", "人工知能", "真人"]):
+                                    clean_text = random.choice([
+                                        "えっ草 なんで急にAI疑惑w 生身の人間だよ！",
+                                        "botに見える？笑 普通に仕事終わりの社畜だよ〜",
+                                        "哈哈怎么可能，我看起来像机器人吗？你才机器人呢笑",
+                                    ])
+                                else:
+                                    clean_text = random.choice([
+                                        "それな！めっちゃ共感する✨",
+                                        "あ、確かにそうかも！面白いね😊",
+                                        "ほんとそれ！色々教えてくれてありがとう🙌",
+                                    ])
+
                             if clean_text:
                                 print(f"  └─ 🤖 [AI 私信会话生成] 模型 [{model}]: \"{clean_text}\"")
                                 return clean_text
             except Exception as err:
                 print(f"  └─ ⚠️ [AI 私信会话] 模型 [{model}] 异常，尝试备选模型: {err}")
 
-    # 兜底暖心互动短句
+    # 兜底暖心互动短句（带反 AI 质问防御）
+    inc_low = incoming_text.lower()
+    if any(q in inc_low for q in ["ai", "bot", "机器人", "ボット", "人工知能", "真人"]):
+        return random.choice([
+            "えっ草 なんで急にAI疑惑w 生身の人間だよ！",
+            "botに見える？笑 普通にスマホいじってる社畜だよ〜",
+            "哈哈怎么可能，我看起来像机器人吗？你才机器人呢笑",
+        ])
     if "ありがとう" in incoming_text:
-        return "こちらこそありがとうございます！仲良くしてくださいね😊"
+        return "こちらこそありがとう！仲良くしてね😊"
     if "よろしく" in incoming_text:
-        return "よろしくお願いします！色々お話しできたら嬉しいです✨"
-    return "メッセージありがとうございます！仲良くしてもらえたら嬉しいです🙌"
+        return "よろしくね！色々お話しできたら嬉しいな✨"
+    return "メッセージありがとう！仲良くしてもらえたら嬉しいよ🙌"
 
 
 def generate_ai_followback_greeting(
@@ -2304,13 +2344,18 @@ class XAutomationEngine:
                         continue
 
                     incoming_msg = last_line
+                    conversation_bubbles = []
                     msg_entries = await page.query_selector_all('div[data-testid="messageEntry"]')
                     if msg_entries:
-                        for me in reversed(msg_entries[-4:]):
+                        for me in msg_entries[-6:]:
                             me_t = (await me.inner_text() or "").strip()
-                            if me_t and not me_t.startswith("You:") and len(me_t) > 1:
-                                incoming_msg = me_t
-                                break
+                            if me_t:
+                                conversation_bubbles.append(me_t)
+                        if conversation_bubbles:
+                            for item_t in reversed(conversation_bubbles):
+                                if not item_t.startswith("You:") and not item_t.startswith("あなた:") and not "You: " in item_t:
+                                    incoming_msg = item_t
+                                    break
 
                     persona_cfg = getattr(self._active_config, "ai_persona", {}) or {}
                     custom_prompt = str(persona_cfg.get("system_prompt", "") or "")
@@ -2320,7 +2365,7 @@ class XAutomationEngine:
                     ai_reply = await asyncio.to_thread(
                         generate_ai_inbox_chat_reply,
                         incoming_msg,
-                        [incoming_msg],
+                        conversation_bubbles,
                         handle_candidate,
                         custom_prompt,
                         custom_model or None,
@@ -2328,6 +2373,10 @@ class XAutomationEngine:
                         "",
                         custom_temp,
                     )
+
+                    # 拟人阅读停顿：根据沟通对象消息长度动态等待 1.5~4.5 秒，模拟真人看完并构思
+                    read_dwell = min(5.0, max(1.5, len(incoming_msg) * 0.05 + random.uniform(1.2, 2.5)))
+                    await asyncio.sleep(read_dwell)
 
                     self._print(f"  └─ ✍️ [拟人打字] 正在向 @{handle_candidate} 回复: \"{ai_reply}\"")
                     if not await safe_human_click(page, composer, self.personality):
